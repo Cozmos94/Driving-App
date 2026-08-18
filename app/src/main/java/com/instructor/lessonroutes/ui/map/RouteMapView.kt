@@ -1,9 +1,6 @@
 package com.instructor.lessonroutes.ui.map
 
-import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.location.Location
 import android.os.Bundle
@@ -16,22 +13,28 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
+import com.instructor.lessonroutes.util.hasLocationPermission
 import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -48,15 +51,25 @@ const val OPENFREEMAP_LIBERTY_STYLE_URL = "https://tiles.openfreemap.org/styles/
  */
 private val FALLBACK_CENTER = LatLng(-33.8688, 151.2093)
 private const val DEFAULT_ZOOM = 11.0
+private const val BOUNDS_PADDING_PX = 96
 
 private const val ROUTE_SOURCE_ID = "route-source"
 private const val ROUTE_LAYER_ID = "route-layer"
 private const val ROUTE_LINE_COLOR = "#2E7D32" // matches the app's theme green
 
+private const val WAYPOINT_SOURCE_ID = "waypoint-source"
+private const val WAYPOINT_LAYER_ID = "waypoint-layer"
+private const val WAYPOINT_COLOR = "#F57C00" // orange, distinct from the route line
+
+private const val LIVE_LOCATION_SOURCE_ID = "live-location-source"
+private const val LIVE_LOCATION_LAYER_ID = "live-location-layer"
+private const val LIVE_LOCATION_COLOR = "#1976D2" // blue "you are here" dot
+
 /**
- * The main map surface: renders free OpenFreeMap tiles inside an `AndroidView` (step 1),
- * centers on the device's location once permission is granted, and draws [routePoints]
- * as a polyline (step 3) — an empty list just shows no line.
+ * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
+ * `AndroidView`, optionally centers on the device's location or fits a saved route's
+ * bounds, draws a route polyline + waypoint markers, shows a live position dot, and can
+ * report taps back to the caller (tap-to-create mode).
  *
  * MapLibre's `MapView` is a plain Android View with its own lifecycle (onStart/onResume/
  * onPause/onStop/onDestroy/onLowMemory) that must be driven manually — it does not know
@@ -68,11 +81,19 @@ fun RouteMapView(
     modifier: Modifier = Modifier,
     styleUrl: String = OPENFREEMAP_LIBERTY_STYLE_URL,
     routePoints: List<LatLng> = emptyList(),
+    waypoints: List<LatLng> = emptyList(),
+    liveLocation: LatLng? = null,
+    /** When true, moves the camera to fit [routePoints] instead of the device location. */
+    fitBoundsToRoute: Boolean = false,
+    /** Ignored when [fitBoundsToRoute] is true. */
+    centerOnDeviceLocation: Boolean = true,
+    onMapClick: ((LatLng) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val mapViewRef = remember { mutableStateOf<MapView?>(null) }
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    val onMapClickState = rememberUpdatedState(onMapClick)
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -80,10 +101,8 @@ fun RouteMapView(
     ) { results -> hasLocationPermission = results.values.any { it } }
 
     LaunchedEffect(Unit) {
-        if (!hasLocationPermission) {
-            permissionLauncher.launch(
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-            )
+        if (centerOnDeviceLocation && !fitBoundsToRoute && !hasLocationPermission) {
+            permissionLauncher.launch(LOCATION_PERMISSIONS)
         }
     }
 
@@ -98,16 +117,14 @@ fun RouteMapView(
                         .target(FALLBACK_CENTER)
                         .zoom(DEFAULT_ZOOM)
                         .build()
+                    map.addOnMapClickListener { point ->
+                        onMapClickState.value?.invoke(point)
+                        onMapClickState.value != null
+                    }
                     map.setStyle(styleUrl) { style ->
-                        style.addSource(GeoJsonSource(ROUTE_SOURCE_ID))
-                        style.addLayer(
-                            LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
-                                PropertyFactory.lineColor(Color.parseColor(ROUTE_LINE_COLOR)),
-                                PropertyFactory.lineWidth(4f),
-                            ),
-                        )
-                        // Only exposed once the source/layer exist, so the route-drawing
-                        // effect below never races ahead of style setup.
+                        addSourcesAndLayers(style)
+                        // Only exposed once the source/layer exist, so effects below
+                        // never race ahead of style setup.
                         mapLibreMap = map
                     }
                 }
@@ -117,9 +134,9 @@ fun RouteMapView(
 
     // Once permission is granted, move the camera to the device's actual location —
     // this only fires the one time on grant, it doesn't keep tracking a moving
-    // position (that's the Follow view, step 7).
-    LaunchedEffect(hasLocationPermission) {
-        if (!hasLocationPermission) return@LaunchedEffect
+    // position (that's the live-location dot, for record/follow screens).
+    LaunchedEffect(hasLocationPermission, fitBoundsToRoute) {
+        if (!centerOnDeviceLocation || fitBoundsToRoute || !hasLocationPermission) return@LaunchedEffect
         val map = mapViewRef.value?.awaitMap() ?: return@LaunchedEffect
         val location = LocationServices.getFusedLocationProviderClient(context)
             .awaitCurrentLocation() ?: return@LaunchedEffect
@@ -129,12 +146,30 @@ fun RouteMapView(
             .build()
     }
 
-    // Redraws the route line whenever the points change (or as soon as the style
-    // becomes ready, if points were already available).
+    // Fits the camera to the route's bounding box once both the style and the points
+    // are ready (used by the route detail / follow screens instead of device-location
+    // centering).
+    LaunchedEffect(mapLibreMap, fitBoundsToRoute, routePoints) {
+        val map = mapLibreMap ?: return@LaunchedEffect
+        if (!fitBoundsToRoute || routePoints.size < 2) return@LaunchedEffect
+        val bounds = LatLngBounds.Builder().apply { routePoints.forEach { include(it) } }.build()
+        map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, BOUNDS_PADDING_PX))
+    }
+
     LaunchedEffect(routePoints, mapLibreMap) {
         val style = mapLibreMap?.style ?: return@LaunchedEffect
-        val source = style.getSource(ROUTE_SOURCE_ID) as? GeoJsonSource ?: return@LaunchedEffect
-        source.setGeoJson(routeGeoJson(routePoints))
+        (style.getSource(ROUTE_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(lineGeoJson(routePoints))
+    }
+
+    LaunchedEffect(waypoints, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        (style.getSource(WAYPOINT_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(waypoints))
+    }
+
+    LaunchedEffect(liveLocation, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        val points = liveLocation?.let { listOf(it) } ?: emptyList()
+        (style.getSource(LIVE_LOCATION_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(points))
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -159,10 +194,32 @@ fun RouteMapView(
     }
 }
 
-private fun Context.hasLocationPermission(): Boolean {
-    val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-    val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-    return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
+private fun addSourcesAndLayers(style: Style) {
+    style.addSource(GeoJsonSource(ROUTE_SOURCE_ID))
+    style.addLayer(
+        LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(ROUTE_LINE_COLOR)),
+            PropertyFactory.lineWidth(4f),
+        ),
+    )
+    style.addSource(GeoJsonSource(WAYPOINT_SOURCE_ID))
+    style.addLayer(
+        CircleLayer(WAYPOINT_LAYER_ID, WAYPOINT_SOURCE_ID).withProperties(
+            PropertyFactory.circleRadius(7f),
+            PropertyFactory.circleColor(Color.parseColor(WAYPOINT_COLOR)),
+            PropertyFactory.circleStrokeWidth(2f),
+            PropertyFactory.circleStrokeColor(Color.WHITE),
+        ),
+    )
+    style.addSource(GeoJsonSource(LIVE_LOCATION_SOURCE_ID))
+    style.addLayer(
+        CircleLayer(LIVE_LOCATION_LAYER_ID, LIVE_LOCATION_SOURCE_ID).withProperties(
+            PropertyFactory.circleRadius(8f),
+            PropertyFactory.circleColor(Color.parseColor(LIVE_LOCATION_COLOR)),
+            PropertyFactory.circleStrokeWidth(2f),
+            PropertyFactory.circleStrokeColor(Color.WHITE),
+        ),
+    )
 }
 
 private suspend fun MapView.awaitMap(): MapLibreMap = suspendCancellableCoroutine { continuation ->
@@ -185,11 +242,19 @@ private suspend fun FusedLocationProviderClient.awaitCurrentLocation(): Location
     }
 
 /**
- * Builds a GeoJSON LineString feature by hand (no geojson library dependency needed).
- * Fewer than 2 points can't form a line, so that case just clears the layer.
+ * Builds GeoJSON by hand (no geojson library dependency needed). Fewer than 2 points
+ * can't form a line, so that case just clears the layer.
  */
-private fun routeGeoJson(points: List<LatLng>): String {
+private fun lineGeoJson(points: List<LatLng>): String {
     if (points.size < 2) return """{"type":"FeatureCollection","features":[]}"""
     val coordinates = points.joinToString(",") { "[${it.longitude},${it.latitude}]" }
     return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coordinates]},"properties":{}}"""
+}
+
+private fun pointsGeoJson(points: List<LatLng>): String {
+    if (points.isEmpty()) return """{"type":"FeatureCollection","features":[]}"""
+    val features = points.joinToString(",") {
+        """{"type":"Feature","geometry":{"type":"Point","coordinates":[${it.longitude},${it.latitude}]},"properties":{}}"""
+    }
+    return """{"type":"FeatureCollection","features":[$features]}"""
 }

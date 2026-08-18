@@ -5,16 +5,36 @@ routes with students, **scoped to NSW, Australia only**. Zero running cost: no
 Google Maps SDK, no billing account, no routing API. See `spec.md` (in this repo's
 parent context) for the full design.
 
-## Status: Step 1 of 8 (core) done — map on screen
+## Status: core build (steps 1–8) implemented, pending full test pass
 
-This scaffold gets a MapLibre map rendering with free OpenFreeMap vector tiles,
-inside a Compose `AndroidView`. Nothing else is wired up yet — no Room, no
-location, no route drawing. That's steps 2–8, followed by a separate Phase 2
-(steps 9–11) adding NSW open-data map overlays (school zones, live hazards,
-crash/black-spot data, an OSM-derived low-traffic proxy) — see `spec.md`'s
-"Map overlays (Phase 2)" section. Phase 2 depends on a Transport for NSW API key
-that must be kept out of source control (`local.properties` → `BuildConfig`, never
-hardcoded or committed).
+Steps 1–4 (map rendering, Room layer, polyline drawing, route list → detail
+navigation) are built and confirmed working. Steps 5–8 were just implemented in one
+larger pass and are **not yet confirmed** — see "What's implemented, untested" below
+for exactly what to check. After that, there's a separate Phase 2 (steps 9–11) adding
+NSW open-data map overlays (school zones, live hazards, crash/black-spot data, an
+OSM-derived low-traffic proxy) — see `spec.md`'s "Map overlays (Phase 2)" section.
+Phase 2 depends on a Transport for NSW API key that must be kept out of source
+control (`local.properties` → `BuildConfig`, never hardcoded or committed) — not
+started yet.
+
+### What's implemented, untested
+
+- **Create route** ([CreateRouteScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/CreateRouteScreen.kt)):
+  Tap mode (tap the map to add points) and Record mode (Start/Pause captures a live
+  GPS trail via FusedLocationProvider) in one screen, a "mark last point as waypoint"
+  action, and a save dialog (name + notes) that writes to Room.
+- **Follow view** ([FollowScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/FollowScreen.kt)):
+  a selected route's polyline with a live position dot on top; camera fits the route's
+  bounds once and doesn't chase the dot (deliberately, to avoid a jumpy camera).
+- **Edit/delete**: long-press a route in the list for a rename/notes-edit dialog or a
+  delete confirmation.
+- **Open in nav app**: a `geo:` intent on the route detail screen, targeting the
+  route's first point — no SDK, no cost.
+- **Not built**: Settings (spec marks this optional/last) and anything from Phase 2.
+
+Test order suggestion: create a route in Tap mode → save → confirm it shows in the
+list and its detail view → try Record mode somewhere you can actually move (or set a
+mock location on an emulator) → try Follow on a saved route → try edit and delete.
 
 ## Opening the project
 
@@ -69,18 +89,19 @@ things independently, both already worked around in this repo:
 This isn't specific to this app — it'll affect any networked Android dev/emulator
 work on a Novigi machine.
 
-## Next steps (per spec's build order)
+## Build order status
 
-2. Room layer — `Route` / `RoutePoint` entities, DAO, database.
-3. Draw a hard-coded route as a polyline overlay — validates points → line.
-4. Route list screen wired to Room.
-5. Tap-to-create waypoints (no location permission needed).
-6. Record-the-drive via FusedLocationProvider.
-7. Follow view — live position against a selected route.
-8. Polish: notes, tags, waypoint markers, edit/delete, external-nav `geo:` intent,
-   settings.
+1. ✅ Project + map on screen.
+2. ✅ Room layer.
+3. ✅ Polyline rendering.
+4. ✅ Route list screen wired to Room.
+5. 🔲 Tap-to-create — implemented, needs testing.
+6. 🔲 Record-the-drive — implemented, needs testing.
+7. 🔲 Follow view — implemented, needs testing.
+8. 🔲 Polish — notes/tags/waypoints/edit/delete/nav-intent implemented and need
+   testing; Settings not built (spec marks it optional/last).
 
-Then, as a distinct Phase 2 (only after 1–8 work end to end):
+Then, as a distinct Phase 2 (only after 1–8 are confirmed working):
 
 9. Overlay foundation — TfNSW API key via `BuildConfig`, networking layer, prove one
    feed renders (start with live hazards, no caching needed).
