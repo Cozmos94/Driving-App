@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+// Read from local.properties (git-ignored, never committed) rather than hardcoding.
+// Falls back to an empty string so the project still builds for anyone who hasn't
+// set a key yet -- Phase 2 overlay code must treat an empty key as "feature off".
+val tfnswApiKey: String = run {
+    val properties = Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { properties.load(it) }
+    }
+    properties.getProperty("TFNSW_API_KEY", "")
 }
 
 android {
@@ -15,6 +29,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
+        buildConfigField("String", "TFNSW_API_KEY", "\"$tfnswApiKey\"")
     }
 
     buildTypes {
@@ -35,6 +50,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true // needed to generate BuildConfig.TFNSW_API_KEY (AGP 8+ opt-in)
     }
 
     packaging {
