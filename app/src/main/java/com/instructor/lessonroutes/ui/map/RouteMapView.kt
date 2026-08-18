@@ -1,7 +1,11 @@
 package com.instructor.lessonroutes.ui.map
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PointF
 import android.location.Location
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,6 +29,8 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.instructor.lessonroutes.data.remote.Hazard
+import com.instructor.lessonroutes.data.remote.HazardCategory
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import org.maplibre.android.camera.CameraPosition
@@ -37,8 +43,10 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import kotlin.coroutines.resume
+import kotlin.math.hypot
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 /** Free, keyless vector tile style. Liberty is OpenFreeMap's general-purpose style. */
@@ -52,6 +60,7 @@ const val OPENFREEMAP_LIBERTY_STYLE_URL = "https://tiles.openfreemap.org/styles/
 private val FALLBACK_CENTER = LatLng(-33.8688, 151.2093)
 private const val DEFAULT_ZOOM = 11.0
 private const val BOUNDS_PADDING_PX = 96
+private const val HAZARD_TAP_RADIUS_PX = 40.0
 
 private const val ROUTE_SOURCE_ID = "route-source"
 private const val ROUTE_LAYER_ID = "route-layer"
@@ -65,15 +74,26 @@ private const val LIVE_LOCATION_SOURCE_ID = "live-location-source"
 private const val LIVE_LOCATION_LAYER_ID = "live-location-layer"
 private const val LIVE_LOCATION_COLOR = "#1976D2" // blue "you are here" dot
 
-private const val HAZARD_SOURCE_ID = "hazard-source"
-private const val HAZARD_LAYER_ID = "hazard-layer"
-private const val HAZARD_COLOR = "#D32F2F" // red, Phase 2 live hazards overlay
+private const val INCIDENT_SOURCE_ID = "incident-source"
+private const val INCIDENT_LAYER_ID = "incident-layer"
+private const val INCIDENT_COLOR = "#D32F2F" // red, Phase 2 live hazards overlay
+
+private const val ROADWORK_SOURCE_ID = "roadwork-source"
+private const val ROADWORK_LAYER_ID = "roadwork-layer"
+private const val ROADWORK_ICON_ID = "roadwork-icon"
 
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
- * bounds, draws a route polyline + waypoint markers, shows a live position dot, and can
- * report taps back to the caller (tap-to-create mode).
+ * bounds, draws a route polyline + waypoint markers, shows a live position dot, renders
+ * live hazards (incidents as red dots, roadworks with a construction icon), and can
+ * report taps back to the caller — either a hazard tap ([onHazardClick]) or a plain map
+ * tap ([onMapClick], used for tap-to-create mode).
+ *
+ * Hazard taps are detected in plain Kotlin (screen-distance against the [hazards] list
+ * we already hold), not via MapLibre's feature-query API — we already have every
+ * hazard's full data in memory, so there's no need to round-trip through the map's
+ * rendered-feature/GeoJSON-properties API just to get it back out again.
  *
  * MapLibre's `MapView` is a plain Android View with its own lifecycle (onStart/onResume/
  * onPause/onStop/onDestroy/onLowMemory) that must be driven manually — it does not know
@@ -88,18 +108,21 @@ fun RouteMapView(
     waypoints: List<LatLng> = emptyList(),
     liveLocation: LatLng? = null,
     /** Phase 2 live hazards overlay (step 9) — empty when the overlay's off. */
-    hazards: List<LatLng> = emptyList(),
+    hazards: List<Hazard> = emptyList(),
     /** When true, moves the camera to fit [routePoints] instead of the device location. */
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
     centerOnDeviceLocation: Boolean = true,
     onMapClick: ((LatLng) -> Unit)? = null,
+    onHazardClick: ((Hazard) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val mapViewRef = remember { mutableStateOf<MapView?>(null) }
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
     val onMapClickState = rememberUpdatedState(onMapClick)
+    val onHazardClickState = rememberUpdatedState(onHazardClick)
+    val hazardsState = rememberUpdatedState(hazards)
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -124,8 +147,18 @@ fun RouteMapView(
                         .zoom(DEFAULT_ZOOM)
                         .build()
                     map.addOnMapClickListener { point ->
-                        onMapClickState.value?.invoke(point)
-                        onMapClickState.value != null
+                        val tapScreen = map.projection.toScreenLocation(point)
+                        val hitHazard = hazardsState.value.minByOrNull { hazard ->
+                            screenDistance(map, hazard, tapScreen)
+                        }?.takeIf { hazard -> screenDistance(map, hazard, tapScreen) <= HAZARD_TAP_RADIUS_PX }
+
+                        if (hitHazard != null) {
+                            onHazardClickState.value?.invoke(hitHazard)
+                            true
+                        } else {
+                            onMapClickState.value?.invoke(point)
+                            onMapClickState.value != null
+                        }
                     }
                     map.setStyle(styleUrl) { style ->
                         addSourcesAndLayers(style)
@@ -180,7 +213,12 @@ fun RouteMapView(
 
     LaunchedEffect(hazards, mapLibreMap) {
         val style = mapLibreMap?.style ?: return@LaunchedEffect
-        (style.getSource(HAZARD_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(hazards))
+        val incidentPoints = hazards.filter { it.category == HazardCategory.INCIDENT }
+            .map { LatLng(it.latitude, it.longitude) }
+        val roadworkPoints = hazards.filter { it.category == HazardCategory.ROADWORK }
+            .map { LatLng(it.latitude, it.longitude) }
+        (style.getSource(INCIDENT_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(incidentPoints))
+        (style.getSource(ROADWORK_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(roadworkPoints))
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -203,6 +241,11 @@ fun RouteMapView(
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
+}
+
+private fun screenDistance(map: MapLibreMap, hazard: Hazard, tapScreen: PointF): Double {
+    val hazardScreen = map.projection.toScreenLocation(LatLng(hazard.latitude, hazard.longitude))
+    return hypot((hazardScreen.x - tapScreen.x).toDouble(), (hazardScreen.y - tapScreen.y).toDouble())
 }
 
 private fun addSourcesAndLayers(style: Style) {
@@ -231,15 +274,37 @@ private fun addSourcesAndLayers(style: Style) {
             PropertyFactory.circleStrokeColor(Color.WHITE),
         ),
     )
-    style.addSource(GeoJsonSource(HAZARD_SOURCE_ID))
+    style.addSource(GeoJsonSource(INCIDENT_SOURCE_ID))
     style.addLayer(
-        CircleLayer(HAZARD_LAYER_ID, HAZARD_SOURCE_ID).withProperties(
+        CircleLayer(INCIDENT_LAYER_ID, INCIDENT_SOURCE_ID).withProperties(
             PropertyFactory.circleRadius(6f),
-            PropertyFactory.circleColor(Color.parseColor(HAZARD_COLOR)),
+            PropertyFactory.circleColor(Color.parseColor(INCIDENT_COLOR)),
             PropertyFactory.circleStrokeWidth(2f),
             PropertyFactory.circleStrokeColor(Color.WHITE),
         ),
     )
+    style.addImage(ROADWORK_ICON_ID, emojiIcon("🚧")) // 🚧
+    style.addSource(GeoJsonSource(ROADWORK_SOURCE_ID))
+    style.addLayer(
+        SymbolLayer(ROADWORK_LAYER_ID, ROADWORK_SOURCE_ID).withProperties(
+            PropertyFactory.iconImage(ROADWORK_ICON_ID),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(0.6f),
+        ),
+    )
+}
+
+/** Renders an emoji glyph to a bitmap so it can be used as a MapLibre icon image. */
+private fun emojiIcon(emoji: String, sizePx: Int = 96): Bitmap {
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = sizePx * 0.8f
+        textAlign = Paint.Align.CENTER
+    }
+    val textY = sizePx / 2f - (paint.descent() + paint.ascent()) / 2f
+    canvas.drawText(emoji, sizePx / 2f, textY, paint)
+    return bitmap
 }
 
 private suspend fun MapView.awaitMap(): MapLibreMap = suspendCancellableCoroutine { continuation ->

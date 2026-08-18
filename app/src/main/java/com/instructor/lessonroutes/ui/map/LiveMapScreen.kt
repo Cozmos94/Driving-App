@@ -5,10 +5,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,8 +21,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
+import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
-import org.maplibre.android.geometry.LatLng
+import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 
 private const val LOG_TAG = "LiveMapScreen"
 
@@ -31,13 +34,14 @@ private const val LOG_TAG = "LiveMapScreen"
  */
 @Composable
 fun LiveMapScreen(onPlanRouteClick: () -> Unit) {
-    var hazards by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var hazards by remember { mutableStateOf<List<Hazard>>(emptyList()) }
     var hazardsError by remember { mutableStateOf<String?>(null) }
+    var selectedHazard by remember { mutableStateOf<Hazard?>(null) }
 
     LaunchedEffect(Unit) {
         if (BuildConfig.TFNSW_API_KEY.isBlank()) return@LaunchedEffect
         try {
-            hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) }
+            hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY) + fetchOpenRoadworks(BuildConfig.TFNSW_API_KEY)
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Failed to fetch live hazards", e)
             hazardsError = "Couldn't load hazards right now"
@@ -45,7 +49,11 @@ fun LiveMapScreen(onPlanRouteClick: () -> Unit) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        RouteMapView(modifier = Modifier.fillMaxSize(), hazards = hazards)
+        RouteMapView(
+            modifier = Modifier.fillMaxSize(),
+            hazards = hazards,
+            onHazardClick = { selectedHazard = it },
+        )
 
         hazardsError?.let { message ->
             Surface(
@@ -63,5 +71,14 @@ fun LiveMapScreen(onPlanRouteClick: () -> Unit) {
         ) {
             Text("Plan a route")
         }
+    }
+
+    selectedHazard?.let { hazard ->
+        AlertDialog(
+            onDismissRequest = { selectedHazard = null },
+            title = { Text(hazard.title) },
+            text = { Text(hazard.advice ?: "No further details available.") },
+            confirmButton = { TextButton(onClick = { selectedHazard = null }) { Text("OK") } },
+        )
     }
 }

@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,7 +33,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
 import com.instructor.lessonroutes.data.RouteDao
+import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
+import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import org.maplibre.android.geometry.LatLng
 
@@ -49,8 +53,9 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
     // Phase 2 step 9: live hazards overlay, no caching (fetched fresh each time it's
     // switched on). Silently does nothing if no API key is configured.
     var showHazards by remember { mutableStateOf(false) }
-    var hazards by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var hazards by remember { mutableStateOf<List<Hazard>>(emptyList()) }
     var hazardsError by remember { mutableStateOf<String?>(null) }
+    var selectedHazard by remember { mutableStateOf<Hazard?>(null) }
 
     LaunchedEffect(showHazards) {
         if (!showHazards) {
@@ -60,7 +65,7 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
         }
         hazardsError = null
         try {
-            hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) }
+            hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY) + fetchOpenRoadworks(BuildConfig.TFNSW_API_KEY)
         } catch (e: Exception) {
             Log.e("RouteDetailScreen", "Failed to fetch live hazards", e)
             hazardsError = "Couldn't load hazards right now"
@@ -83,6 +88,7 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                     routePoints = sortedPoints.map { LatLng(it.latitude, it.longitude) },
                     waypoints = sortedPoints.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
                     hazards = hazards,
+                    onHazardClick = { selectedHazard = it },
                     fitBoundsToRoute = true,
                 )
                 if (!current.route.notes.isNullOrBlank()) {
@@ -128,6 +134,15 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                 }
             }
         }
+    }
+
+    selectedHazard?.let { hazard ->
+        AlertDialog(
+            onDismissRequest = { selectedHazard = null },
+            title = { Text(hazard.title) },
+            text = { Text(hazard.advice ?: "No further details available.") },
+            confirmButton = { TextButton(onClick = { selectedHazard = null }) { Text("OK") } },
+        )
     }
 }
 
