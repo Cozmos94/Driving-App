@@ -14,16 +14,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.instructor.lessonroutes.data.remote.Hazard
 
 /**
- * Non-modal replacement for a hazard-tap AlertDialog: an inline banner over the top
- * of the map instead of a popup that blocks interacting with anything else. Renders
- * nothing when [hazard] is null, so callers can use it unconditionally.
+ * Non-modal replacement for an AlertDialog on marker taps: an inline banner over
+ * the top of the map instead of a popup that blocks interacting with anything
+ * else. Renders nothing when [title] is null, so callers can use it unconditionally
+ * regardless of what triggered it (a hazard tap, a high-volume-road tap, etc).
  */
 @Composable
-fun HazardInfoBanner(hazard: Hazard?, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    if (hazard == null) return
+fun InfoBanner(title: String?, subtitle: String? = null, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    if (title == null) return
 
     Surface(
         modifier = modifier.padding(16.dp).widthIn(max = 360.dp),
@@ -36,12 +36,10 @@ fun HazardInfoBanner(hazard: Hazard?, onDismiss: () -> Unit, modifier: Modifier 
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = hazard.title, style = MaterialTheme.typography.titleSmall)
+                Text(text = title, style = MaterialTheme.typography.titleSmall)
                 TextButton(onClick = onDismiss) { Text("Dismiss") }
             }
-            hazard.advice?.let { advice ->
-                Text(text = advice, style = MaterialTheme.typography.bodySmall)
-            }
+            subtitle?.let { Text(text = it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

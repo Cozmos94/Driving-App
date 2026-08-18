@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -33,6 +31,8 @@ import com.instructor.lessonroutes.data.SchoolZoneDao
 import com.instructor.lessonroutes.data.SpeedCamera
 import com.instructor.lessonroutes.data.SpeedCameraDao
 import com.instructor.lessonroutes.data.remote.Hazard
+import com.instructor.lessonroutes.data.remote.HighVolumeRoad
+import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
@@ -44,9 +44,9 @@ private const val LOG_TAG = "LiveMapScreen"
 
 /**
  * The app's home screen: a live map that follows the device's position as it moves
- * (Google-Maps-style driving view), with the hazards overlay on by default and the
- * static reference overlays (school zones, speed cameras) always shown too. A button
- * at the bottom moves into route planning (the list/create/detail flow).
+ * (Google-Maps-style driving view), with the hazards + high-traffic-volume overlays
+ * on by default and the static reference overlays (school zones, speed cameras)
+ * always shown too. A button at the bottom moves into route planning.
  */
 @Composable
 fun LiveMapScreen(
@@ -57,10 +57,15 @@ fun LiveMapScreen(
     val context = LocalContext.current
 
     var hazards by remember { mutableStateOf<List<Hazard>>(emptyList()) }
-    var hazardsError by remember { mutableStateOf<String?>(null) }
-    var selectedHazard by remember { mutableStateOf<Hazard?>(null) }
+    var highVolumeRoads by remember { mutableStateOf<List<HighVolumeRoad>>(emptyList()) }
+    var networkError by remember { mutableStateOf<String?>(null) }
     var schoolZones by remember { mutableStateOf<List<SchoolZone>>(emptyList()) }
     var cameras by remember { mutableStateOf<List<SpeedCamera>>(emptyList()) }
+
+    // One shared top-of-map banner slot for whatever the user last tapped (a hazard,
+    // a high-volume road) or a fetch error -- never more than one shown at once.
+    var bannerTitle by remember { mutableStateOf<String?>(null) }
+    var bannerSubtitle by remember { mutableStateOf<String?>(null) }
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -99,7 +104,17 @@ fun LiveMapScreen(
             hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY) + fetchOpenRoadworks(BuildConfig.TFNSW_API_KEY)
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Failed to fetch live hazards", e)
-            hazardsError = "Couldn't load hazards right now"
+            networkError = "Couldn't load hazards right now"
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (BuildConfig.TFNSW_API_KEY.isBlank()) return@LaunchedEffect
+        try {
+            highVolumeRoads = fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Failed to fetch high-volume roads", e)
+            networkError = "Couldn't load traffic volume data right now"
         }
     }
 
@@ -109,32 +124,23 @@ fun LiveMapScreen(
             hazards = hazards,
             schoolZones = schoolZones,
             cameras = cameras,
+            highVolumeRoads = highVolumeRoads,
             liveLocation = liveLocation,
             followLiveLocation = true,
-            onHazardClick = { selectedHazard = it },
+            onHazardClick = { bannerTitle = it.title; bannerSubtitle = it.advice },
+            onHighVolumeClick = { bannerTitle = "High Traffic Volume"; bannerSubtitle = null },
             // This screen manages its own continuous location tracking above --
             // RouteMapView's one-shot device-location centering would be redundant
             // and could race with this screen's own permission request.
             centerOnDeviceLocation = false,
         )
 
-        HazardInfoBanner(
-            hazard = selectedHazard,
-            onDismiss = { selectedHazard = null },
+        InfoBanner(
+            title = bannerTitle ?: networkError,
+            subtitle = bannerSubtitle,
+            onDismiss = { bannerTitle = null; bannerSubtitle = null; networkError = null },
             modifier = Modifier.align(Alignment.TopCenter),
         )
-
-        if (selectedHazard == null) {
-            hazardsError?.let { message ->
-                Surface(
-                    modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
-                    tonalElevation = 4.dp,
-                    shape = MaterialTheme.shapes.small,
-                ) {
-                    Text(text = message, modifier = Modifier.padding(8.dp))
-                }
-            }
-        }
 
         Button(
             onClick = onPlanRouteClick,

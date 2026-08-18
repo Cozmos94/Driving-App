@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.RectF
 import android.location.Location
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -34,6 +36,7 @@ import com.instructor.lessonroutes.data.SpeedCamera
 import com.instructor.lessonroutes.data.SpeedCameraType
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.HazardCategory
+import com.instructor.lessonroutes.data.remote.HighVolumeRoad
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import org.maplibre.android.camera.CameraPosition
@@ -63,7 +66,7 @@ const val OPENFREEMAP_LIBERTY_STYLE_URL = "https://tiles.openfreemap.org/styles/
 private val FALLBACK_CENTER = LatLng(-33.8688, 151.2093)
 private const val DEFAULT_ZOOM = 11.0
 private const val BOUNDS_PADDING_PX = 96
-private const val HAZARD_TAP_RADIUS_PX = 40.0
+private const val TAP_HIT_RADIUS_PX = 40.0
 
 private const val ROUTE_SOURCE_ID = "route-source"
 private const val ROUTE_LAYER_ID = "route-layer"
@@ -104,6 +107,10 @@ private const val CAMERA_REDLIGHT_SOURCE_ID = "camera-redlight-source"
 private const val CAMERA_REDLIGHT_LAYER_ID = "camera-redlight-layer"
 private const val CAMERA_REDLIGHT_ICON_ID = "camera-redlight-icon"
 
+private const val HIGH_VOLUME_SOURCE_ID = "high-volume-source"
+private const val HIGH_VOLUME_LAYER_ID = "high-volume-layer"
+private const val HIGH_VOLUME_ICON_ID = "high-volume-icon"
+
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
@@ -138,12 +145,15 @@ fun RouteMapView(
     /** Static reference overlays — no tap handling on these yet, display only. */
     schoolZones: List<SchoolZone> = emptyList(),
     cameras: List<SpeedCamera> = emptyList(),
+    /** Phase 2: roads over the high-volume threshold — tappable, like hazards. */
+    highVolumeRoads: List<HighVolumeRoad> = emptyList(),
     /** When true, moves the camera to fit [routePoints] instead of the device location. */
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
     centerOnDeviceLocation: Boolean = true,
     onMapClick: ((LatLng) -> Unit)? = null,
     onHazardClick: ((Hazard) -> Unit)? = null,
+    onHighVolumeClick: ((HighVolumeRoad) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -151,7 +161,9 @@ fun RouteMapView(
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
     val onMapClickState = rememberUpdatedState(onMapClick)
     val onHazardClickState = rememberUpdatedState(onHazardClick)
+    val onHighVolumeClickState = rememberUpdatedState(onHighVolumeClick)
     val hazardsState = rememberUpdatedState(hazards)
+    val highVolumeRoadsState = rememberUpdatedState(highVolumeRoads)
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -177,16 +189,30 @@ fun RouteMapView(
                         .build()
                     map.addOnMapClickListener { point ->
                         val tapScreen = map.projection.toScreenLocation(point)
-                        val hitHazard = hazardsState.value.minByOrNull { hazard ->
-                            screenDistance(map, hazard, tapScreen)
-                        }?.takeIf { hazard -> screenDistance(map, hazard, tapScreen) <= HAZARD_TAP_RADIUS_PX }
 
-                        if (hitHazard != null) {
-                            onHazardClickState.value?.invoke(hitHazard)
-                            true
-                        } else {
-                            onMapClickState.value?.invoke(point)
-                            onMapClickState.value != null
+                        val hazardHit = hazardsState.value
+                            .map { it to screenDistance(map, it.latitude, it.longitude, tapScreen) }
+                            .minByOrNull { (_, distance) -> distance }
+                            ?.takeIf { (_, distance) -> distance <= TAP_HIT_RADIUS_PX }
+
+                        val volumeHit = highVolumeRoadsState.value
+                            .map { it to screenDistance(map, it.latitude, it.longitude, tapScreen) }
+                            .minByOrNull { (_, distance) -> distance }
+                            ?.takeIf { (_, distance) -> distance <= TAP_HIT_RADIUS_PX }
+
+                        when {
+                            hazardHit != null && (volumeHit == null || hazardHit.second <= volumeHit.second) -> {
+                                onHazardClickState.value?.invoke(hazardHit.first)
+                                true
+                            }
+                            volumeHit != null -> {
+                                onHighVolumeClickState.value?.invoke(volumeHit.first)
+                                true
+                            }
+                            else -> {
+                                onMapClickState.value?.invoke(point)
+                                onMapClickState.value != null
+                            }
                         }
                     }
                     map.setStyle(styleUrl) { style ->
@@ -276,6 +302,12 @@ fun RouteMapView(
         (style.getSource(CAMERA_REDLIGHT_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(redLightPoints))
     }
 
+    LaunchedEffect(highVolumeRoads, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        val points = highVolumeRoads.map { LatLng(it.latitude, it.longitude) }
+        (style.getSource(HIGH_VOLUME_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(points))
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             val view = mapViewRef.value ?: return@LifecycleEventObserver
@@ -298,9 +330,9 @@ fun RouteMapView(
     }
 }
 
-private fun screenDistance(map: MapLibreMap, hazard: Hazard, tapScreen: PointF): Double {
-    val hazardScreen = map.projection.toScreenLocation(LatLng(hazard.latitude, hazard.longitude))
-    return hypot((hazardScreen.x - tapScreen.x).toDouble(), (hazardScreen.y - tapScreen.y).toDouble())
+private fun screenDistance(map: MapLibreMap, latitude: Double, longitude: Double, tapScreen: PointF): Double {
+    val screen = map.projection.toScreenLocation(LatLng(latitude, longitude))
+    return hypot((screen.x - tapScreen.x).toDouble(), (screen.y - tapScreen.y).toDouble())
 }
 
 private fun addSourcesAndLayers(style: Style) {
@@ -385,6 +417,16 @@ private fun addSourcesAndLayers(style: Style) {
             PropertyFactory.iconSize(0.5f),
         ),
     )
+
+    style.addImage(HIGH_VOLUME_ICON_ID, redStripIcon())
+    style.addSource(GeoJsonSource(HIGH_VOLUME_SOURCE_ID))
+    style.addLayer(
+        SymbolLayer(HIGH_VOLUME_LAYER_ID, HIGH_VOLUME_SOURCE_ID).withProperties(
+            PropertyFactory.iconImage(HIGH_VOLUME_ICON_ID),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(0.6f),
+        ),
+    )
 }
 
 /** Renders an emoji glyph to a bitmap so it can be used as a MapLibre icon image. */
@@ -426,6 +468,36 @@ private fun speedLimitSignIcon(speedLimitKmh: Int, sizePx: Int = 96): Bitmap {
     }
     val textY = center - (textPaint.descent() + textPaint.ascent()) / 2f
     canvas.drawText(speedLimitKmh.toString(), center, textY, textPaint)
+    return bitmap
+}
+
+/**
+ * Draws a short red "strip of road" marker for high-traffic-volume locations. This
+ * is a stylized icon, not literal road geometry -- the source data is individual
+ * counting-station points, not road-segment lines, so there's no actual road shape
+ * to paint red without a separate road-network dataset to snap to.
+ */
+private fun redStripIcon(sizePx: Int = 96): Bitmap {
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val stripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#B71C1C")
+        style = Paint.Style.FILL
+    }
+    val stripHeight = sizePx * 0.28f
+    val top = (sizePx - stripHeight) / 2f
+    val rect = RectF(sizePx * 0.08f, top, sizePx * 0.92f, top + stripHeight)
+    canvas.drawRoundRect(rect, stripHeight / 2f, stripHeight / 2f, stripPaint)
+
+    // A dashed centerline, like a road marking, to read as "road" rather than a bar.
+    val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        strokeWidth = sizePx * 0.03f
+        pathEffect = DashPathEffect(floatArrayOf(sizePx * 0.08f, sizePx * 0.05f), 0f)
+    }
+    canvas.drawLine(sizePx * 0.12f, sizePx / 2f, sizePx * 0.88f, sizePx / 2f, linePaint)
+
     return bitmap
 }
 

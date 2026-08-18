@@ -34,7 +34,7 @@ import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
-import com.instructor.lessonroutes.ui.map.HazardInfoBanner
+import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import org.maplibre.android.geometry.LatLng
 
@@ -91,8 +91,9 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                         onHazardClick = { selectedHazard = it },
                         fitBoundsToRoute = true,
                     )
-                    HazardInfoBanner(
-                        hazard = selectedHazard,
+                    InfoBanner(
+                        title = selectedHazard?.title,
+                        subtitle = selectedHazard?.advice,
                         onDismiss = { selectedHazard = null },
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
