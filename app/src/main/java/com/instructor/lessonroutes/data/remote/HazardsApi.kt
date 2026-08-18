@@ -15,7 +15,7 @@ data class Hazard(
     val advice: String?,
 )
 
-private const val INCIDENT_OPEN_URL = "https://api.transport.nsw.gov.au/v1/live/hazards/incident-open.json"
+private const val INCIDENT_OPEN_URL = "https://api.transport.nsw.gov.au/v1/live/hazards/incident/open"
 
 private val client = OkHttpClient()
 
@@ -35,9 +35,10 @@ suspend fun fetchOpenIncidents(apiKey: String): List<Hazard> {
     return withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(INCIDENT_OPEN_URL)
-            // Literal word "apikey", then a space, then the token -- per TfNSW Open
-            // Data Hub convention (not spelled out in the hazards developer guide
-            // itself, which doesn't cover authentication).
+            // Literal word "apikey", then a space, then the token -- confirmed via the
+            // API's actual Swagger/OpenAPI spec (securityDefinitions.APIKey.description:
+            // "Expected Format: apikey [TOKEN]"), not just the developer guide PDF,
+            // which doesn't cover authentication at all.
             .header("Authorization", "apikey $apiKey")
             .build()
 
