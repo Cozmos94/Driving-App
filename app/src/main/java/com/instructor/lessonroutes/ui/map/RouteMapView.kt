@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -140,10 +141,10 @@ private suspend fun MapView.awaitMap(): MapLibreMap = suspendCancellableCoroutin
 
 /** Requests one fresh fix rather than relying on a possibly-null cached last location. */
 @SuppressLint("MissingPermission") // caller only reaches here after a permission check
-private suspend fun FusedLocationProviderClient.awaitCurrentLocation() =
+private suspend fun FusedLocationProviderClient.awaitCurrentLocation(): Location? =
     try {
         val cancellationTokenSource = CancellationTokenSource()
-        suspendCancellableCoroutine { continuation ->
+        suspendCancellableCoroutine<Location?> { continuation ->
             getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cancellationTokenSource.token)
                 .addOnSuccessListener { location -> continuation.resume(location) }
                 .addOnFailureListener { continuation.resume(null) }
