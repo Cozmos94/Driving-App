@@ -72,6 +72,12 @@ fun LiveMapScreen(
             schoolZones = schoolZones,
             cameras = cameras,
             onHazardClick = { selectedHazard = it },
+            // Emulator location mocking has been unreliable to test against (kept
+            // returning the emulator's Mountain View/San Jose default regardless of
+            // what was set in Extended Controls) -- defaulting to Sydney for now
+            // rather than fighting that further. RouteMapView's device-location
+            // logic is untouched; flip this back on to resume using it.
+            centerOnDeviceLocation = false,
         )
 
         hazardsError?.let { message ->
