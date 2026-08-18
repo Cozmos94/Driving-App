@@ -11,14 +11,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,6 +34,7 @@ import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
+import com.instructor.lessonroutes.ui.map.HazardInfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import org.maplibre.android.geometry.LatLng
 
@@ -83,14 +82,21 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
         } else {
             val sortedPoints = current.points.sortedBy { it.sequenceOrder }
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                RouteMapView(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    routePoints = sortedPoints.map { LatLng(it.latitude, it.longitude) },
-                    waypoints = sortedPoints.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
-                    hazards = hazards,
-                    onHazardClick = { selectedHazard = it },
-                    fitBoundsToRoute = true,
-                )
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    RouteMapView(
+                        modifier = Modifier.fillMaxSize(),
+                        routePoints = sortedPoints.map { LatLng(it.latitude, it.longitude) },
+                        waypoints = sortedPoints.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
+                        hazards = hazards,
+                        onHazardClick = { selectedHazard = it },
+                        fitBoundsToRoute = true,
+                    )
+                    HazardInfoBanner(
+                        hazard = selectedHazard,
+                        onDismiss = { selectedHazard = null },
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+                }
                 if (!current.route.notes.isNullOrBlank()) {
                     Text(text = current.route.notes, modifier = Modifier.padding(16.dp))
                 }
@@ -134,15 +140,6 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                 }
             }
         }
-    }
-
-    selectedHazard?.let { hazard ->
-        AlertDialog(
-            onDismissRequest = { selectedHazard = null },
-            title = { Text(hazard.title) },
-            text = { Text(hazard.advice ?: "No further details available.") },
-            confirmButton = { TextButton(onClick = { selectedHazard = null }) { Text("OK") } },
-        )
     }
 }
 

@@ -129,6 +129,10 @@ fun RouteMapView(
     routePoints: List<LatLng> = emptyList(),
     waypoints: List<LatLng> = emptyList(),
     liveLocation: LatLng? = null,
+    /** When true, the camera pans to follow [liveLocation] as it updates — a driving
+     * view, like Google Maps, rather than a static dot. Doesn't change zoom, so a
+     * manual pinch-zoom isn't fought on the next update. */
+    followLiveLocation: Boolean = false,
     /** Phase 2 live hazards overlay (step 9) — empty when the overlay's off. */
     hazards: List<Hazard> = emptyList(),
     /** Static reference overlays — no tap handling on these yet, display only. */
@@ -234,6 +238,15 @@ fun RouteMapView(
         val style = mapLibreMap?.style ?: return@LaunchedEffect
         val points = liveLocation?.let { listOf(it) } ?: emptyList()
         (style.getSource(LIVE_LOCATION_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(points))
+    }
+
+    // Driving view: pans to the live location on every update instead of just
+    // drawing a static dot. Zoom is left alone so a manual pinch-zoom sticks.
+    LaunchedEffect(liveLocation, mapLibreMap, followLiveLocation) {
+        if (!followLiveLocation) return@LaunchedEffect
+        val map = mapLibreMap ?: return@LaunchedEffect
+        val location = liveLocation ?: return@LaunchedEffect
+        map.easeCamera(CameraUpdateFactory.newLatLng(location), 1000)
     }
 
     LaunchedEffect(hazards, mapLibreMap) {
