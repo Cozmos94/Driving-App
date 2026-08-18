@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.location.Location
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +32,9 @@ import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.sources.GeoJsonSource
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -45,9 +49,14 @@ const val OPENFREEMAP_LIBERTY_STYLE_URL = "https://tiles.openfreemap.org/styles/
 private val FALLBACK_CENTER = LatLng(-33.8688, 151.2093)
 private const val DEFAULT_ZOOM = 11.0
 
+private const val ROUTE_SOURCE_ID = "route-source"
+private const val ROUTE_LAYER_ID = "route-layer"
+private const val ROUTE_LINE_COLOR = "#2E7D32" // matches the app's theme green
+
 /**
- * Step 1 of the build order: prove a map renders on screen from a free tile source,
- * with no API key and no billing account. Route/point rendering comes in step 3.
+ * The main map surface: renders free OpenFreeMap tiles inside an `AndroidView` (step 1),
+ * centers on the device's location once permission is granted, and draws [routePoints]
+ * as a polyline (step 3) — an empty list just shows no line.
  *
  * MapLibre's `MapView` is a plain Android View with its own lifecycle (onStart/onResume/
  * onPause/onStop/onDestroy/onLowMemory) that must be driven manually — it does not know
@@ -58,10 +67,12 @@ private const val DEFAULT_ZOOM = 11.0
 fun RouteMapView(
     modifier: Modifier = Modifier,
     styleUrl: String = OPENFREEMAP_LIBERTY_STYLE_URL,
+    routePoints: List<LatLng> = emptyList(),
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val mapViewRef = remember { mutableStateOf<MapView?>(null) }
+    var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -83,11 +94,22 @@ fun RouteMapView(
                 mapViewRef.value = view
                 view.onCreate(Bundle())
                 view.getMapAsync { map ->
-                    map.setStyle(styleUrl)
                     map.cameraPosition = CameraPosition.Builder()
                         .target(FALLBACK_CENTER)
                         .zoom(DEFAULT_ZOOM)
                         .build()
+                    map.setStyle(styleUrl) { style ->
+                        style.addSource(GeoJsonSource(ROUTE_SOURCE_ID))
+                        style.addLayer(
+                            LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
+                                PropertyFactory.lineColor(Color.parseColor(ROUTE_LINE_COLOR)),
+                                PropertyFactory.lineWidth(4f),
+                            ),
+                        )
+                        // Only exposed once the source/layer exist, so the route-drawing
+                        // effect below never races ahead of style setup.
+                        mapLibreMap = map
+                    }
                 }
             }
         },
@@ -105,6 +127,14 @@ fun RouteMapView(
             .target(LatLng(location.latitude, location.longitude))
             .zoom(DEFAULT_ZOOM)
             .build()
+    }
+
+    // Redraws the route line whenever the points change (or as soon as the style
+    // becomes ready, if points were already available).
+    LaunchedEffect(routePoints, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        val source = style.getSource(ROUTE_SOURCE_ID) as? GeoJsonSource ?: return@LaunchedEffect
+        source.setGeoJson(routeGeoJson(routePoints))
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -153,3 +183,13 @@ private suspend fun FusedLocationProviderClient.awaitCurrentLocation(): Location
     } catch (e: SecurityException) {
         null
     }
+
+/**
+ * Builds a GeoJSON LineString feature by hand (no geojson library dependency needed).
+ * Fewer than 2 points can't form a line, so that case just clears the layer.
+ */
+private fun routeGeoJson(points: List<LatLng>): String {
+    if (points.size < 2) return """{"type":"FeatureCollection","features":[]}"""
+    val coordinates = points.joinToString(",") { "[${it.longitude},${it.latitude}]" }
+    return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coordinates]},"properties":{}}"""
+}

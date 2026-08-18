@@ -23,6 +23,7 @@ import com.instructor.lessonroutes.data.RoutePoint
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.theme.LessonRoutesTheme
 import kotlinx.coroutines.flow.first
+import org.maplibre.android.geometry.LatLng
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,12 +32,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             LessonRoutesTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        // Step 1: just prove the map renders from a free tile source.
-                        // Route list / create / follow screens replace this in later steps.
-                        RouteMapView(modifier = Modifier.fillMaxSize())
-                        RoomSeedCheck(database = database)
-                    }
+                    MainScreen(database = database)
                 }
             }
         }
@@ -44,13 +40,14 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Step 2 verification only: seeds one fake route (in Sydney, since the spec is now
- * NSW-scoped) on first run, then reads it back through the DAO and shows the result.
- * This whole composable goes away once step 4 wires up the real route list.
+ * Steps 1–3 staging ground: a full-screen map plus a status banner. This whole
+ * composable is temporary scaffolding — it gets replaced by real navigation between
+ * the route list / create / detail / follow screens starting at step 4.
  */
 @Composable
-private fun RoomSeedCheck(database: AppDatabase) {
+private fun MainScreen(database: AppDatabase) {
     var status by remember { mutableStateOf("Checking Room…") }
+    var routePoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
 
     LaunchedEffect(Unit) {
         val dao = database.routeDao()
@@ -60,7 +57,7 @@ private fun RoomSeedCheck(database: AppDatabase) {
                 Route(
                     name = "Seed test route",
                     description = "Inserted by step 2 to prove Room reads/writes work",
-                    notes = "Safe to delete once step 3+ replaces this check",
+                    notes = "Safe to delete once step 4 replaces this with real routes",
                     dateCreated = System.currentTimeMillis(),
                     tag = "test",
                 ),
@@ -69,6 +66,7 @@ private fun RoomSeedCheck(database: AppDatabase) {
                 listOf(
                     RoutePoint(routeId = id, latitude = -33.8688, longitude = 151.2093, sequenceOrder = 0),
                     RoutePoint(routeId = id, latitude = -33.8700, longitude = 151.2140, sequenceOrder = 1),
+                    RoutePoint(routeId = id, latitude = -33.8735, longitude = 151.2110, sequenceOrder = 2),
                 ),
             )
             id
@@ -77,18 +75,24 @@ private fun RoomSeedCheck(database: AppDatabase) {
         }
 
         val routeWithPoints = dao.getRouteWithPoints(routeId).first()
-        status = if (routeWithPoints != null) {
-            "Room OK — \"${routeWithPoints.route.name}\" with ${routeWithPoints.points.size} points"
+        if (routeWithPoints != null) {
+            status = "Room OK — \"${routeWithPoints.route.name}\" with ${routeWithPoints.points.size} points"
+            routePoints = routeWithPoints.points
+                .sortedBy { it.sequenceOrder }
+                .map { LatLng(it.latitude, it.longitude) }
         } else {
-            "Room read-back failed"
+            status = "Room read-back failed"
         }
     }
 
-    Surface(
-        modifier = Modifier.padding(16.dp),
-        tonalElevation = 4.dp,
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Text(text = status, modifier = Modifier.padding(8.dp))
+    Box(modifier = Modifier.fillMaxSize()) {
+        RouteMapView(modifier = Modifier.fillMaxSize(), routePoints = routePoints)
+        Surface(
+            modifier = Modifier.padding(16.dp),
+            tonalElevation = 4.dp,
+            shape = MaterialTheme.shapes.small,
+        ) {
+            Text(text = status, modifier = Modifier.padding(8.dp))
+        }
     }
 }
