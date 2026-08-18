@@ -89,6 +89,28 @@ things independently, both already worked around in this repo:
 This isn't specific to this app — it'll affect any networked Android dev/emulator
 work on a Novigi machine.
 
+## Phase 2 setup: Transport for NSW API key
+
+Needed for the map overlays (school zones, live hazards, etc.) — not needed for
+anything in the core app (steps 1–8). Get a free key from the
+[TfNSW Open Data Hub](https://opendata.transport.nsw.gov.au), then add it to
+`local.properties` (git-ignored, never committed) in the project root:
+
+```properties
+TFNSW_API_KEY=your-key-here
+```
+
+This is read into `BuildConfig.TFNSW_API_KEY` at build time (see `app/build.gradle.kts`).
+No key set means an empty string — Phase 2 overlay code must treat that as
+"feature off," not crash. Requests need the header `Authorization: apikey YOUR_TOKEN`
+(literal word `apikey`, space, then the token).
+
+The actual networking + first overlay render isn't built yet — the exact Live
+Traffic Hazards endpoint path and response shape are documented in TfNSW's
+"Live Traffic NSW Developer Guide" PDF, which requires logging into your Open Data
+Hub account to download. Grab that PDF (or just the relevant endpoint/response
+section) and hand it over to build against real specifics instead of guessing.
+
 ## Build order status
 
 1. ✅ Project + map on screen.
