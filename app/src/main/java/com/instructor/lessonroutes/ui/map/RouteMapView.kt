@@ -11,10 +11,21 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
 
 /** Free, keyless vector tile style. Liberty is OpenFreeMap's general-purpose style. */
 const val OPENFREEMAP_LIBERTY_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+
+/**
+ * The app is NSW-scoped, so default the camera to Sydney rather than MapLibre's
+ * global (zoom 0) default. This is a fixed placeholder — once step 6 adds location
+ * permission handling, the initial camera could instead center on the device's
+ * actual position.
+ */
+private val NSW_DEFAULT_CENTER = LatLng(-33.8688, 151.2093)
+private const val NSW_DEFAULT_ZOOM = 11.0
 
 /**
  * Step 1 of the build order: prove a map renders on screen from a free tile source,
@@ -41,6 +52,10 @@ fun RouteMapView(
                 view.onCreate(Bundle())
                 view.getMapAsync { map ->
                     map.setStyle(styleUrl)
+                    map.cameraPosition = CameraPosition.Builder()
+                        .target(NSW_DEFAULT_CENTER)
+                        .zoom(NSW_DEFAULT_ZOOM)
+                        .build()
                 }
             }
         },
