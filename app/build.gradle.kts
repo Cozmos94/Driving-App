@@ -69,4 +69,7 @@ dependencies {
     implementation(libs.play.services.location)
 
     implementation(libs.kotlinx.coroutines.android)
+
+    // Navigation between screens (step 4+)
+    implementation(libs.androidx.navigation.compose)
 }
