@@ -65,6 +65,10 @@ private const val LIVE_LOCATION_SOURCE_ID = "live-location-source"
 private const val LIVE_LOCATION_LAYER_ID = "live-location-layer"
 private const val LIVE_LOCATION_COLOR = "#1976D2" // blue "you are here" dot
 
+private const val HAZARD_SOURCE_ID = "hazard-source"
+private const val HAZARD_LAYER_ID = "hazard-layer"
+private const val HAZARD_COLOR = "#D32F2F" // red, Phase 2 live hazards overlay
+
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
@@ -83,6 +87,8 @@ fun RouteMapView(
     routePoints: List<LatLng> = emptyList(),
     waypoints: List<LatLng> = emptyList(),
     liveLocation: LatLng? = null,
+    /** Phase 2 live hazards overlay (step 9) — empty when the overlay's off. */
+    hazards: List<LatLng> = emptyList(),
     /** When true, moves the camera to fit [routePoints] instead of the device location. */
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
@@ -172,6 +178,11 @@ fun RouteMapView(
         (style.getSource(LIVE_LOCATION_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(points))
     }
 
+    LaunchedEffect(hazards, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        (style.getSource(HAZARD_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(hazards))
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             val view = mapViewRef.value ?: return@LifecycleEventObserver
@@ -216,6 +227,15 @@ private fun addSourcesAndLayers(style: Style) {
         CircleLayer(LIVE_LOCATION_LAYER_ID, LIVE_LOCATION_SOURCE_ID).withProperties(
             PropertyFactory.circleRadius(8f),
             PropertyFactory.circleColor(Color.parseColor(LIVE_LOCATION_COLOR)),
+            PropertyFactory.circleStrokeWidth(2f),
+            PropertyFactory.circleStrokeColor(Color.WHITE),
+        ),
+    )
+    style.addSource(GeoJsonSource(HAZARD_SOURCE_ID))
+    style.addLayer(
+        CircleLayer(HAZARD_LAYER_ID, HAZARD_SOURCE_ID).withProperties(
+            PropertyFactory.circleRadius(6f),
+            PropertyFactory.circleColor(Color.parseColor(HAZARD_COLOR)),
             PropertyFactory.circleStrokeWidth(2f),
             PropertyFactory.circleStrokeColor(Color.WHITE),
         ),

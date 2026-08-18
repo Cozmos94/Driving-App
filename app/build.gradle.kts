@@ -88,4 +88,7 @@ dependencies {
 
     // Navigation between screens (step 4+)
     implementation(libs.androidx.navigation.compose)
+
+    // Phase 2: Transport for NSW live hazards feed
+    implementation(libs.okhttp)
 }

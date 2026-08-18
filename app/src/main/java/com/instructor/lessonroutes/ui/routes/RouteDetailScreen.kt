@@ -14,16 +14,23 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.instructor.lessonroutes.BuildConfig
 import com.instructor.lessonroutes.data.RouteDao
+import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import org.maplibre.android.geometry.LatLng
 
@@ -37,6 +44,26 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
     val context = LocalContext.current
     val routeWithPoints by dao.getRouteWithPoints(routeId).collectAsState(initial = null)
     val current = routeWithPoints
+
+    // Phase 2 step 9: live hazards overlay, no caching (fetched fresh each time it's
+    // switched on). Silently does nothing if no API key is configured.
+    var showHazards by remember { mutableStateOf(false) }
+    var hazards by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var hazardsError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(showHazards) {
+        if (!showHazards) {
+            hazards = emptyList()
+            hazardsError = null
+            return@LaunchedEffect
+        }
+        hazardsError = null
+        try {
+            hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) }
+        } catch (e: Exception) {
+            hazardsError = "Couldn't load hazards right now"
+        }
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text(current?.route?.name ?: "Route") }) }) { padding ->
         if (current == null) {
@@ -53,10 +80,30 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     routePoints = sortedPoints.map { LatLng(it.latitude, it.longitude) },
                     waypoints = sortedPoints.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
+                    hazards = hazards,
                     fitBoundsToRoute = true,
                 )
                 if (!current.route.notes.isNullOrBlank()) {
                     Text(text = current.route.notes, modifier = Modifier.padding(16.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Switch(
+                        checked = showHazards,
+                        onCheckedChange = { showHazards = it },
+                        enabled = BuildConfig.TFNSW_API_KEY.isNotBlank(),
+                    )
+                    Text(
+                        text = hazardsError
+                            ?: if (BuildConfig.TFNSW_API_KEY.isBlank()) {
+                                "Live hazards (no API key configured)"
+                            } else {
+                                "Live hazards"
+                            },
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
