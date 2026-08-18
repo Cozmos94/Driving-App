@@ -8,14 +8,14 @@ parent context) for the full design.
 ## Status: core build (steps 1–8) implemented, pending full test pass
 
 Steps 1–4 (map rendering, Room layer, polyline drawing, route list → detail
-navigation) are built and confirmed working. Steps 5–8 were just implemented in one
+navigation) are built and confirmed working. Steps 5–8 were implemented in one
 larger pass and are **not yet confirmed** — see "What's implemented, untested" below
-for exactly what to check. After that, there's a separate Phase 2 (steps 9–11) adding
-NSW open-data map overlays (school zones, live hazards, crash/black-spot data, an
-OSM-derived low-traffic proxy) — see `spec.md`'s "Map overlays (Phase 2)" section.
-Phase 2 depends on a Transport for NSW API key that must be kept out of source
-control (`local.properties` → `BuildConfig`, never hardcoded or committed) — not
-started yet.
+for exactly what to check. Phase 2 (NSW open-data map overlays, see `spec.md`'s
+"Map overlays (Phase 2)" section) is underway: live hazards (step 9) are confirmed
+working; school zones + speed cameras (step 10) are implemented as static
+bundled-asset overlays and need testing; crash data + the OSM low-traffic proxy
+(step 11) aren't started. Phase 2 needs a Transport for NSW API key kept out of
+source control (`local.properties` → `BuildConfig`, never hardcoded or committed).
 
 ### What's implemented, untested
 
@@ -105,11 +105,56 @@ No key set means an empty string — Phase 2 overlay code must treat that as
 "feature off," not crash. Requests need the header `Authorization: apikey YOUR_TOKEN`
 (literal word `apikey`, space, then the token).
 
-The actual networking + first overlay render isn't built yet — the exact Live
-Traffic Hazards endpoint path and response shape are documented in TfNSW's
-"Live Traffic NSW Developer Guide" PDF, which requires logging into your Open Data
-Hub account to download. Grab that PDF (or just the relevant endpoint/response
-section) and hand it over to build against real specifics instead of guessing.
+Live hazards (incidents + roadworks) are implemented and confirmed working, fetched
+from `https://api.transport.nsw.gov.au/v1/live/hazards/{incident,roadwork}/open` —
+built against the API's actual Swagger/OpenAPI spec after the developer guide PDF's
+documented paths (`incident-open.json` etc.) turned out to be a pre-Open-Data-Hub
+naming scheme that 404s against the real gateway. See
+[HazardsApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/HazardsApi.kt).
+
+## Static reference overlays: school zones & speed cameras
+
+Unlike live hazards, these are bundled as static asset snapshots rather than
+fetched from a confirmed live endpoint — Corey provided manual exports from the
+Open Data Hub rather than us finding a documented download API for them:
+
+- **School zones** — filtered from the full NSW "Speed Zones" dataset (a 447k-record,
+  ~500MB shapefile covering every speed-zoned road segment in the state) down to the
+  ~3,700 records tagged `Type == "School"`, then reprojected from the shapefile's
+  Web Mercator (EPSG:3857) coordinates to plain lat/lon. See
+  [`app/src/main/assets/school_zones.json`](app/src/main/assets/school_zones.json)
+  (the processed output — the ~500MB source shapefile itself isn't in this repo).
+- **Speed cameras** — fixed and red-light cameras, parsed from TfNSW's published CSV
+  exports into [`app/src/main/assets/speed_cameras.json`](app/src/main/assets/speed_cameras.json).
+  **Mobile speed camera zones are NOT included** — the only source data available for
+  those lists suburb/street names with no coordinates at all, so there's nothing to
+  plot without a geocoding step (out of scope: would need a geocoding API, adding
+  cost/complexity/rate limits this project has otherwise avoided everywhere else).
+
+Both JSON files are seeded into their own Room tables (`SchoolZone`, `SpeedCamera`)
+once on first launch — see
+[StaticDataSeeder.kt](app/src/main/java/com/instructor/lessonroutes/data/StaticDataSeeder.kt).
+They render on the live map home screen always-on (no toggle, since it's a cheap
+local read, not a network call): school zones as red-circle "30"/"40" speed-sign
+icons (matching real AU signage), fixed cameras as 📷, red-light cameras as 🚦.
+No tap-to-info on these yet (hazards have it; these don't) — same pattern would
+extend easily if wanted later.
+
+**To refresh this data** (TfNSW updates these periodically): re-export the same
+files from the Open Data Hub and re-run the extraction script used to produce the
+committed JSON — ask Claude to regenerate it from fresh source files rather than
+hand-editing the JSON.
+
+### Database version bump
+
+Adding `SchoolZone`/`SpeedCamera` bumped the Room schema to version 2 with
+`fallbackToDestructiveMigration()` rather than a hand-written `Migration` — a
+migration has to match Room's expected SQL exactly or it crashes on upgrade, and at
+this dev stage that risk wasn't worth it for two new additive tables. **Practical
+effect: anyone with the app already installed loses their saved routes when they
+update to this version** (uninstall/reinstall has the same effect, if you want to
+force it deliberately). Worth writing a real migration before this app has real
+users' data to protect.
 
 ## Build order status
 
@@ -122,11 +167,11 @@ section) and hand it over to build against real specifics instead of guessing.
 7. 🔲 Follow view — implemented, needs testing.
 8. 🔲 Polish — notes/tags/waypoints/edit/delete/nav-intent implemented and need
    testing; Settings not built (spec marks it optional/last).
-
-Then, as a distinct Phase 2 (only after 1–8 are confirmed working):
-
-9. Overlay foundation — TfNSW API key via `BuildConfig`, networking layer, prove one
-   feed renders (start with live hazards, no caching needed).
-10. School zones — static Speed Zones download, `SchoolZone` cache table, toggleable
-    layer.
-11. Remaining overlays — crash/high-risk overlay, OSM low-traffic proxy layer.
+9. ✅ Overlay foundation + live hazards — confirmed working (incidents + roadworks,
+   tap for details).
+10. 🔲 School zones + speed cameras — implemented as static bundled-asset overlays
+    (see above), needs testing. Not yet a "download on a schedule" live fetch per
+    the spec's original architecture note — that'd need a confirmed download
+    endpoint, which we don't have (this data was manually exported).
+11. Remaining overlays — crash/high-risk overlay, OSM low-traffic proxy layer. Not
+    started.

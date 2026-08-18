@@ -29,6 +29,9 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.instructor.lessonroutes.data.SchoolZone
+import com.instructor.lessonroutes.data.SpeedCamera
+import com.instructor.lessonroutes.data.SpeedCameraType
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.HazardCategory
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
@@ -82,6 +85,25 @@ private const val ROADWORK_SOURCE_ID = "roadwork-source"
 private const val ROADWORK_LAYER_ID = "roadwork-layer"
 private const val ROADWORK_ICON_ID = "roadwork-icon"
 
+// Static reference overlays (spec step 10-adjacent) -- school zones are split by
+// speed limit rather than data-driven styling, since only 30/40 km/h occur in
+// practice; anything else falls back into the 40 bucket.
+private const val SCHOOL_ZONE_40_SOURCE_ID = "school-zone-40-source"
+private const val SCHOOL_ZONE_40_LAYER_ID = "school-zone-40-layer"
+private const val SCHOOL_ZONE_40_ICON_ID = "school-zone-40-icon"
+
+private const val SCHOOL_ZONE_30_SOURCE_ID = "school-zone-30-source"
+private const val SCHOOL_ZONE_30_LAYER_ID = "school-zone-30-layer"
+private const val SCHOOL_ZONE_30_ICON_ID = "school-zone-30-icon"
+
+private const val CAMERA_FIXED_SOURCE_ID = "camera-fixed-source"
+private const val CAMERA_FIXED_LAYER_ID = "camera-fixed-layer"
+private const val CAMERA_FIXED_ICON_ID = "camera-fixed-icon"
+
+private const val CAMERA_REDLIGHT_SOURCE_ID = "camera-redlight-source"
+private const val CAMERA_REDLIGHT_LAYER_ID = "camera-redlight-layer"
+private const val CAMERA_REDLIGHT_ICON_ID = "camera-redlight-icon"
+
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
@@ -109,6 +131,9 @@ fun RouteMapView(
     liveLocation: LatLng? = null,
     /** Phase 2 live hazards overlay (step 9) — empty when the overlay's off. */
     hazards: List<Hazard> = emptyList(),
+    /** Static reference overlays — no tap handling on these yet, display only. */
+    schoolZones: List<SchoolZone> = emptyList(),
+    cameras: List<SpeedCamera> = emptyList(),
     /** When true, moves the camera to fit [routePoints] instead of the device location. */
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
@@ -221,6 +246,23 @@ fun RouteMapView(
         (style.getSource(ROADWORK_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(roadworkPoints))
     }
 
+    LaunchedEffect(schoolZones, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        val zone30Points = schoolZones.filter { it.speedLimitKmh == 30 }.map { LatLng(it.latitude, it.longitude) }
+        val zone40Points = schoolZones.filter { it.speedLimitKmh != 30 }.map { LatLng(it.latitude, it.longitude) }
+        (style.getSource(SCHOOL_ZONE_30_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(zone30Points))
+        (style.getSource(SCHOOL_ZONE_40_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(zone40Points))
+    }
+
+    LaunchedEffect(cameras, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        val fixedPoints = cameras.filter { it.type == SpeedCameraType.FIXED }.map { LatLng(it.latitude, it.longitude) }
+        val redLightPoints = cameras.filter { it.type == SpeedCameraType.RED_LIGHT }
+            .map { LatLng(it.latitude, it.longitude) }
+        (style.getSource(CAMERA_FIXED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(fixedPoints))
+        (style.getSource(CAMERA_REDLIGHT_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(redLightPoints))
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             val view = mapViewRef.value ?: return@LifecycleEventObserver
@@ -283,13 +325,51 @@ private fun addSourcesAndLayers(style: Style) {
             PropertyFactory.circleStrokeColor(Color.WHITE),
         ),
     )
-    style.addImage(ROADWORK_ICON_ID, emojiIcon("🚧")) // 🚧
+    style.addImage(ROADWORK_ICON_ID, emojiIcon("🚧"))
     style.addSource(GeoJsonSource(ROADWORK_SOURCE_ID))
     style.addLayer(
         SymbolLayer(ROADWORK_LAYER_ID, ROADWORK_SOURCE_ID).withProperties(
             PropertyFactory.iconImage(ROADWORK_ICON_ID),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconSize(0.6f),
+        ),
+    )
+
+    style.addImage(SCHOOL_ZONE_40_ICON_ID, speedLimitSignIcon(40))
+    style.addSource(GeoJsonSource(SCHOOL_ZONE_40_SOURCE_ID))
+    style.addLayer(
+        SymbolLayer(SCHOOL_ZONE_40_LAYER_ID, SCHOOL_ZONE_40_SOURCE_ID).withProperties(
+            PropertyFactory.iconImage(SCHOOL_ZONE_40_ICON_ID),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(0.5f),
+        ),
+    )
+    style.addImage(SCHOOL_ZONE_30_ICON_ID, speedLimitSignIcon(30))
+    style.addSource(GeoJsonSource(SCHOOL_ZONE_30_SOURCE_ID))
+    style.addLayer(
+        SymbolLayer(SCHOOL_ZONE_30_LAYER_ID, SCHOOL_ZONE_30_SOURCE_ID).withProperties(
+            PropertyFactory.iconImage(SCHOOL_ZONE_30_ICON_ID),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(0.5f),
+        ),
+    )
+
+    style.addImage(CAMERA_FIXED_ICON_ID, emojiIcon("📷"))
+    style.addSource(GeoJsonSource(CAMERA_FIXED_SOURCE_ID))
+    style.addLayer(
+        SymbolLayer(CAMERA_FIXED_LAYER_ID, CAMERA_FIXED_SOURCE_ID).withProperties(
+            PropertyFactory.iconImage(CAMERA_FIXED_ICON_ID),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(0.5f),
+        ),
+    )
+    style.addImage(CAMERA_REDLIGHT_ICON_ID, emojiIcon("🚦"))
+    style.addSource(GeoJsonSource(CAMERA_REDLIGHT_SOURCE_ID))
+    style.addLayer(
+        SymbolLayer(CAMERA_REDLIGHT_LAYER_ID, CAMERA_REDLIGHT_SOURCE_ID).withProperties(
+            PropertyFactory.iconImage(CAMERA_REDLIGHT_ICON_ID),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(0.5f),
         ),
     )
 }
@@ -304,6 +384,35 @@ private fun emojiIcon(emoji: String, sizePx: Int = 96): Bitmap {
     }
     val textY = sizePx / 2f - (paint.descent() + paint.ascent()) / 2f
     canvas.drawText(emoji, sizePx / 2f, textY, paint)
+    return bitmap
+}
+
+/** Draws an Australian-style speed limit sign: red circle border, white fill, black number. */
+private fun speedLimitSignIcon(speedLimitKmh: Int, sizePx: Int = 96): Bitmap {
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val center = sizePx / 2f
+    val strokeWidth = sizePx * 0.12f
+    val radius = center - strokeWidth / 2f - 2f
+
+    val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+    canvas.drawCircle(center, center, radius, fillPaint)
+
+    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.RED
+        style = Paint.Style.STROKE
+        this.strokeWidth = strokeWidth
+    }
+    canvas.drawCircle(center, center, radius, borderPaint)
+
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        textSize = sizePx * 0.4f
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+    }
+    val textY = center - (textPaint.descent() + textPaint.ascent()) / 2f
+    canvas.drawText(speedLimitKmh.toString(), center, textY, textPaint)
     return bitmap
 }
 

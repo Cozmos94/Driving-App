@@ -21,6 +21,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
+import com.instructor.lessonroutes.data.SchoolZone
+import com.instructor.lessonroutes.data.SchoolZoneDao
+import com.instructor.lessonroutes.data.SpeedCamera
+import com.instructor.lessonroutes.data.SpeedCameraDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
@@ -30,13 +34,26 @@ private const val LOG_TAG = "LiveMapScreen"
 /**
  * The app's home screen: a live map centered on the device, with the hazards overlay
  * on by default (no toggle needed) rather than gated behind opening a saved route.
- * A button at the bottom moves into route planning (the list/create/detail flow).
+ * Also always shows the static reference overlays (school zones, speed cameras) --
+ * no toggle needed there either, since they're cheap local Room reads, not a network
+ * call. A button at the bottom moves into route planning (the list/create/detail flow).
  */
 @Composable
-fun LiveMapScreen(onPlanRouteClick: () -> Unit) {
+fun LiveMapScreen(
+    schoolZoneDao: SchoolZoneDao,
+    speedCameraDao: SpeedCameraDao,
+    onPlanRouteClick: () -> Unit,
+) {
     var hazards by remember { mutableStateOf<List<Hazard>>(emptyList()) }
     var hazardsError by remember { mutableStateOf<String?>(null) }
     var selectedHazard by remember { mutableStateOf<Hazard?>(null) }
+    var schoolZones by remember { mutableStateOf<List<SchoolZone>>(emptyList()) }
+    var cameras by remember { mutableStateOf<List<SpeedCamera>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        schoolZones = schoolZoneDao.getAll()
+        cameras = speedCameraDao.getAll()
+    }
 
     LaunchedEffect(Unit) {
         if (BuildConfig.TFNSW_API_KEY.isBlank()) return@LaunchedEffect
@@ -52,6 +69,8 @@ fun LiveMapScreen(onPlanRouteClick: () -> Unit) {
         RouteMapView(
             modifier = Modifier.fillMaxSize(),
             hazards = hazards,
+            schoolZones = schoolZones,
+            cameras = cameras,
             onHazardClick = { selectedHazard = it },
         )
 
