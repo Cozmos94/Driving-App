@@ -9,11 +9,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.instructor.lessonroutes.data.AppDatabase
+import com.instructor.lessonroutes.ui.map.LiveMapScreen
 import com.instructor.lessonroutes.ui.routes.CreateRouteScreen
 import com.instructor.lessonroutes.ui.routes.FollowScreen
 import com.instructor.lessonroutes.ui.routes.RouteDetailScreen
 import com.instructor.lessonroutes.ui.routes.RouteListScreen
 
+private const val LIVE_MAP = "liveMap"
 private const val ROUTE_LIST = "routeList"
 private const val ROUTE_DETAIL = "routeDetail/{routeId}"
 private const val ROUTE_CREATE = "createRoute"
@@ -24,7 +26,10 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
     val navController = rememberNavController()
     val dao = remember { database.routeDao() }
 
-    NavHost(navController = navController, startDestination = ROUTE_LIST, modifier = modifier) {
+    NavHost(navController = navController, startDestination = LIVE_MAP, modifier = modifier) {
+        composable(LIVE_MAP) {
+            LiveMapScreen(onPlanRouteClick = { navController.navigate(ROUTE_LIST) })
+        }
         composable(ROUTE_LIST) {
             RouteListScreen(
                 dao = dao,
