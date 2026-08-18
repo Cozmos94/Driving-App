@@ -3,6 +3,7 @@ package com.instructor.lessonroutes.ui.routes
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,7 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
         try {
             hazards = fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) }
         } catch (e: Exception) {
+            Log.e("RouteDetailScreen", "Failed to fetch live hazards", e)
             hazardsError = "Couldn't load hazards right now"
         }
     }
