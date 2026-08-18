@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  debug-overrides only applies to debuggable builds (i.e. never a release/production
+  build) — this is Android's own sanctioned mechanism for developing behind a
+  corporate TLS-inspecting proxy (Netskope, in this case) without weakening trust
+  in the real shipped app. See:
+  https://developer.android.com/training/articles/security-config#TrustingDebugCa
+-->
+<network-security-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

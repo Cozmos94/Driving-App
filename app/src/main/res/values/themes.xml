@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme just needs to exist for the manifest/activity; Compose (MaterialTheme in
+         ui/theme/Theme.kt) owns the actual app styling. -->
+    <style name="Theme.LessonRoutes" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
