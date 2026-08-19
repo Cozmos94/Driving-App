@@ -210,7 +210,9 @@ profiles). Specifically:
     as the map itself) so it now stays visible no matter how far down the
     rest of the screen is scrolled.
   - **No filter is a hard routing constraint** -- all of them, Highways
-    included, are proximity-scored best-of-4-candidates. Highways->Avoid was
+    included, are proximity-scored best-of-N-candidates (N tuned down over
+    time for speed, currently 3 -- see the eighth-round entry below).
+    Highways->Avoid was
     originally OSRM's `exclude=motorway` (a real constraint), but OSRM's
     public demo server rejects `exclude` outright for every value (confirmed
     directly against the live API) -- removed entirely, see `OsrmApi.kt`'s
@@ -233,6 +235,20 @@ profiles). Specifically:
     the full vertex list. Address search results are now tappable directly
     (the whole `ListItem`, via `Modifier.clickable`) instead of needing a
     separate "Use this address" button below each.
+  - **Eighth round: too slow (~30s), wanted under 10s.** Bearings run in
+    parallel, but each bearing's own refinement rounds are inherently
+    sequential (each depends on the previous round's OSRM response) -- that
+    per-bearing round-trip chain, not the bearing count, is the dominant
+    latency cost. Tuned down for speed at some cost to candidate diversity/
+    duration precision: bearings 4→3 (`0.0, 120.0, 240.0`), max refinement
+    rounds 3→2, duration tolerance 15%→25% (a looser tolerance means the
+    *common* case converges in a single round instead of needing a second
+    one, which matters more for wall-clock time than the round cap itself).
+    Overall timeout 45s→20s and its UI message updated to match. **Not yet
+    confirmed on-device whether this actually lands under 10s** -- if it's
+    still too slow, the next lever is probably fewer bearings still (down to
+    2) before touching anything else, since the round-trip chain length is
+    already near its practical floor.
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was

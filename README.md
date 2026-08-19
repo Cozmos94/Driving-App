@@ -253,15 +253,19 @@ plans a real drive away and back, sized to the target duration.
 
 No free routing API can plan "a route of duration X" directly, so
 [RouteGenerator.kt](app/src/main/java/com/instructor/lessonroutes/data/routegen/RouteGenerator.kt)
-does it as a heuristic: try a detour point at each of 4 compass bearings around the
+does it as a heuristic: try a detour point at each of 3 compass bearings around the
 start/destination midpoint, ask OSRM for the *actual* drive time via
 [OsrmApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/OsrmApi.kt)'s
-`fetchRoutedPaths()`, and adjust the detour distance iteratively (damped, up to 3
-rounds) until it converges near the target. `generateCandidateRoutes()` (the OSRM
-part) and scoring-data fetching (`buildScoringData()` in `GenerateRouteScreen.kt`)
-run concurrently rather than one after the other, since they're fully independent;
-whichever converged candidate best matches the chosen filters wins, via
-`pickBestRoute()`.
+`fetchRoutedPaths()`, and adjust the detour distance iteratively (damped, up to 2
+rounds, within 25% of target) until it converges near the target. Tuned for speed
+(target: well under 10s typical) over exhaustiveness — bearings run in parallel,
+but each bearing's own refinement rounds are inherently sequential (each depends
+on the previous round's OSRM response), so that per-bearing round-trip chain is
+the dominant latency cost, not the bearing count. `generateCandidateRoutes()`
+(the OSRM part) and scoring-data fetching (`buildScoringData()` in
+`GenerateRouteScreen.kt`) run concurrently rather than one after the other, since
+they're fully independent; whichever converged candidate best matches the chosen
+filters wins, via `pickBestRoute()`.
 
 **No filter is a real hard routing constraint — all of them are best-effort**,
 per `FilterPreference`'s doc comment. Highways→Avoid was originally implemented
@@ -274,7 +278,7 @@ now scored the same way as everything else:
 
 - **Hazards, construction zones, school zones, speed cameras, highways,
   roundabouts, merging lanes — all of them, both Avoid and Prefer** — are soft
-  proximity scoring: the 4 candidate routes are each scored by how many
+  proximity scoring: the 3 candidate routes are each scored by how many
   chosen-category points/roads they pass within ~40m of, and the best-scoring
   candidate is picked. This is a genuine best-of-a-few-alternates selection,
   not a guarantee any given hazard/camera/roundabout/highway is actually

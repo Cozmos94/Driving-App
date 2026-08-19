@@ -227,11 +227,11 @@ fun GenerateRouteScreen(
             try {
                 // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
                 // TfNSW) can never leave the spinner running forever -- surfaces
-                // as a timeout error instead. 45s comfortably covers the worst
-                // case now (4 candidates x up to 3 sequential OSRM calls each,
-                // run concurrently) without asking the instructor to wait
-                // anywhere near as long as before.
-                val result = withTimeoutOrNull(45_000) {
+                // as a timeout error instead. 20s comfortably covers the worst
+                // case now (3 candidates x up to 2 sequential OSRM calls each,
+                // run concurrently) while target typical-case generation is well
+                // under 10s.
+                val result = withTimeoutOrNull(20_000) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
                     // Genuinely independent of each other -- run concurrently
@@ -445,7 +445,7 @@ fun GenerateRouteScreen(
                     }
                     Text(
                         "Trying a few different routes and picking the best fit for your filters — " +
-                            "this can take up to 45 seconds.",
+                            "usually just a few seconds, up to 20 at most.",
                     )
                 }
                 generationError?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }

@@ -58,13 +58,18 @@ data class GeneratedRoute(
 // actual OSRM-reported durations afterward, so this only needs to be in the right
 // ballpark, not accurate.
 private const val AVG_SPEED_KMH = 40.0
-// 4 directions x up to 3 refinement rounds = up to 12 OSRM calls per generation
-// (was 8 x 4 = 32) -- halving-plus the concurrent request volume against OSRM's
-// free public demo server, which is shared and rate-limit-prone; heavy concurrent
-// load from one client is a real suspect for slow/stuck generation in practice.
-private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 90.0, 180.0, 270.0)
-private const val MAX_RADIUS_ITERATIONS = 3
-private const val DURATION_TOLERANCE_RATIO = 0.15
+// Bearings run in parallel, but each bearing's refinement rounds are inherently
+// sequential (each depends on the previous round's OSRM response) -- that per-
+// bearing round-trip chain, not the bearing count, is the dominant latency cost.
+// 3 directions x up to 2 rounds = up to 6 OSRM calls per generation (was 4x3=12,
+// 8x4=32 originally) -- cut further for speed (target: well under 10s typical)
+// at some cost to candidate diversity/duration precision. A looser tolerance
+// (25%, was 15%) means the *common* case converges in a single round instead of
+// needing a second one, which matters more for wall-clock time than the round
+// cap itself.
+private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
+private const val MAX_RADIUS_ITERATIONS = 2
+private const val DURATION_TOLERANCE_RATIO = 0.25
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
 
