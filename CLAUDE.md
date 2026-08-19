@@ -201,6 +201,14 @@ profiles). Specifically:
     by *cumulative distance* along the route instead. Shared by
     `RouteDetailScreen` too, so this also improves fidelity for saved routes,
     not just generated ones.
+  - **Sixth round (UX request, not a bug)**: the "Generated: ... /
+    Regenerate / Open in nav app / Save" block, added in the fourth round
+    right after the map, was still inside the scrollable content column, so
+    it scrolled away once the instructor scrolled down into
+    Destination/Time/Filters. Moved it to be a fixed sibling between the map
+    and the scrollable column (same fixed-region-plus-weighted-scroll pattern
+    as the map itself) so it now stays visible no matter how far down the
+    rest of the screen is scrolled.
   - **No filter is a hard routing constraint** -- all of them, Highways
     included, are proximity-scored best-of-4-candidates. Highways->Avoid was
     originally OSRM's `exclude=motorway` (a real constraint), but OSRM's

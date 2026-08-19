@@ -304,17 +304,22 @@ fun GenerateRouteScreen(
                 )
             }
 
-            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                // Shown first, right below the map -- was previously at the very
-                // bottom of this scrollable column, below Destination/Time/
-                // Filters, which meant "Open in nav app" was easy to miss
-                // entirely without scrolling past everything else first.
-                generatedRoute?.let { route ->
+            // Pinned between the map and the scrollable content below -- NOT part
+            // of the scroll, so Regenerate/Open in nav app/Save stay visible no
+            // matter how far down the instructor scrolls through Destination/Time/
+            // Filters. Same fixed-height-sibling-plus-weighted-scroll pattern as
+            // the map above (a Column can't correctly share space between a
+            // weighted sibling and an unbounded one otherwise).
+            generatedRoute?.let { route ->
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Text("Generated: ${formatDuration(route.durationSeconds)}, ${formatDistance(route.distanceMeters)}")
                     if (saveComplete) {
                         Text("Saved.")
                     }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         OutlinedButton(onClick = { onGenerateClick() }, modifier = Modifier.weight(1f), enabled = !isGenerating) {
                             Text("Regenerate")
                         }
@@ -328,9 +333,11 @@ fun GenerateRouteScreen(
                             Text("Save")
                         }
                     }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                 }
+                HorizontalDivider()
+            }
 
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
                 Text("Destination")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Checkbox(checked = loopBackToStart, onCheckedChange = { loopBackToStart = it })
