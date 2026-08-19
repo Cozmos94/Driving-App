@@ -120,6 +120,14 @@ profiles). Specifically:
   - **"My routes" button lost its color**: was accidentally changed to
     `OutlinedButton` (transparent, purple text) instead of a filled `Button`
     when the live map's single button became two — now both are filled.
+  - **Second-round bug**: the address search box and tap-to-set-destination
+    were both hidden/disabled while "Loop back to where I start" stayed
+    checked (its default) — by design, but with no visible reason why, so it
+    read as "the address box disappeared" and "tapping the map is broken".
+    Fixed by making the destination controls (search box, tap-hint) always
+    visible/active, and having any interaction with them (a map tap, picking
+    a search result) automatically uncheck "loop back to start" itself —
+    there's no separate step to remember anymore.
 - 🔲 **NEW, UNTESTED: Trip generator ("Plan a trip")** — a second, separate way to
   get a route: generates one to actually go drive (destination + start/end time +
   avoid/prefer filters), rather than recording/tapping one by hand. This is the

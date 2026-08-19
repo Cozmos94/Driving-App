@@ -155,10 +155,11 @@ fun GenerateRouteScreen(
     // Debounced live search: waits 500ms after the user stops typing before
     // actually calling Nominatim, so results appear as-you-type without firing a
     // request per keystroke (Nominatim's usage policy asks for ~1 request/second
-    // at most). Clears results immediately when the query's cleared or looping
-    // back to start (no destination search needed then).
-    LaunchedEffect(searchQuery, loopBackToStart) {
-        if (loopBackToStart || searchQuery.isBlank() || searchQuery == lastAppliedResultLabel) {
+    // at most). Not gated on loopBackToStart -- the search box is always visible
+    // now, and picking a result unchecks "loop back to start" itself, so search
+    // should always respond to typing regardless of the checkbox's state.
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank() || searchQuery == lastAppliedResultLabel) {
             searchResults = emptyList()
             searchError = null
             isSearching = false
@@ -280,10 +281,16 @@ fun GenerateRouteScreen(
                     // fallback instead of the device's real location.
                     centerOnDeviceLocation = false,
                     focusPoint = currentLocation,
-                    onMapClick = if (!loopBackToStart) {
-                        { latLng -> destination = latLng; searchResults = emptyList() }
-                    } else {
-                        null
+                    // Always active now (was conditionally null while "loop back
+                    // to start" was checked) -- tapping a destination is itself a
+                    // clear enough signal to switch out of loop mode automatically,
+                    // rather than silently doing nothing because a checkbox
+                    // elsewhere hadn't been unticked first (that read as "tapping
+                    // the map is broken").
+                    onMapClick = { latLng ->
+                        destination = latLng
+                        loopBackToStart = false
+                        searchResults = emptyList()
                     },
                 )
             }
@@ -294,36 +301,45 @@ fun GenerateRouteScreen(
                     Checkbox(checked = loopBackToStart, onCheckedChange = { loopBackToStart = it })
                     Text("Loop back to where I start")
                 }
-                if (!loopBackToStart) {
-                    Text(
-                        if (destination != null) "Destination set — tap the map to change it, or search below." else "Tap the map to set a destination, or search below.",
-                    )
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        label = { Text("Search an address") },
-                        singleLine = true,
+                // Always visible now -- these used to be hidden while "loop back to
+                // start" was checked, which looked like the address box had
+                // disappeared and tapping the map did nothing (both were
+                // intentionally disabled, but with no visible reason why).
+                // Tapping the map or picking a search result unchecks the box
+                // above automatically, so there's no separate step to remember.
+                Text(
+                    if (destination != null && !loopBackToStart) {
+                        "Destination set — tap the map to change it, or search below."
+                    } else {
+                        "Tap the map to set a destination, or search below."
+                    },
+                )
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search an address") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (isSearching) {
+                    Text("Searching…")
+                }
+                searchError?.let { Text(it) }
+                searchResults.forEach { result ->
+                    ListItem(
+                        headlineContent = { Text(result.label) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (isSearching) {
-                        Text("Searching…")
-                    }
-                    searchError?.let { Text(it) }
-                    searchResults.forEach { result ->
-                        ListItem(
-                            headlineContent = { Text(result.label) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        TextButton(
-                            onClick = {
-                                destination = result.location
-                                searchResults = emptyList()
-                                lastAppliedResultLabel = result.label
-                                searchQuery = result.label
-                            },
-                        ) { Text("Use this address") }
-                        HorizontalDivider()
-                    }
+                    TextButton(
+                        onClick = {
+                            destination = result.location
+                            loopBackToStart = false
+                            searchResults = emptyList()
+                            lastAppliedResultLabel = result.label
+                            searchQuery = result.label
+                        },
+                    ) { Text("Use this address") }
+                    HorizontalDivider()
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
