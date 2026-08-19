@@ -10,6 +10,7 @@ import android.graphics.PointF
 import android.graphics.RectF
 import android.location.Location
 import android.os.Bundle
+import android.view.Gravity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
@@ -207,6 +208,14 @@ fun RouteMapView(
                     // OpenStreetMap's ODbL-required "© OpenStreetMap contributors"
                     // credit actually gets shown).
                     map.uiSettings.isLogoEnabled = false
+                    map.uiSettings.attributionGravity = Gravity.TOP or Gravity.START
+                    val attributionMarginPx = (8 * androidContext.resources.displayMetrics.density).toInt()
+                    map.uiSettings.setAttributionMargins(
+                        attributionMarginPx,
+                        attributionMarginPx,
+                        attributionMarginPx,
+                        attributionMarginPx,
+                    )
                     map.cameraPosition = CameraPosition.Builder()
                         .target(FALLBACK_CENTER)
                         .zoom(DEFAULT_ZOOM)
