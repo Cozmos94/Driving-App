@@ -168,6 +168,17 @@ fun RouteMapView(
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
     centerOnDeviceLocation: Boolean = true,
+    /** When non-null, the camera moves here once (as soon as both the map/style
+     * are ready and this has a value -- whichever arrives last), instead of
+     * RouteMapView fetching the device location itself. For callers that already
+     * track the device's location on their own (so this doesn't run its own
+     * redundant permission-request/location-fetch, which could race with the
+     * caller's own) -- see [centerOnDeviceLocation]'s doc on other screens for why
+     * that race matters. Only fires once; later changes to this value don't
+     * re-center (use [followLiveLocation] for continuous tracking instead).
+     * Ignored when [fitBoundsToRoute] is true. Set [centerOnDeviceLocation] to
+     * false when using this, or the two centering attempts can race. */
+    focusPoint: LatLng? = null,
     onMapClick: ((LatLng) -> Unit)? = null,
     onHazardClick: ((Hazard) -> Unit)? = null,
     onHighVolumeClick: ((HighVolumeRoad) -> Unit)? = null,
@@ -290,6 +301,19 @@ fun RouteMapView(
             .target(LatLng(location.latitude, location.longitude))
             .zoom(DEFAULT_ZOOM)
             .build()
+    }
+
+    // Moves the camera to [focusPoint] once (see its doc) -- for callers that
+    // already track the device's location themselves. Re-runs whenever
+    // focusPoint or mapLibreMap change so it fires as soon as whichever arrives
+    // last is ready, but hasAppliedFocusPoint guards it from firing more than once.
+    var hasAppliedFocusPoint by remember { mutableStateOf(false) }
+    LaunchedEffect(mapLibreMap, focusPoint, fitBoundsToRoute) {
+        if (fitBoundsToRoute || hasAppliedFocusPoint) return@LaunchedEffect
+        val point = focusPoint ?: return@LaunchedEffect
+        val map = mapLibreMap ?: return@LaunchedEffect
+        map.cameraPosition = CameraPosition.Builder().target(point).zoom(DEFAULT_ZOOM).build()
+        hasAppliedFocusPoint = true
     }
 
     // Fits the camera to the route's bounding box once both the style and the points

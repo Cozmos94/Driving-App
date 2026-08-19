@@ -77,6 +77,49 @@ profiles). Specifically:
   updated to match (added an https/BROWSABLE entry for the fallback path).
   `openInNavApp()` lives in `NavIntent.kt` now (extracted so the trip generator
   below can share it too).
+- ✅ **Trip generator: first real-device bugs found and fixed** (map defaulted to
+  Sydney instead of centering on the device, the whole map was invisible/
+  unclickable for setting a destination, start time was mandatory, address
+  search needed an explicit tap of "Search", and Generate could spin forever
+  with no error):
+  - **Map defaulted to Sydney / not centered on device**: this screen tracks
+    location itself, but `RouteMapView` still ran its *own* internal
+    permission-request + device-location-centering flow by default
+    (`centerOnDeviceLocation` defaults to `true`) — the two raced, and the
+    screen's own state usually won, leaving `RouteMapView`'s internal
+    "has permission" check stuck on a stale value from first composition, so
+    its centering never fired. Fixed by adding a new `focusPoint: LatLng?`
+    param to `RouteMapView` (moves the camera there once, driven by a caller
+    that already has its own location — no redundant permission flow) and
+    passing `centerOnDeviceLocation = false` from `GenerateRouteScreen`.
+  - **Map wasn't there to tap at all**: a real Compose layout bug — the map
+    `Box` had `weight(1f)` next to an *unweighted* `verticalScroll` content
+    `Column` below it. An unweighted scrolling column measures to its full
+    content height (nothing bounds it), which can starve a weighted sibling
+    down to near-zero height. Fixed by giving the map a fixed height (260dp)
+    and moving `weight(1f)` onto the scrollable content column instead — the
+    correct/standard pattern for "fixed region + scrollable region filling
+    the rest".
+  - **Generate could spin forever**: two compounding causes. (1) No overall
+    ceiling on the whole generate flow — now wrapped in
+    `withTimeoutOrNull(90_000)`, guaranteeing termination with a clear error
+    either way. (2) The new roundabout/merge-lane/major-road Overpass queries
+    were reusing `OverpassApi.kt`'s existing shared client, which has a
+    **150-second** timeout tuned for a completely different, much heavier
+    query (`matchRoadGeometry`'s multi-station batch) — likely the real
+    "waited 3 minutes, nothing happened" culprit. Added a separate
+    `fastClient` (30s) for the lighter single-bbox queries.
+  - **Start time is now optional** (defaults to "now", computed fresh at both
+    display time and at the moment Generate is tapped — not memoized, since
+    "now" needs to actually mean now).
+  - **Address search is now live-as-you-type** (500ms debounce via a
+    `LaunchedEffect(searchQuery)`, replacing the old explicit "Search" button)
+    — a `lastAppliedResultLabel` guard avoids an immediate pointless re-search
+    right after picking a result (which sets the field to that result's own
+    label text).
+  - **"My routes" button lost its color**: was accidentally changed to
+    `OutlinedButton` (transparent, purple text) instead of a filled `Button`
+    when the live map's single button became two — now both are filled.
 - 🔲 **NEW, UNTESTED: Trip generator ("Plan a trip")** — a second, separate way to
   get a route: generates one to actually go drive (destination + start/end time +
   avoid/prefer filters), rather than recording/tapping one by hand. This is the
@@ -183,14 +226,15 @@ assets) and quiet roads (OSM only) don't need it.
 
 ## Likely next steps
 
-1. **Test the trip generator first** — it's the newest, least-proven piece:
-   whether generated routes land close to the target duration in practice,
-   whether the OSRM call volume (up to ~32 calls per generation, concurrent) is
-   acceptably fast on the free public server, and whether the Material3
-   `TimePicker` API used in `GenerateRouteScreen.kt` actually matches this
-   project's pinned Compose BOM (2024.09.03) — that's the one piece of this
-   feature never verified against real library docs, just written from general
-   Material3 API familiarity.
+1. **Test the trip generator again** — the first real-device pass found and fixed
+   several bugs (map centering/visibility, mandatory start time, search UX, and
+   a possible-hang on Generate — see the status entry above for detail). Still
+   needs a full pass to confirm: whether generated routes land close to the
+   target duration in practice, whether the 90s hard timeout is ever actually
+   hit in normal use (if so, the individual timeouts feeding into it may need
+   tuning), and whether the Material3 `TimePicker` API in
+   `GenerateRouteScreen.kt` renders correctly (compiled fine against this
+   project's pinned Compose BOM 2024.09.03, but never visually confirmed).
 2. Confirm steps 5–8 (create/record/follow/edit/delete), the student-profile
    picker/filter, the Student Profiles screen (search, "+", the Profiles/Routes
    toggle, Undo/Clear-all in Tap mode), the purple/yellow theme, and tap-route

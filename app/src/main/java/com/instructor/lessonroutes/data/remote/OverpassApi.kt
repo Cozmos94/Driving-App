@@ -26,9 +26,23 @@ private val ROAD_HIGHWAY_TYPES = listOf(
 
 // Must exceed the query's own [timeout:120] below -- a shorter client timeout was
 // killing the connection before Overpass even had the time we told it it had.
+// Only used by matchRoadGeometry -- its own multi-station batched query is
+// genuinely the heavy case this long a timeout was tuned for.
 private val client = OkHttpClient.Builder()
     .callTimeout(150, TimeUnit.SECONDS)
     .readTimeout(150, TimeUnit.SECONDS)
+    .build()
+
+// Every other query in this file is one simple single-bbox request (their own
+// [timeout:60] below is plenty) -- reusing the 150s client above for these would
+// mean a slow-but-not-actually-hung Overpass response could leave a caller (e.g.
+// the route generator, which needs to leave time for its own OSRM calls
+// afterward within one overall deadline) waiting far longer than makes sense.
+// Shares the same connection pool as `client` via newBuilder().
+private val fastClient = client.newBuilder()
+    .callTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .connectTimeout(15, TimeUnit.SECONDS)
     .build()
 
 /**
@@ -143,7 +157,7 @@ private suspend fun fetchWaysByHighwayTag(
             .post(FormBody.Builder().add("data", query).build())
             .build()
 
-        client.newCall(request).execute().use { response ->
+        fastClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("Overpass $label request failed: HTTP ${response.code}")
             }
@@ -181,7 +195,7 @@ suspend fun fetchRoundabouts(center: LatLng, radiusDegrees: Double = QUIET_ROADS
             .post(FormBody.Builder().add("data", query).build())
             .build()
 
-        client.newCall(request).execute().use { response ->
+        fastClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("Overpass roundabouts request failed: HTTP ${response.code}")
             }

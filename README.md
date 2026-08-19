@@ -67,11 +67,13 @@ TfNSW key needed).
 - **Trip generator ("Plan a trip")**: a second, separate way to get a route —
   generates one to actually go drive (destination + start/end time + avoid/prefer
   filters) rather than recording/tapping one by hand. See "Trip generator" below
-  for the full writeup; it's new and hasn't had a real on-device test pass yet,
-  particularly whether generated routes actually land close to the target
-  duration and whether the OSRM/Overpass call volume (up to ~32 OSRM calls per
-  generation, 8 bearings × up to 4 refinement rounds each, run concurrently) is
-  acceptably fast in practice.
+  for the full writeup. A first real-device pass found and fixed several bugs
+  (map not centering/not visible, mandatory start time, search needing an
+  explicit button tap, and a possible indefinite hang on Generate — now hard
+  capped at 90s) — still worth confirming whether generated routes actually
+  land close to the target duration in practice, and whether the OSRM call
+  volume (up to ~32 calls per generation, 8 bearings × up to 4 refinement
+  rounds each, run concurrently) is acceptably fast.
 - **Student profiles**: a route can be saved against zero, one, or several student
   profiles (many-to-many — see `StudentProfile`/`RouteStudentProfileCrossRef` in
   `data/`). Pick profiles (or create a new one inline) in the save dialog when

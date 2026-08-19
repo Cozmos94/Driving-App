@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -80,7 +79,9 @@ import com.instructor.lessonroutes.util.startLocationUpdates
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.maplibre.android.geometry.LatLng
 import java.time.Duration
 import java.time.LocalTime
@@ -144,22 +145,51 @@ fun GenerateRouteScreen(
     var searchResults by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    // Suppresses re-searching immediately after picking a result (which sets
+    // searchQuery to the result's own label, which would otherwise look just
+    // like new typing and fire another search for the exact same text).
+    var lastAppliedResultLabel by remember { mutableStateOf<String?>(null) }
 
     val effectiveDestination = if (loopBackToStart) currentLocation else destination
 
+    // Debounced live search: waits 500ms after the user stops typing before
+    // actually calling Nominatim, so results appear as-you-type without firing a
+    // request per keystroke (Nominatim's usage policy asks for ~1 request/second
+    // at most). Clears results immediately when the query's cleared or looping
+    // back to start (no destination search needed then).
+    LaunchedEffect(searchQuery, loopBackToStart) {
+        if (loopBackToStart || searchQuery.isBlank() || searchQuery == lastAppliedResultLabel) {
+            searchResults = emptyList()
+            searchError = null
+            isSearching = false
+            return@LaunchedEffect
+        }
+        isSearching = true
+        delay(500)
+        searchError = null
+        try {
+            searchResults = searchAddress(searchQuery)
+            if (searchResults.isEmpty()) searchError = "No matches found"
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Address search failed", e)
+            searchError = "Couldn't search right now"
+        } finally {
+            isSearching = false
+        }
+    }
+
     // -- Start/end time (only used to compute a target duration) --
+    // Start time is optional -- left blank, it's assumed to mean "now". Computed
+    // fresh on every recomposition (not memoized/remembered) since "now" is
+    // exactly that -- whatever the current wall-clock time actually is when the
+    // duration is next displayed or generation is next kicked off.
     var startTime by remember { mutableStateOf<LocalTime?>(null) }
     var endTime by remember { mutableStateOf<LocalTime?>(null) }
     var showStartTimePicker by remember { mutableStateOf(false) }
     var showEndTimePicker by remember { mutableStateOf(false) }
-    val targetDurationMinutes = remember(startTime, endTime) {
-        val start = startTime
-        val end = endTime
-        if (start != null && end != null && end.isAfter(start)) {
-            Duration.between(start, end).toMinutes().toInt()
-        } else {
-            null
-        }
+    val effectiveStartTime = startTime ?: LocalTime.now()
+    val targetDurationMinutes = endTime?.let { end ->
+        if (end.isAfter(effectiveStartTime)) Duration.between(effectiveStartTime, end).toMinutes().toInt() else null
     }
 
     // -- Filters --
@@ -177,18 +207,33 @@ fun GenerateRouteScreen(
     fun onGenerateClick() {
         val start = currentLocation ?: return
         val end = effectiveDestination ?: return
-        val minutes = targetDurationMinutes ?: return
+        // Recomputed here (not read from the composable-scope value above) so a
+        // blank start time really does mean "right now, at the moment Generate
+        // was tapped" rather than whatever "now" happened to be at the last
+        // recomposition.
+        val actualStartTime = startTime ?: LocalTime.now()
+        val minutes = endTime?.let { end2 ->
+            if (end2.isAfter(actualStartTime)) Duration.between(actualStartTime, end2).toMinutes().toInt() else null
+        } ?: return
         generatedRoute = null
         generationError = null
         isGenerating = true
         scope.launch {
             try {
-                val center = midpoint(start, end)
-                val radiusDegrees = estimateSearchRadiusDegrees(minutes)
-                val scoringData = buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
-                val result = generateRoute(start, end, minutes, filters, scoringData)
+                // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
+                // TfNSW) can never leave the spinner running forever -- surfaces
+                // as a timeout error instead. 90s is generous for the worst case
+                // (parallel OSRM candidates each doing up to 4 sequential calls)
+                // but still bounded.
+                val result = withTimeoutOrNull(90_000) {
+                    val center = midpoint(start, end)
+                    val radiusDegrees = estimateSearchRadiusDegrees(minutes)
+                    val scoringData = buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
+                    generateRoute(start, end, minutes, filters, scoringData)
+                }
                 if (result == null) {
-                    generationError = "Couldn't generate a route right now — check your connection and try again."
+                    generationError = "Couldn't generate a route right now (timed out or no route found) — " +
+                        "check your connection and try again."
                 } else {
                     generatedRoute = result
                 }
@@ -210,7 +255,14 @@ fun GenerateRouteScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            // Fixed height, NOT weighted: a Column can't correctly split space
+            // between a weighted sibling and an unweighted verticalScroll sibling
+            // below (the unweighted scrolling column measures to its full content
+            // height since nothing bounds it, which starved this map down to
+            // near-zero height in practice -- the earlier bug where the map
+            // appeared to not exist at all). The scrollable content column below
+            // is the one that gets weight(1f) now.
+            Box(modifier = Modifier.height(260.dp).fillMaxWidth()) {
                 RouteMapView(
                     modifier = Modifier.fillMaxSize(),
                     routePoints = generatedRoute?.points ?: emptyList(),
@@ -220,6 +272,14 @@ fun GenerateRouteScreen(
                     waypoints = if (loopBackToStart) emptyList() else listOfNotNull(destination),
                     liveLocation = currentLocation,
                     fitBoundsToRoute = generatedRoute != null,
+                    // This screen already tracks the device's location itself
+                    // (above) -- centerOnDeviceLocation=false plus focusPoint
+                    // avoids RouteMapView also running its own redundant
+                    // permission-request/location-fetch, which raced with this
+                    // screen's own and left the camera stuck on the Sydney
+                    // fallback instead of the device's real location.
+                    centerOnDeviceLocation = false,
+                    focusPoint = currentLocation,
                     onMapClick = if (!loopBackToStart) {
                         { latLng -> destination = latLng; searchResults = emptyList() }
                     } else {
@@ -228,7 +288,7 @@ fun GenerateRouteScreen(
                 )
             }
 
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
                 Text("Destination")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Checkbox(checked = loopBackToStart, onCheckedChange = { loopBackToStart = it })
@@ -238,35 +298,15 @@ fun GenerateRouteScreen(
                     Text(
                         if (destination != null) "Destination set — tap the map to change it, or search below." else "Tap the map to set a destination, or search below.",
                     )
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            label = { Text("Search an address") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    isSearching = true
-                                    searchError = null
-                                    try {
-                                        searchResults = searchAddress(searchQuery)
-                                        if (searchResults.isEmpty()) searchError = "No matches found"
-                                    } catch (e: Exception) {
-                                        Log.e(LOG_TAG, "Address search failed", e)
-                                        searchError = "Couldn't search right now"
-                                    } finally {
-                                        isSearching = false
-                                    }
-                                }
-                            },
-                            enabled = searchQuery.isNotBlank() && !isSearching,
-                        ) {
-                            Text("Search")
-                        }
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Search an address") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (isSearching) {
+                        Text("Searching…")
                     }
                     searchError?.let { Text(it) }
                     searchResults.forEach { result ->
@@ -278,6 +318,7 @@ fun GenerateRouteScreen(
                             onClick = {
                                 destination = result.location
                                 searchResults = emptyList()
+                                lastAppliedResultLabel = result.label
                                 searchQuery = result.label
                             },
                         ) { Text("Use this address") }
@@ -289,7 +330,7 @@ fun GenerateRouteScreen(
                 Text("Trip time")
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.weight(1f)) {
-                        Text(startTime?.let { formatTime(it) } ?: "Start time")
+                        Text(startTime?.let { formatTime(it) } ?: "Start time (now)")
                     }
                     OutlinedButton(onClick = { showEndTimePicker = true }, modifier = Modifier.weight(1f)) {
                         Text(endTime?.let { formatTime(it) } ?: "End time")
@@ -297,7 +338,7 @@ fun GenerateRouteScreen(
                 }
                 Text(
                     text = targetDurationMinutes?.let { "Duration: ${it / 60}h ${it % 60}m" }
-                        ?: if (startTime != null && endTime != null) "End time must be after start time" else "Pick a start and end time",
+                        ?: if (endTime != null) "End time must be after start time" else "Pick an end time (start defaults to now)",
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
