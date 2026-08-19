@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Brand glyph: a white winding route (road) on a grass-green background, plus a
-  classic half-red/half-white compass-needle icon in the top right (no
-  background circle behind it, since previously a waypoint dot sat there and
-  visually collided with it). Both the route and the compass needle sit within
-  the adaptive icon's ~66dp-diameter safe circle (centered at 54,54, radius 33)
-  so neither gets clipped by a circular/squircle launcher mask.
+  nav-pennant icon in the top right — a pointed flag/triangle split down the
+  middle into a wider white half and a narrower red half, apex up, with a
+  small dark dot marking its bottom-left tip (no background circle behind it).
+  Both the route and the pennant sit within the adaptive icon's ~66dp-diameter
+  safe circle (centered at 54,54, radius 33) so neither gets clipped by a
+  circular/squircle launcher mask.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -19,18 +20,26 @@
         android:strokeLineCap="round"
         android:fillColor="#00000000"
         android:pathData="M30,78 C30,60 48,66 54,54 C60,42 42,36 42,30" />
-    <!-- Compass needle, top right, centered around (72,36): the classic
-         half-red (north-pointing)/half-white (south-pointing) diamond, each
-         half with a thin dark outline for crisp definition against the green
-         background. -->
-    <path
-        android:fillColor="#D32F2F"
-        android:strokeColor="#1A1A1A"
-        android:strokeWidth="1"
-        android:pathData="M72,24 L80,36 L64,36 Z" />
+    <!-- Nav pennant, top right: an apex-up dart shape with a small notch
+         indented into its bottom edge (center), split symmetrically into an
+         equal white half (left) and red half (right). Fills and the stroke
+         are drawn as separate paths so the outer border and the center
+         split line don't overlap and double up — both stay the same thin
+         width. -->
     <path
         android:fillColor="#FFFFFF"
+        android:pathData="M73,23 L63,49 L73,45 Z" />
+    <path
+        android:fillColor="#D32F2F"
+        android:pathData="M73,23 L73,45 L83,49 Z" />
+    <path
+        android:fillColor="#00000000"
         android:strokeColor="#1A1A1A"
-        android:strokeWidth="1"
-        android:pathData="M72,48 L64,36 L80,36 Z" />
+        android:strokeWidth="0.4"
+        android:pathData="M73,23 L63,49 L73,45 L83,49 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1A1A1A"
+        android:strokeWidth="0.4"
+        android:pathData="M73,23 L73,45" />
 </vector>
