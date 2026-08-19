@@ -28,6 +28,14 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="google.navigation" />
         </intent>
+        <!-- Fallback path in openInNavApp() when Maps isn't installed: a plain
+             https Google Maps directions URL, opened by whatever browser/app
+             handles it. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
         <package android:name="com.google.android.apps.maps" />
     </queries>
 

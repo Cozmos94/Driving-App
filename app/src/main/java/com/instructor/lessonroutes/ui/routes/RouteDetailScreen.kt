@@ -138,11 +138,11 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                     }
                     OutlinedButton(
                         onClick = {
-                            sortedPoints.firstOrNull()?.let {
-                                openInNavApp(context, it.latitude, it.longitude, current.route.name)
+                            if (displayRoutePoints.isNotEmpty()) {
+                                openInNavApp(context, displayRoutePoints)
                             }
                         },
-                        enabled = sortedPoints.isNotEmpty(),
+                        enabled = displayRoutePoints.isNotEmpty(),
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("Open in nav app")
@@ -153,21 +153,40 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
     }
 }
 
+/** Google Maps caps the "Get Directions" URL API at a handful of waypoints --
+ * comfortably under any documented limit, and more than enough to shape the
+ * computed route. */
+private const val MAX_NAV_WAYPOINTS = 8
+
 /**
- * No SDK, no cost. Prefers Google Maps turn-by-turn driving navigation specifically
- * (per instructor request) via its `google.navigation:` deep link; falls back to a
- * generic `geo:` intent (whatever map app the device has) if Google Maps isn't
- * installed. Destination-only -- the recorded route is a raw GPS trail, not a
- * routable path, so Maps computes its own driving directions to this point rather
- * than following the recorded trail.
+ * No SDK, no cost. Was destination-only (a single pin, navigating to the route's
+ * first point) -- real usage showed Maps' own computed directions could look
+ * completely different from the planned route, since a single destination gives
+ * Maps nothing to shape its path around. Now passes the route's end point as the
+ * destination plus a handful of evenly-sampled points along the route as
+ * waypoints, via Google's "Get Directions" URL API
+ * (https://developers.google.com/maps/documentation/urls/get-started) -- free,
+ * no key. This makes Maps' computed driving directions track the planned route
+ * much more closely, though it's still Maps computing its own turn-by-turn path
+ * between waypoints, not literally replaying the recorded/tapped points -- exact
+ * fidelity isn't possible without a paid turn-by-turn SDK.
  */
-private fun openInNavApp(context: Context, latitude: Double, longitude: Double, label: String) {
-    val googleMapsIntent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$latitude,$longitude&mode=d"))
-        .setPackage("com.google.android.apps.maps")
-    val fallbackIntent = Intent(
-        Intent.ACTION_VIEW,
-        Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude(${Uri.encode(label)})"),
+private fun openInNavApp(context: Context, routePoints: List<LatLng>) {
+    val destination = routePoints.last()
+    val waypoints = sampleWaypoints(routePoints.dropLast(1), MAX_NAV_WAYPOINTS)
+    val waypointsParam = if (waypoints.isNotEmpty()) {
+        "&waypoints=" + waypoints.joinToString("|") { "${it.latitude},${it.longitude}" }
+    } else {
+        ""
+    }
+    val uri = Uri.parse(
+        "https://www.google.com/maps/dir/?api=1" +
+            "&destination=${destination.latitude},${destination.longitude}" +
+            waypointsParam +
+            "&travelmode=driving",
     )
+    val googleMapsIntent = Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps")
+    val fallbackIntent = Intent(Intent.ACTION_VIEW, uri)
     val intent = if (googleMapsIntent.resolveActivity(context.packageManager) != null) {
         googleMapsIntent
     } else {
@@ -176,4 +195,13 @@ private fun openInNavApp(context: Context, latitude: Double, longitude: Double, 
     if (intent.resolveActivity(context.packageManager) != null) {
         context.startActivity(intent)
     }
+}
+
+/** Evenly picks up to [maxPoints] points spanning [points] (by index stride), so a
+ * long dense route (a GPS recording) and a short sparse one (hand-tapped) both
+ * degrade gracefully to a small, well-spread waypoint set. */
+private fun sampleWaypoints(points: List<LatLng>, maxPoints: Int): List<LatLng> {
+    if (points.size <= maxPoints) return points
+    val stride = points.size.toDouble() / maxPoints
+    return (0 until maxPoints).map { i -> points[(i * stride).toInt()] }
 }

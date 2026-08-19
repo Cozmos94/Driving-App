@@ -47,11 +47,17 @@ TfNSW key needed).
   bounds once and doesn't chase the dot (deliberately, to avoid a jumpy camera).
 - **Edit/delete**: long-press a route in the list for a rename/notes-edit dialog or a
   delete confirmation.
-- **Open in nav app**: on the route detail screen, targets the route's first point
-  (destination-only — a recorded GPS trail can't be handed to Maps as a routable
-  path). Prefers a Google Maps `google.navigation:` turn-by-turn deep link, falling
-  back to a generic `geo:` intent if Maps isn't installed — no SDK, no cost. See
-  `openInNavApp()` in
+- **Open in nav app**: on the route detail screen, opens Google Maps' "Get
+  Directions" URL (`https://www.google.com/maps/dir/?api=1&destination=...&waypoints=...`,
+  free, no key) with the route's end point as the destination and up to 8
+  evenly-sampled points along the route as waypoints — this makes Maps' own
+  computed driving directions track the planned route much more closely than the
+  earlier destination-only version did (real usage showed a single pin gives Maps
+  nothing to shape its path around, so its route could look "completely
+  different"). Still not exact fidelity — Maps computes its own turn-by-turn path
+  between waypoints, it doesn't replay the recorded/tapped points — that would need
+  a paid turn-by-turn SDK. Falls back to a plain https intent (whatever handles it)
+  if Google Maps isn't installed. See `openInNavApp()` in
   [RouteDetailScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/RouteDetailScreen.kt).
   Needs the `<queries>` block in `AndroidManifest.xml` (API 30+ package visibility) —
   without it `resolveActivity()` silently returns null even with Maps installed.

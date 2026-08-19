@@ -66,11 +66,14 @@ profiles). Specifically:
   as recorded. Falls back to straight lines on any OSRM failure. **The stored
   `RoutePoint` rows are unchanged** — this is purely a display-time computation,
   not baked into what's saved.
-- ✅ **"Open in nav app" now targets Google Maps specifically**: tries a
-  `google.navigation:` turn-by-turn deep link first, falls back to the old generic
-  `geo:` intent if Maps isn't installed. Needed a new `<queries>` block in
-  `AndroidManifest.xml` for `resolveActivity()` to see either intent target on API
-  30+ — easy to forget this is required, it fails silently otherwise.
+- ✅ **"Open in nav app" now passes waypoints, not just a destination**: real
+  usage showed Maps' own computed route could look "completely different" from
+  the planned one when only given a single destination pin. Now uses Google
+  Maps' free "Get Directions" URL API with the route's end point as destination
+  and up to 8 evenly-sampled points along the route as waypoints, so Maps' path
+  tracks the plan much more closely (still not exact — Maps still computes its
+  own turn-by-turn between waypoints). `<queries>` block in `AndroidManifest.xml`
+  updated to match (added an https/BROWSABLE entry for the fallback path).
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was
