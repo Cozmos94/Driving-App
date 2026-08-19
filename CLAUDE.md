@@ -30,7 +30,8 @@ profiles). Specifically:
   a profile inline from the save-route dialog or the edit-route dialog, or directly
   via "+" on the new **Student Profiles screen** (`StudentProfilesScreen.kt`) — a
   searchable list of profiles plus a pinned "All" entry, now the landing point for
-  "Plan a route" from the live map. Tapping a profile (or "All") opens the route
+  "My routes" from the live map (a separate "Plan a trip" button leads to the trip
+  generator instead — a different feature, see below). Tapping a profile (or "All") opens the route
   list scoped to it; the route list and this screen have matching bottom-left
   toggle buttons ("Profiles" / "Routes") to switch between them. The current filter
   is hoisted state in `AppNavHost` (`routeListFilter`), not a nav argument — kept
@@ -74,6 +75,31 @@ profiles). Specifically:
   tracks the plan much more closely (still not exact — Maps still computes its
   own turn-by-turn between waypoints). `<queries>` block in `AndroidManifest.xml`
   updated to match (added an https/BROWSABLE entry for the fallback path).
+  `openInNavApp()` lives in `NavIntent.kt` now (extracted so the trip generator
+  below can share it too).
+- 🔲 **NEW, UNTESTED: Trip generator ("Plan a trip")** — a second, separate way to
+  get a route: generates one to actually go drive (destination + start/end time +
+  avoid/prefer filters), rather than recording/tapping one by hand. This is the
+  biggest, riskiest addition this session — genuinely untested, and the one most
+  likely to need debugging/tuning. See README's "Trip generator" section for the
+  full design, and the "Key files" entries below. Headline points:
+  - Start/end time only computes a target duration (e.g. 5pm→6pm = 60 min) —
+    generation runs immediately, it doesn't wait for or schedule around the clock.
+  - Destination can be "loop back to start", a map tap, or an address search
+    (new: free/keyless Nominatim geocoding, `NominatimApi.kt`).
+  - Generation is a heuristic (`RouteGenerator.kt`): try a detour point at 8
+    bearings around the start/destination midpoint, ask OSRM for the actual drive
+    time, iteratively adjust the detour distance to converge on the target
+    duration, then pick whichever converged candidate best matches the chosen
+    filters.
+  - Filters are honest about real-vs-soft: only Highways→Avoid is a real OSRM
+    routing constraint (`exclude=motorway`); everything else (hazards,
+    construction, school zones, cameras, roundabouts, merging lanes, and
+    Highways→Prefer) is proximity-scored best-of-8-candidates, since no free
+    routing API supports true avoid/prefer-zone routing.
+  - New Overpass queries: `fetchRoundabouts` (solid — real OSM tags) and
+    `fetchMergeLaneProxies`/`fetchMajorRoads` (the former is a known
+    approximation — see its doc comment).
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was
@@ -114,7 +140,21 @@ profiles). Specifically:
 - `app/src/main/java/com/instructor/lessonroutes/data/remote/OsrmApi.kt`,
   `app/src/main/java/com/instructor/lessonroutes/ui/map/RoadSnappedRoute.kt` — the
   tap-route road-snapping feature (free OSRM public server, display-only, see
-  status above).
+  status above). `OsrmApi.kt`'s `fetchRoutedPaths()` (duration/exclude/alternatives
+  aware) is also what the trip generator below builds on.
+- `app/src/main/java/com/instructor/lessonroutes/data/routegen/RouteGenerator.kt` —
+  the trip generator's core algorithm (candidate generation + duration
+  convergence + filter scoring). Read its doc comments before changing the
+  bearing/radius search or the scoring weights.
+- `app/src/main/java/com/instructor/lessonroutes/ui/generate/GenerateRouteScreen.kt` —
+  the "Plan a trip" screen: destination picker, time pickers, filter UI,
+  generate/regenerate/save/open-in-nav.
+- `app/src/main/java/com/instructor/lessonroutes/data/remote/NominatimApi.kt` —
+  free/keyless address search (OpenStreetMap's Nominatim), used by the trip
+  generator's destination search.
+- `app/src/main/java/com/instructor/lessonroutes/ui/routes/NavIntent.kt` — the
+  shared `openInNavApp()` (extracted from `RouteDetailScreen.kt` so the trip
+  generator can reuse it too).
 - `app/src/main/assets/school_zones.json`, `speed_cameras.json` — processed
   static data snapshots (the original ~500MB source shapefile isn't in the repo).
 
@@ -143,16 +183,24 @@ assets) and quiet roads (OSM only) don't need it.
 
 ## Likely next steps
 
-1. Confirm steps 5–8 (create/record/follow/edit/delete), the student-profile
+1. **Test the trip generator first** — it's the newest, least-proven piece:
+   whether generated routes land close to the target duration in practice,
+   whether the OSRM call volume (up to ~32 calls per generation, concurrent) is
+   acceptably fast on the free public server, and whether the Material3
+   `TimePicker` API used in `GenerateRouteScreen.kt` actually matches this
+   project's pinned Compose BOM (2024.09.03) — that's the one piece of this
+   feature never verified against real library docs, just written from general
+   Material3 API familiarity.
+2. Confirm steps 5–8 (create/record/follow/edit/delete), the student-profile
    picker/filter, the Student Profiles screen (search, "+", the Profiles/Routes
    toggle, Undo/Clear-all in Tap mode), the purple/yellow theme, and tap-route
    road-snapping all work end to end on-device — test pass hasn't happened yet.
-2. Quiet roads deliberately still only fetch once at startup (confirmed as desired
+3. Quiet roads deliberately still only fetch once at startup (confirmed as desired
    behavior, not a bug — don't "fix" this without checking first).
-3. If real crash/black-spot data turns up: same Overpass-snapping approach as
+4. If real crash/black-spot data turns up: same Overpass-snapping approach as
    `TrafficVolumeApi.kt`/`OverpassApi.kt` would apply (confirmed as the right
    approach when that data is identified).
-4. Student profiles currently have just a name. If Corey wants more per-student
+5. Student profiles currently have just a name. If Corey wants more per-student
    detail (skill level, notes, contact info), extend the `StudentProfile` entity —
    remember to bump the Room version and write another real `Migration` (v3 → v4)
    rather than reaching for `fallbackToDestructiveMigration()` again.

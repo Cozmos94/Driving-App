@@ -3,11 +3,14 @@ package com.instructor.lessonroutes.ui.map
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -55,6 +58,7 @@ fun LiveMapScreen(
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
     onPlanRouteClick: () -> Unit,
+    onGenerateTripClick: () -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -179,11 +183,16 @@ fun LiveMapScreen(
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
-        Button(
-            onClick = onPlanRouteClick,
+        Row(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Plan a route")
+            OutlinedButton(onClick = onPlanRouteClick, modifier = Modifier.weight(1f)) {
+                Text("My routes")
+            }
+            Button(onClick = onGenerateTripClick, modifier = Modifier.weight(1f)) {
+                Text("Plan a trip")
+            }
         }
     }
 }

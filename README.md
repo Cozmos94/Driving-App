@@ -5,11 +5,13 @@ routes with students, **scoped to NSW, Australia only**. Zero running cost: no
 Google Maps SDK, no billing account, no paid routing API. See `spec.md` (in this
 repo's parent context) for the full design.
 
-One nuance on "no routing API": saved routes are still always either a recorded
-GPS trail or hand-tapped points — never computed by a routing engine. A free,
-keyless routing API (OSRM) is used only to *display* tap-created routes more
-usefully (see "Road-snapping for tap-created routes" below) — it never decides
-what a route's saved points are.
+One nuance on "no routing API": a route you record or tap by hand is still always
+exactly what you recorded/tapped — a free, keyless routing API (OSRM) is used only
+to *display* it more usefully (see "Road-snapping for tap-created routes" below),
+never to decide its points. The one place this app *does* use a routing engine to
+actually decide a route is the separate "Plan a trip" generator (see "Trip
+generator" below) — still free/keyless, just a different feature with a different
+job: planning a new route to drive, not replaying one you already made.
 
 ## Status: full spec build complete, steps 5–8 + step 10 pending a test pass
 
@@ -58,15 +60,26 @@ TfNSW key needed).
   between waypoints, it doesn't replay the recorded/tapped points — that would need
   a paid turn-by-turn SDK. Falls back to a plain https intent (whatever handles it)
   if Google Maps isn't installed. See `openInNavApp()` in
-  [RouteDetailScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/RouteDetailScreen.kt).
+  [NavIntent.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/NavIntent.kt)
+  (shared by the route detail screen and the trip generator, see below).
   Needs the `<queries>` block in `AndroidManifest.xml` (API 30+ package visibility) —
   without it `resolveActivity()` silently returns null even with Maps installed.
+- **Trip generator ("Plan a trip")**: a second, separate way to get a route —
+  generates one to actually go drive (destination + start/end time + avoid/prefer
+  filters) rather than recording/tapping one by hand. See "Trip generator" below
+  for the full writeup; it's new and hasn't had a real on-device test pass yet,
+  particularly whether generated routes actually land close to the target
+  duration and whether the OSRM/Overpass call volume (up to ~32 OSRM calls per
+  generation, 8 bearings × up to 4 refinement rounds each, run concurrently) is
+  acceptably fast in practice.
 - **Student profiles**: a route can be saved against zero, one, or several student
   profiles (many-to-many — see `StudentProfile`/`RouteStudentProfileCrossRef` in
   `data/`). Pick profiles (or create a new one inline) in the save dialog when
   creating a route, or reassign them later via long-press → Edit on the route list.
 - **Student Profiles screen** ([StudentProfilesScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/profiles/StudentProfilesScreen.kt)):
-  the new landing point for "Plan a route" from the live map's bottom button — a
+  the landing point for "My routes" from the live map's bottom button (the live
+  map also has a separate "Plan a trip" button — see "Trip generator" below,
+  a different feature) — a
   searchable list of student profiles plus a pinned "All" entry; tapping either
   navigates to the route list scoped to that profile (or unfiltered for "All").
   "+" creates a new profile directly from here. Creating a route while scoped to a
@@ -209,6 +222,65 @@ without losing saved routes. If a future schema change alters an *existing* tabl
 (not just adds new ones), write and test its migration with the same care; a
 migration's SQL has to match Room's expected schema exactly or it crashes on
 upgrade.
+
+## Trip generator ("Plan a trip")
+
+A second, separate way to get a route, alongside recording/tapping one by hand:
+[GenerateRouteScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/generate/GenerateRouteScreen.kt),
+reached via "Plan a trip" on the live map. Pick a destination (loop back to
+wherever you start, tap the map, or search an address via free/keyless
+[Nominatim](https://nominatim.openstreetmap.org) geocoding —
+[NominatimApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/NominatimApi.kt)),
+a start/end time, and avoid/prefer filters, then generate.
+
+**Start/end time is only ever used to compute a target duration** (e.g. 5pm→6pm =
+60 minutes) — generation happens immediately when you tap the button, it doesn't
+wait for or schedule anything around the actual clock time. **The generated route
+always starts from your current location right now**, even if that's the same
+place as the destination (e.g. picking a student up from their house) — it still
+plans a real drive away and back, sized to the target duration.
+
+### How generation actually works (real feature vs. best-effort)
+
+No free routing API can plan "a route of duration X" directly, so
+[RouteGenerator.kt](app/src/main/java/com/instructor/lessonroutes/data/routegen/RouteGenerator.kt)
+does it as a heuristic: try a detour point at each of 8 compass bearings around the
+start/destination midpoint, ask OSRM for the *actual* drive time via
+[OsrmApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/OsrmApi.kt)'s
+`fetchRoutedPaths()`, and adjust the detour distance iteratively (damped, up to 4
+rounds) until it converges near the target. Whichever of the 8 converged candidates
+best matches the chosen filters wins.
+
+**Filters are honest about what's a real constraint versus best-effort**, per
+`FilterPreference`'s doc comment:
+
+- **Highways → Avoid** is the one real hard routing constraint (OSRM's own
+  `exclude=motorway`).
+- **Everything else — hazards, construction zones, school zones, speed cameras,
+  roundabouts, merging lanes, and Highways → Prefer** — has no free "avoid/prefer
+  this zone" routing API available anywhere. These are soft proximity scoring: the
+  8 candidate routes are each scored by how many chosen-category points/roads they
+  pass within ~40m of, and the best-scoring candidate is picked. This is a genuine
+  best-of-a-few-alternates selection, not a guarantee any given hazard/camera/
+  roundabout is actually avoided or included.
+- **Roundabouts** (`OverpassApi.fetchRoundabouts` — `junction=roundabout` ways +
+  `highway=mini_roundabout` nodes) and **major roads** (`fetchMajorRoads`, only
+  needed for Highways→Prefer scoring) are solid free OSM data via Overpass.
+- **Merging lanes** (`OverpassApi.fetchMergeLaneProxies` — `motorway_link`/
+  `trunk_link` ways) are an approximation, not real merge-lane data: OSM has no
+  dedicated merge-lane tag, doesn't distinguish an on-ramp from an off-ramp in one
+  field, and doesn't tag ordinary lane-merges on non-highway roads at all.
+- Hazards/construction zones reuse the existing `fetchOpenIncidents`/
+  `fetchOpenRoadworks` (needs a TfNSW API key — those filters have no effect
+  without one); school zones/speed cameras reuse the existing seeded Room tables.
+
+A generated route can be saved (writes a normal `Route` — same schema as a
+tapped/recorded one, `timestamp = null` on every point so it also gets
+road-snapped for display later the same way a tap-created route does) or opened
+directly in Google Maps via the same `openInNavApp()` used by the route detail
+screen (extracted to
+[NavIntent.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/NavIntent.kt)
+so both screens share it).
 
 ## Road-snapping for tap-created routes
 

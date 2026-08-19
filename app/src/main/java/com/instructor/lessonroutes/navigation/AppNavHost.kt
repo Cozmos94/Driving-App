@@ -19,6 +19,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.instructor.lessonroutes.data.AppDatabase
 import com.instructor.lessonroutes.data.seedStaticDataIfNeeded
+import com.instructor.lessonroutes.ui.generate.GenerateRouteScreen
 import com.instructor.lessonroutes.ui.map.LiveMapScreen
 import com.instructor.lessonroutes.ui.profiles.StudentProfilesScreen
 import com.instructor.lessonroutes.ui.routes.CreateRouteScreen
@@ -32,6 +33,7 @@ private const val STUDENT_PROFILES = "studentProfiles"
 private const val ROUTE_LIST = "routeList"
 private const val ROUTE_DETAIL = "routeDetail/{routeId}"
 private const val ROUTE_CREATE = "createRoute"
+private const val ROUTE_GENERATE = "generateRoute"
 private const val ROUTE_FOLLOW = "follow/{routeId}"
 private const val SETTINGS = "settings"
 
@@ -74,6 +76,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 schoolZoneDao = schoolZoneDao,
                 speedCameraDao = speedCameraDao,
                 onPlanRouteClick = { navController.navigate(STUDENT_PROFILES) },
+                onGenerateTripClick = { navController.navigate(ROUTE_GENERATE) },
             )
         }
         composable(STUDENT_PROFILES) {
@@ -135,6 +138,20 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
         ) { backStackEntry ->
             val routeId = backStackEntry.arguments?.getLong("routeId") ?: return@composable
             FollowScreen(routeId = routeId, dao = dao)
+        }
+        composable(ROUTE_GENERATE) {
+            GenerateRouteScreen(
+                dao = dao,
+                profileDao = profileDao,
+                schoolZoneDao = schoolZoneDao,
+                speedCameraDao = speedCameraDao,
+                preselectedProfileId = null,
+                onBack = { navController.popBackStack() },
+                // Deliberately doesn't navigate away -- after saving, the
+                // instructor might still want to Regenerate or Open in nav app
+                // from the same screen. "Close" (onBack) is the manual exit.
+                onSaved = {},
+            )
         }
     }
 }

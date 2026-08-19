@@ -94,7 +94,39 @@ private const val QUIET_ROADS_RADIUS_DEGREES = 0.015
  * heuristic based on road classification, not measured traffic -- label it as such
  * wherever it's shown in the UI, per spec.
  */
-suspend fun fetchQuietRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> {
+suspend fun fetchQuietRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> =
+    fetchWaysByHighwayTag(center, radiusDegrees, "residential|living_street", "quiet-roads")
+
+/**
+ * Highway on/off-ramp connector roads (`motorway_link`/`trunk_link`) near
+ * [center] -- the closest free proxy for "merging lanes" that exists. This is a
+ * real approximation, not exact merge-lane data: OSM has no dedicated tag for a
+ * merge lane, doesn't distinguish an on-ramp (merging in) from an off-ramp
+ * (exiting) in one field, and doesn't tag ordinary lane-merges on non-highway
+ * roads at all. Used only for the route generator's soft avoid/prefer scoring
+ * (RouteGenerator.kt) -- there's no real "avoid merge lanes" routing constraint
+ * available for free, same as hazards/school-zones/cameras/roundabouts.
+ */
+suspend fun fetchMergeLaneProxies(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> =
+    fetchWaysByHighwayTag(center, radiusDegrees, "motorway_link|trunk_link", "merge-lane-proxy")
+
+/**
+ * Motorway/trunk roads near [center] -- used only for the route generator's soft
+ * "prefer highways" scoring bonus (RouteGenerator.kt). The real hard "avoid
+ * highways" constraint uses OSRM's own `exclude=motorway` parameter instead (see
+ * OsrmApi.kt), which doesn't need this data at all -- there's no equivalent
+ * "prefer motorway" bias parameter on OSRM's public server, so preferring
+ * highways can only ever be soft scoring.
+ */
+suspend fun fetchMajorRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> =
+    fetchWaysByHighwayTag(center, radiusDegrees, "motorway|trunk", "major-roads")
+
+private suspend fun fetchWaysByHighwayTag(
+    center: LatLng,
+    radiusDegrees: Double,
+    highwayTagPattern: String,
+    label: String,
+): List<List<LatLng>> {
     return withContext(Dispatchers.IO) {
         val south = center.latitude - radiusDegrees
         val north = center.latitude + radiusDegrees
@@ -102,7 +134,7 @@ suspend fun fetchQuietRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_
         val east = center.longitude + radiusDegrees
         val query = """
             [out:json][timeout:60];
-            way["highway"~"^(residential|living_street)${'$'}"]($south,$west,$north,$east);
+            way["highway"~"^($highwayTagPattern)${'$'}"]($south,$west,$north,$east);
             out geom;
         """.trimIndent()
 
@@ -113,10 +145,48 @@ suspend fun fetchQuietRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IOException("Overpass quiet-roads request failed: HTTP ${response.code}")
+                throw IOException("Overpass $label request failed: HTTP ${response.code}")
             }
             val body = response.body?.string() ?: return@use emptyList()
             parseWays(body)
+        }
+    }
+}
+
+/**
+ * Roundabouts near [center]: proper roundabouts (`junction=roundabout` ways) plus
+ * mini-roundabouts (`highway=mini_roundabout` nodes -- the small painted-circle
+ * roundabouts common on local streets, just as relevant for a learner driver).
+ * Each result is a "line" of one or more points (a mini-roundabout node comes
+ * back as a single-point line) so the return type matches the other Overpass
+ * helpers here. Used for the route generator's soft avoid/prefer scoring.
+ */
+suspend fun fetchRoundabouts(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> {
+    return withContext(Dispatchers.IO) {
+        val south = center.latitude - radiusDegrees
+        val north = center.latitude + radiusDegrees
+        val west = center.longitude - radiusDegrees
+        val east = center.longitude + radiusDegrees
+        val query = """
+            [out:json][timeout:60];
+            (
+              way["junction"="roundabout"]($south,$west,$north,$east);
+              node["highway"="mini_roundabout"]($south,$west,$north,$east);
+            );
+            out geom;
+        """.trimIndent()
+
+        val request = Request.Builder()
+            .url(OVERPASS_URL)
+            .post(FormBody.Builder().add("data", query).build())
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Overpass roundabouts request failed: HTTP ${response.code}")
+            }
+            val body = response.body?.string() ?: return@use emptyList()
+            parseWaysAndNodes(body)
         }
     }
 }
@@ -135,6 +205,34 @@ private fun parseWays(json: String): List<List<LatLng>> {
         if (wayPoints.size >= 2) ways.add(wayPoints)
     }
     return ways
+}
+
+/** Like [parseWays], but also accepts standalone `node` elements (e.g.
+ * mini-roundabouts, which OSM tags as a single point, not a way) -- each node
+ * comes back as its own one-point "line" so callers get a uniform return shape
+ * regardless of whether a feature was mapped as a way or a bare node. */
+private fun parseWaysAndNodes(json: String): List<List<LatLng>> {
+    val elements = JSONObject(json).optJSONArray("elements") ?: return emptyList()
+    val results = mutableListOf<List<LatLng>>()
+    for (i in 0 until elements.length()) {
+        val element = elements.getJSONObject(i)
+        when (element.optString("type")) {
+            "way" -> {
+                val geometry = element.optJSONArray("geometry") ?: continue
+                val wayPoints = (0 until geometry.length()).mapNotNull { j ->
+                    val node = geometry.optJSONObject(j) ?: return@mapNotNull null
+                    LatLng(node.getDouble("lat"), node.getDouble("lon"))
+                }
+                if (wayPoints.size >= 2) results.add(wayPoints)
+            }
+            "node" -> {
+                if (element.has("lat") && element.has("lon")) {
+                    results.add(listOf(LatLng(element.getDouble("lat"), element.getDouble("lon"))))
+                }
+            }
+        }
+    }
+    return results
 }
 
 /**

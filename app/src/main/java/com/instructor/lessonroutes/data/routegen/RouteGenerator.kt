@@ -1,0 +1,201 @@
+package com.instructor.lessonroutes.data.routegen
+
+import com.instructor.lessonroutes.data.remote.fetchRoutedPaths
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import org.maplibre.android.geometry.LatLng
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
+
+/** NONE = no preference, AVOID = steer away from it, PREFER = try to include it.
+ * Only [RouteGenerationFilters.highways]'s AVOID is a real hard routing
+ * constraint (OSRM's own `exclude=motorway`) -- every other category, and every
+ * PREFER, is soft proximity scoring against candidate routes, since no free
+ * routing API supports true avoid/prefer-zone routing. See the doc comments on
+ * OverpassApi.fetchRoundabouts/fetchMergeLaneProxies/fetchMajorRoads. */
+enum class FilterPreference { NONE, AVOID, PREFER }
+
+data class RouteGenerationFilters(
+    val incidents: FilterPreference = FilterPreference.NONE,
+    val constructionZones: FilterPreference = FilterPreference.NONE,
+    val schoolZones: FilterPreference = FilterPreference.NONE,
+    val speedCameras: FilterPreference = FilterPreference.NONE,
+    val highways: FilterPreference = FilterPreference.NONE,
+    val roundabouts: FilterPreference = FilterPreference.NONE,
+    val mergingLanes: FilterPreference = FilterPreference.NONE,
+)
+
+/** Every point-of-interest list the generator scores candidate routes against --
+ * callers only need to populate the categories that are actually AVOID/PREFER in
+ * [RouteGenerationFilters] (fetching the rest is wasted work), everything else can
+ * stay the empty-list default. */
+data class ScoringData(
+    val incidents: List<LatLng> = emptyList(),
+    val constructionZones: List<LatLng> = emptyList(),
+    val schoolZones: List<LatLng> = emptyList(),
+    val speedCameras: List<LatLng> = emptyList(),
+    val roundabouts: List<LatLng> = emptyList(),
+    val mergeLaneProxies: List<LatLng> = emptyList(),
+    val majorRoads: List<LatLng> = emptyList(),
+)
+
+data class GeneratedRoute(
+    val points: List<LatLng>,
+    val durationSeconds: Double,
+    val distanceMeters: Double,
+)
+
+// Rough urban-driving assumption for the initial distance guess -- refined by
+// actual OSRM-reported durations afterward, so this only needs to be in the right
+// ballpark, not accurate.
+private const val AVG_SPEED_KMH = 40.0
+private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)
+private const val MAX_RADIUS_ITERATIONS = 4
+private const val DURATION_TOLERANCE_RATIO = 0.15
+private const val PROXIMITY_METERS = 40.0
+private const val KM_PER_DEGREE_LAT = 111.32
+
+/**
+ * How large an area (in degrees, for an Overpass bbox query) the generator might
+ * range over for [targetDurationMinutes] -- callers use this to fetch scoring
+ * data (school zones, cameras, roundabouts, etc.) for a generous-enough area once
+ * up front, rather than re-querying per candidate route.
+ */
+fun estimateSearchRadiusDegrees(targetDurationMinutes: Int): Double {
+    // Generous headroom over the initial guess: iterative refinement can grow the
+    // radius a fair bit if the first guess undershoots the target duration.
+    return (initialRadiusKm(targetDurationMinutes) * 3.0) / KM_PER_DEGREE_LAT
+}
+
+private fun initialRadiusKm(targetDurationMinutes: Int): Double =
+    // A there-and-back trip covers the detour distance roughly twice (out + back),
+    // so split the time budget accordingly.
+    (AVG_SPEED_KMH * targetDurationMinutes / 60.0) / 2.5
+
+/**
+ * Generates a route from [start] to [destination] (pass the same point for both
+ * to plan a loop that returns to where it began) aiming for
+ * [targetDurationMinutes] of driving.
+ *
+ * No free routing API can plan "a route of duration X" directly, so this is a
+ * heuristic: try a detour point at each of 8 bearings around the start/
+ * destination midpoint, ask OSRM for its actual drive time, and adjust the detour
+ * distance iteratively (up to [MAX_RADIUS_ITERATIONS] times) until it converges
+ * near the target -- then, among whichever candidates converged, pick the one
+ * that best matches [filters] (proximity-scored against [scoringData]).
+ *
+ * Returns null only if every candidate attempt failed outright (e.g. no network);
+ * a converged-but-imperfect candidate is still returned rather than null.
+ */
+suspend fun generateRoute(
+    start: LatLng,
+    destination: LatLng,
+    targetDurationMinutes: Int,
+    filters: RouteGenerationFilters,
+    scoringData: ScoringData,
+): GeneratedRoute? = coroutineScope {
+    val base = midpoint(start, destination)
+    val targetSeconds = targetDurationMinutes * 60.0
+    val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
+    val excludeHighways = filters.highways == FilterPreference.AVOID
+
+    val candidates = CANDIDATE_BEARINGS_DEGREES
+        .map { bearing ->
+            async {
+                refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, excludeHighways)
+            }
+        }
+        .awaitAll()
+        .filterNotNull()
+
+    candidates.maxByOrNull { scoreRoute(it.points, filters, scoringData) }
+}
+
+private suspend fun refineCandidate(
+    start: LatLng,
+    destination: LatLng,
+    base: LatLng,
+    bearingDegrees: Double,
+    initialRadiusKm: Double,
+    targetSeconds: Double,
+    excludeHighways: Boolean,
+): GeneratedRoute? {
+    var radiusKm = initialRadiusKm
+    var best: GeneratedRoute? = null
+    repeat(MAX_RADIUS_ITERATIONS) {
+        val detourPoint = offset(base, bearingDegrees, radiusKm)
+        val routed = try {
+            fetchRoutedPaths(listOf(start, detourPoint, destination), excludeHighways).firstOrNull()
+        } catch (e: Exception) {
+            null
+        }
+        if (routed == null) {
+            // This detour point didn't route at all (e.g. nothing driveable
+            // nearby) -- shrink and retry rather than hitting the exact same
+            // failing point again next iteration.
+            radiusKm *= 0.7
+            return@repeat
+        }
+        best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
+        val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
+        if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) return best
+        // Damped adjustment (not a straight multiply) so a wildly-off first guess
+        // doesn't overshoot into an even-worse radius next iteration.
+        radiusKm *= ratio.coerceIn(0.4, 2.5)
+    }
+    return best
+}
+
+private fun scoreRoute(route: List<LatLng>, filters: RouteGenerationFilters, data: ScoringData): Int {
+    var score = 0
+    fun apply(preference: FilterPreference, pointsOfInterest: List<LatLng>) {
+        if (preference == FilterPreference.NONE || pointsOfInterest.isEmpty()) return
+        val hits = countNearby(pointsOfInterest, route)
+        score += if (preference == FilterPreference.AVOID) -hits else hits
+    }
+    apply(filters.incidents, data.incidents)
+    apply(filters.constructionZones, data.constructionZones)
+    apply(filters.schoolZones, data.schoolZones)
+    apply(filters.speedCameras, data.speedCameras)
+    apply(filters.roundabouts, data.roundabouts)
+    apply(filters.mergingLanes, data.mergeLaneProxies)
+    // Avoid-highways is already a hard OSRM exclude (see excludeHighways in
+    // generateRoute) -- this scoring only meaningfully does anything for PREFER.
+    apply(filters.highways, data.majorRoads)
+    return score
+}
+
+private fun countNearby(pointsOfInterest: List<LatLng>, route: List<LatLng>): Int =
+    pointsOfInterest.count { poi -> route.any { r -> approxDistanceMeters(poi, r) < PROXIMITY_METERS } }
+
+/** Equirectangular approximation -- fine at this scale (tens of meters), same
+ * approach as OverpassApi.kt's distanceToPolylineMeters. Checks distance to the
+ * nearest route *vertex* rather than the nearest segment -- an approximation, but
+ * OSRM's `overview=full` geometry is dense enough (vertices every ~10-50m) that
+ * this is close enough for scoring purposes. */
+private fun approxDistanceMeters(a: LatLng, b: LatLng): Double {
+    val metersPerDegreeLat = 111_320.0
+    val metersPerDegreeLon = 111_320.0 * cos(Math.toRadians(a.latitude))
+    val dx = (b.longitude - a.longitude) * metersPerDegreeLon
+    val dy = (b.latitude - a.latitude) * metersPerDegreeLat
+    return hypot(dx, dy)
+}
+
+/** Public so callers can center their own scoring-data fetch (see
+ * GenerateRouteScreen.kt) on the same point [generateRoute] itself searches around. */
+fun midpoint(a: LatLng, b: LatLng): LatLng =
+    LatLng((a.latitude + b.latitude) / 2.0, (a.longitude + b.longitude) / 2.0)
+
+/** Offsets [point] by [distanceKm] along compass [bearingDegrees] (0 = north,
+ * 90 = east), via a flat-earth approximation -- fine at the few-km scale this is
+ * used at. */
+private fun offset(point: LatLng, bearingDegrees: Double, distanceKm: Double): LatLng {
+    val kmPerDegreeLon = KM_PER_DEGREE_LAT * cos(Math.toRadians(point.latitude))
+    val bearingRad = Math.toRadians(bearingDegrees)
+    val dLat = (distanceKm * cos(bearingRad)) / KM_PER_DEGREE_LAT
+    val dLon = (distanceKm * sin(bearingRad)) / kmPerDegreeLon
+    return LatLng(point.latitude + dLat, point.longitude + dLon)
+}
