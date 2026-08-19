@@ -202,6 +202,11 @@ fun RouteMapView(
                 mapViewRef.value = view
                 view.onCreate(Bundle())
                 view.getMapAsync { map ->
+                    // Just the logo watermark -- no licensing requirement to keep it
+                    // (unlike the separate attribution control, left on, which is how
+                    // OpenStreetMap's ODbL-required "© OpenStreetMap contributors"
+                    // credit actually gets shown).
+                    map.uiSettings.isLogoEnabled = false
                     map.cameraPosition = CameraPosition.Builder()
                         .target(FALLBACK_CENTER)
                         .zoom(DEFAULT_ZOOM)
