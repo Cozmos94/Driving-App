@@ -36,6 +36,7 @@ import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
+import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
 import org.maplibre.android.geometry.LatLng
 
 /**
@@ -82,11 +83,12 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
             }
         } else {
             val sortedPoints = current.points.sortedBy { it.sequenceOrder }
+            val displayRoutePoints = rememberDisplayRoutePoints(current.points)
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     RouteMapView(
                         modifier = Modifier.fillMaxSize(),
-                        routePoints = sortedPoints.map { LatLng(it.latitude, it.longitude) },
+                        routePoints = displayRoutePoints,
                         waypoints = sortedPoints.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
                         hazards = hazards,
                         onHazardClick = { selectedHazard = it },

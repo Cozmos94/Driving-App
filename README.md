@@ -2,8 +2,14 @@
 
 Android app for a driving instructor to record, save, and follow custom driving
 routes with students, **scoped to NSW, Australia only**. Zero running cost: no
-Google Maps SDK, no billing account, no routing API. See `spec.md` (in this repo's
-parent context) for the full design.
+Google Maps SDK, no billing account, no paid routing API. See `spec.md` (in this
+repo's parent context) for the full design.
+
+One nuance on "no routing API": saved routes are still always either a recorded
+GPS trail or hand-tapped points — never computed by a routing engine. A free,
+keyless routing API (OSRM) is used only to *display* tap-created routes more
+usefully (see "Road-snapping for tap-created routes" below) — it never decides
+what a route's saved points are.
 
 ## Status: full spec build complete, steps 5–8 + step 10 pending a test pass
 
@@ -33,7 +39,9 @@ TfNSW key needed).
   "Undo" (remove the last tapped point) and "Clear all" (wipe the whole in-progress
   route, with a confirmation dialog since it can't be undone) — Record mode
   deliberately doesn't get these, since a live GPS trail isn't something you "undo"
-  a point at a time the same way.
+  a point at a time the same way. Tap mode's in-progress preview is road-snapped
+  (see below), debounced ~600ms after the last tap so rapid tapping doesn't fire a
+  request per point.
 - **Follow view** ([FollowScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/FollowScreen.kt)):
   a selected route's polyline with a live position dot on top; camera fits the route's
   bounds once and doesn't chase the dot (deliberately, to avoid a jumpy camera).
@@ -193,6 +201,39 @@ without losing saved routes. If a future schema change alters an *existing* tabl
 migration's SQL has to match Room's expected schema exactly or it crashes on
 upgrade.
 
+## Road-snapping for tap-created routes
+
+Tap-created routes are a handful of hand-placed points; joined with straight lines
+they rarely match the real road. [OsrmApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/OsrmApi.kt)
+snaps them through [OSRM](https://router.project-osrm.org)'s free, keyless public
+routing server (`GET /route/v1/driving/{lon,lat;lon,lat;...}?overview=full&geometries=geojson`)
+to get a dense path that follows actual roads — same "free shared community
+service, best effort, fall back to something simpler on failure" posture as the
+Overpass calls elsewhere in this app.
+
+[RoadSnappedRoute.kt](app/src/main/java/com/instructor/lessonroutes/ui/map/RoadSnappedRoute.kt)'s
+`rememberDisplayRoutePoints()` is the single decision point, used by both
+`RouteDetailScreen` and `FollowScreen`: **only snaps tap-created routes**, detected
+by every point having a null `timestamp` (per `RoutePoint`'s own doc — set when
+recorded, null when tapped). A recorded GPS trail is left exactly as recorded and
+never run through OSRM — it's already dense real-road data, and rerouting it
+through a driving-directions engine could "correct away" a deliberate
+off-road/wrong-lane maneuver the instructor recorded on purpose (e.g. a driveway
+pull-in). Falls back to the original straight-line points on any OSRM failure, so
+the map never shows nothing.
+
+**What's NOT snapped**: the *stored* `RoutePoint` rows for a tap-created route are
+still exactly the points the instructor tapped (unchanged schema, unchanged
+`isWaypoint` semantics) — road-snapping is purely a display-time overlay computed
+fresh each time, not baked into what's saved. `openInNavApp()`'s destination point
+is likewise still the first stored (tapped) point, unaffected by this.
+
+**If `router.project-osrm.org` ever becomes unreliable for this app's needs**: it's
+a public demo instance, not a guaranteed-uptime production service (though this
+app's volume — an instructor tapping out a handful of routes — is tiny by its
+standards). Self-hosting OSRM or switching to a paid routing API would be the next
+step; `fetchRoadSnappedPath()`'s signature wouldn't need to change.
+
 ## High traffic volume overlay (step 11, substituted for crash/black-spot data)
 
 Built against TfNSW's **Traffic Volume Counts API** — a queryable SQL-over-HTTP API
@@ -234,6 +275,29 @@ map to a different area. Doing that properly would mean hooking into the map's
 camera-idle events and debouncing re-fetches; a reasonable next step if this
 overlay needs to follow you around rather than stay anchored near the start
 location.
+
+## Color theme (purple + yellow)
+
+Brand colors per Corey: purple `#71286F` and yellow `#F3E10E` — see
+[Color.kt](app/src/main/java/com/instructor/lessonroutes/ui/theme/Color.kt) and
+[Theme.kt](app/src/main/java/com/instructor/lessonroutes/ui/theme/Theme.kt).
+Purple is `primary` (white text/icons on it), yellow is `secondary` (dark text on
+it — yellow is too light for white-on-yellow to read well), each with a soft
+tinted "container" variant for filled surfaces like the FAB.
+
+**Dynamic color (Material You) is now off by default** (`dynamicColor = false` in
+`LessonRoutesTheme`) — it was on before, and on Android 12+ it derives the app's
+colors from the device wallpaper, silently overriding any custom palette. Leaving
+it on would have made this purple/yellow theme invisible on most modern phones.
+
+The route polyline and waypoint-marker colors in
+[RouteMapView.kt](app/src/main/java/com/instructor/lessonroutes/ui/map/RouteMapView.kt)
+(`ROUTE_LINE_COLOR`, `WAYPOINT_COLOR`) were updated to match (purple line, yellow
+waypoint dots) — these were already meant to track the app's theme color per their
+own old comment. The Phase 2 overlay colors (hazards, high-traffic-volume, quiet
+roads, live-location dot) were deliberately **left alone**: those carry semantic
+meaning (e.g. red = hazard) that's unrelated to app branding, and recoloring them
+to purple/yellow would make the overlays harder to tell apart at a glance.
 
 ## Overpass gotchas (worth knowing if this breaks again)
 

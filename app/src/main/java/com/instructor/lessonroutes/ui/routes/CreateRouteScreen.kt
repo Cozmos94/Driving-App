@@ -1,5 +1,6 @@
 package com.instructor.lessonroutes.ui.routes
 
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,10 +43,12 @@ import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.RoutePoint
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
+import com.instructor.lessonroutes.data.remote.fetchRoadSnappedPath
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.maplibre.android.geometry.LatLng
 
@@ -104,6 +108,29 @@ fun CreateRouteScreen(
         onDispose { fusedClient.removeLocationUpdates(callback) }
     }
 
+    // Tap mode: hand-placed points are joined by straight lines by default, which
+    // rarely matches the real road -- snap them through OSRM (free, keyless, same
+    // "best effort" posture as the Overpass calls elsewhere in this app) so the
+    // in-progress preview follows actual roads. Debounced so rapid taps don't fire
+    // a request per tap; falls back to the straight-line points on failure or while
+    // a fetch is in flight. Record mode is untouched -- a live GPS trail is already
+    // dense real-road data and shouldn't be rerouted through a routing engine.
+    val tapPreviewPoints = points.map { LatLng(it.latitude, it.longitude) }
+    var tapSnappedPath by remember { mutableStateOf<List<LatLng>?>(null) }
+    LaunchedEffect(mode, tapPreviewPoints) {
+        if (mode != CreateMode.TAP || tapPreviewPoints.size < 2) {
+            tapSnappedPath = null
+            return@LaunchedEffect
+        }
+        delay(600)
+        tapSnappedPath = try {
+            fetchRoadSnappedPath(tapPreviewPoints)
+        } catch (e: Exception) {
+            Log.e("CreateRouteScreen", "Road-snapping failed for tap preview", e)
+            null
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -131,7 +158,11 @@ fun CreateRouteScreen(
 
             RouteMapView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                routePoints = points.map { LatLng(it.latitude, it.longitude) },
+                routePoints = if (mode == CreateMode.TAP) {
+                    tapSnappedPath ?: tapPreviewPoints
+                } else {
+                    points.map { LatLng(it.latitude, it.longitude) }
+                },
                 waypoints = points.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
                 // This screen already manages its own location permission/updates for
                 // recording — letting RouteMapView also run its own permission request

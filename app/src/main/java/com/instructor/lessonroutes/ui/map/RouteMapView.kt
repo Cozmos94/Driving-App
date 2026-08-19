@@ -71,11 +71,11 @@ private const val TAP_HIT_RADIUS_PX = 40.0
 
 private const val ROUTE_SOURCE_ID = "route-source"
 private const val ROUTE_LAYER_ID = "route-layer"
-private const val ROUTE_LINE_COLOR = "#2E7D32" // matches the app's theme green
+private const val ROUTE_LINE_COLOR = "#71286F" // matches the app's purple theme
 
 private const val WAYPOINT_SOURCE_ID = "waypoint-source"
 private const val WAYPOINT_LAYER_ID = "waypoint-layer"
-private const val WAYPOINT_COLOR = "#F57C00" // orange, distinct from the route line
+private const val WAYPOINT_COLOR = "#F3E10E" // app's yellow accent, distinct from the purple route line
 
 private const val LIVE_LOCATION_SOURCE_ID = "live-location-source"
 private const val LIVE_LOCATION_LAYER_ID = "live-location-layer"

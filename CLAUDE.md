@@ -39,6 +39,24 @@ profiles). Specifically:
   with a real hand-written `Migration(2, 3)` (see `AppDatabase.kt`) instead of
   another destructive fallback — first real migration in this project, worth
   double-checking on upgrade from a v2 install if anything seems off.
+- ✅ **Purple/yellow theme** (`#71286F` purple, `#F3E10E` yellow — Corey's brand
+  colors): see `Color.kt`/`Theme.kt`. Also turned dynamic (Material You) color
+  **off by default** — it was silently overriding any custom palette with
+  wallpaper-derived colors on Android 12+, which would have made this invisible on
+  most phones. Route line + waypoint dots in `RouteMapView.kt` were recolored to
+  match (they already tracked the theme color per their own old comment); Phase 2
+  overlay colors (hazards, traffic volume, quiet roads) were deliberately left
+  alone since they carry semantic meaning, not branding.
+- ✅ **Tap-created routes are now road-snapped for display**: `OsrmApi.kt` calls
+  OSRM's free public routing server (no key) to turn a tap route's sparse points
+  into a path that follows real roads, both live while tapping
+  (`CreateRouteScreen.kt`, debounced ~600ms) and when viewing a saved route
+  (`RoadSnappedRoute.kt`'s `rememberDisplayRoutePoints()`, used by
+  `RouteDetailScreen`/`FollowScreen`). Only applies to tap-created routes (detected
+  by every point having a null `timestamp`) — recorded GPS trails are left exactly
+  as recorded. Falls back to straight lines on any OSRM failure. **The stored
+  `RoutePoint` rows are unchanged** — this is purely a display-time computation,
+  not baked into what's saved.
 - ✅ **"Open in nav app" now targets Google Maps specifically**: tries a
   `google.navigation:` turn-by-turn deep link first, falls back to the old generic
   `geo:` intent if Maps isn't installed. Needed a new `<queries>` block in
@@ -81,6 +99,10 @@ profiles). Specifically:
 - `app/src/main/java/com/instructor/lessonroutes/ui/profiles/StudentProfilesScreen.kt` —
   the searchable profile-picker landing screen; see `AppNavHost.kt` for how
   `routeListFilter` gets threaded from here into `RouteListScreen`/`CreateRouteScreen`.
+- `app/src/main/java/com/instructor/lessonroutes/data/remote/OsrmApi.kt`,
+  `app/src/main/java/com/instructor/lessonroutes/ui/map/RoadSnappedRoute.kt` — the
+  tap-route road-snapping feature (free OSRM public server, display-only, see
+  status above).
 - `app/src/main/assets/school_zones.json`, `speed_cameras.json` — processed
   static data snapshots (the original ~500MB source shapefile isn't in the repo).
 
@@ -110,9 +132,9 @@ assets) and quiet roads (OSM only) don't need it.
 ## Likely next steps
 
 1. Confirm steps 5–8 (create/record/follow/edit/delete), the student-profile
-   picker/filter, and the new Student Profiles screen (search, "+", the
-   Profiles/Routes toggle, Undo/Clear-all in Tap mode) all work end to end — test
-   pass hasn't happened yet.
+   picker/filter, the Student Profiles screen (search, "+", the Profiles/Routes
+   toggle, Undo/Clear-all in Tap mode), the purple/yellow theme, and tap-route
+   road-snapping all work end to end on-device — test pass hasn't happened yet.
 2. Quiet roads deliberately still only fetch once at startup (confirmed as desired
    behavior, not a bug — don't "fix" this without checking first).
 3. If real crash/black-spot data turns up: same Overpass-snapping approach as

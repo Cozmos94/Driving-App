@@ -16,19 +16,36 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val LightColors = lightColorScheme(
-    primary = RouteGreen40,
+    primary = PurplePrimaryLight,
+    onPrimary = OnPurplePrimaryLight,
+    primaryContainer = PurpleContainerLight,
+    onPrimaryContainer = OnPurpleContainerLight,
+    secondary = YellowSecondaryLight,
+    onSecondary = OnYellowSecondaryLight,
+    secondaryContainer = YellowContainerLight,
+    onSecondaryContainer = OnYellowContainerLight,
     background = Neutral95,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = RouteGreen80,
+    primary = PurplePrimaryDark,
+    onPrimary = OnPurplePrimaryDark,
+    primaryContainer = PurpleContainerDark,
+    onPrimaryContainer = OnPurpleContainerDark,
+    secondary = YellowSecondaryDark,
+    onSecondary = OnYellowSecondaryDark,
+    secondaryContainer = YellowContainerDark,
+    onSecondaryContainer = OnYellowContainerDark,
     background = Neutral10,
 )
 
 @Composable
 fun LessonRoutesTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // Off by default: Android 12+'s dynamic (Material You) color would otherwise
+    // override this custom purple/yellow brand palette with tones derived from the
+    // device wallpaper, defeating the point of picking specific brand colors.
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {

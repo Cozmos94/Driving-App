@@ -27,6 +27,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.ui.map.RouteMapView
+import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
@@ -84,7 +85,7 @@ fun FollowScreen(routeId: Long, dao: RouteDao) {
             val sortedPoints = current.points.sortedBy { it.sequenceOrder }
             RouteMapView(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                routePoints = sortedPoints.map { LatLng(it.latitude, it.longitude) },
+                routePoints = rememberDisplayRoutePoints(current.points),
                 waypoints = sortedPoints.filter { it.isWaypoint }.map { LatLng(it.latitude, it.longitude) },
                 liveLocation = liveLocation,
                 fitBoundsToRoute = true,
