@@ -55,6 +55,7 @@ fun RouteListScreen(
     onCreateClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onProfilesClick: () -> Unit,
+    onOverviewClick: () -> Unit,
 ) {
     val routesWithProfiles by dao.getAllRoutesWithProfiles().collectAsState(initial = emptyList())
     val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
@@ -87,6 +88,7 @@ fun RouteListScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(onClick = onProfilesClick) { Text("Profiles") }
+                OutlinedButton(onClick = onOverviewClick) { Text("Overview") }
                 FloatingActionButton(onClick = onCreateClick) { Text("+") }
             }
         },

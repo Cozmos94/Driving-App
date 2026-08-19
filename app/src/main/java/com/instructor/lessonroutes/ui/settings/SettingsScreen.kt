@@ -44,8 +44,8 @@ fun SettingsScreen(routeDao: RouteDao, onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("LessonRoutes", fontWeight = FontWeight.Bold)
-            Text("Version ${BuildConfig.VERSION_NAME} — NSW driving-instructor route planner")
+            Text("NSW Driving Instructor Route Planner", fontWeight = FontWeight.Bold)
+            Text("Version ${BuildConfig.VERSION_NAME}")
 
             HorizontalDivider()
 

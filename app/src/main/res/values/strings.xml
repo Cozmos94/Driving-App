@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LessonRoutes</string>
+    <!-- Shown under the launcher icon -- kept short since launchers truncate long
+         labels. The full name lives in app_name_full, shown inside the app itself
+         (Settings) where there's room for it. -->
+    <string name="app_name">Route Planner</string>
+    <string name="app_name_full">NSW Driving Instructor Route Planner</string>
 </resources>

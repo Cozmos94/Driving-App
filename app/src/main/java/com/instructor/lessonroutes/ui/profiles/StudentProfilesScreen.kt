@@ -49,6 +49,7 @@ fun StudentProfilesScreen(
     profileDao: StudentProfileDao,
     onProfileClick: (Long) -> Unit,
     onAllRoutesClick: () -> Unit,
+    onOverviewClick: () -> Unit,
 ) {
     val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
@@ -67,6 +68,7 @@ fun StudentProfilesScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(onClick = onAllRoutesClick) { Text("Routes") }
+                OutlinedButton(onClick = onOverviewClick) { Text("Overview") }
                 FloatingActionButton(onClick = { showCreateDialog = true }) { Text("+") }
             }
         },

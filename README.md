@@ -68,7 +68,10 @@ TfNSW key needed).
   The route list and this screen have matching bottom-left toggle buttons
   ("Profiles" / "Routes") to switch between them without repeated back-presses; the
   current filter is hoisted state in `AppNavHost`, not a nav argument, so the route
-  list stays a single plain destination.
+  list stays a single plain destination. Both bottom bars also have a centered
+  "Overview" button that returns to the live map (the app's start destination) via
+  `popBackStack(LIVE_MAP, inclusive = false)` — reuses the existing instance rather
+  than pushing a new one, since that screen runs continuous GPS tracking.
 - **Settings** ([SettingsScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/settings/SettingsScreen.kt),
   reached via a "Settings" button on the route list's top bar): app info, data-source
   attribution, and a "clear all saved routes" action. Deliberately minimal — there's
@@ -275,6 +278,23 @@ map to a different area. Doing that properly would mean hooking into the map's
 camera-idle events and debouncing re-fetches; a reasonable next step if this
 overlay needs to follow you around rather than stay anchored near the start
 location.
+
+## App name and icon
+
+Full name **NSW Driving Instructor Route Planner**, shorthand **Route Planner**.
+`strings.xml`'s `app_name` (shown under the launcher icon — kept short since
+launchers truncate long labels) is the shorthand; `app_name_full` holds the full
+name for reference, and the Settings screen's heading spells it out in full since
+there's room there.
+
+The launcher icon ([ic_launcher_background.xml](app/src/main/res/drawable/ic_launcher_background.xml),
+[ic_launcher_foreground.xml](app/src/main/res/drawable/ic_launcher_foreground.xml))
+is hand-built as vector drawables (no raster PNGs) — purple `#71286F` background,
+a white winding-road-plus-waypoint-dot glyph (already there, recolor aside), and a
+new yellow `#F3E10E` navigation-arrow glyph in the top right. Both foreground
+shapes are positioned to stay inside the adaptive icon's ~66dp-diameter safe circle
+(centered at 54,54 of the 108×108 viewport) so a circular/squircle launcher mask
+doesn't clip them.
 
 ## Color theme (purple + yellow)
 

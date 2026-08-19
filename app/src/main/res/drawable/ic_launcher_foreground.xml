@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder glyph: a winding route with a waypoint dot. Swap for real branding later. -->
+<!--
+  Brand glyph: a white winding route (road) with a waypoint dot, plus a yellow
+  navigation arrow in the top right. Both the route and the nav arrow sit within
+  the adaptive icon's ~66dp-diameter safe circle (centered at 54,54, radius 33)
+  so neither gets clipped by a circular/squircle launcher mask.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Road: a winding line with a waypoint dot at its end. -->
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="6"
@@ -14,4 +20,9 @@
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M78,30 m-8,0 a8,8 0,1,1 16,0 a8,8 0,1,1 -16,0" />
+    <!-- Navigation arrow, top right: a compass-needle/paper-plane shape pointing
+         north, centered around (72,36). -->
+    <path
+        android:fillColor="#F3E10E"
+        android:pathData="M72,24 L64,46 L72,40 L80,46 Z" />
 </vector>

@@ -39,6 +39,15 @@ profiles). Specifically:
   with a real hand-written `Migration(2, 3)` (see `AppDatabase.kt`) instead of
   another destructive fallback — first real migration in this project, worth
   double-checking on upgrade from a v2 install if anything seems off.
+- ✅ **App name + icon**: full name "NSW Driving Instructor Route Planner",
+  shorthand "Route Planner" (`app_name` in `strings.xml` — shown under the
+  launcher icon, kept short; `app_name_full` + the Settings screen heading carry
+  the full name). Launcher icon (hand-built vector drawables, no PNGs) is now
+  purple background + white road glyph + a new yellow nav-arrow glyph top-right.
+- ✅ **"Overview" button**: centered in the bottom bar of both the route list and
+  Student Profiles screens (between the Profiles/Routes toggle and the "+" FAB) —
+  returns to the live map via `popBackStack(LIVE_MAP, inclusive = false)`, reusing
+  the existing instance rather than restarting its continuous GPS tracking.
 - ✅ **Purple/yellow theme** (`#71286F` purple, `#F3E10E` yellow — Corey's brand
   colors): see `Color.kt`/`Theme.kt`. Also turned dynamic (Material You) color
   **off by default** — it was silently overriding any custom palette with

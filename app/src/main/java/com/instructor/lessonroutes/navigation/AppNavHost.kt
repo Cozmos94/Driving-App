@@ -87,6 +87,11 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                     routeListFilter = null
                     navController.navigate(ROUTE_LIST)
                 },
+                // Returns to the existing live-map instance (the start destination,
+                // always at the bottom of the stack) rather than pushing a new one --
+                // that screen runs continuous GPS tracking, so reusing it avoids
+                // restarting location listeners unnecessarily.
+                onOverviewClick = { navController.popBackStack(LIVE_MAP, inclusive = false) },
             )
         }
         composable(ROUTE_LIST) {
@@ -98,6 +103,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 onCreateClick = { navController.navigate(ROUTE_CREATE) },
                 onSettingsClick = { navController.navigate(SETTINGS) },
                 onProfilesClick = { navController.navigate(STUDENT_PROFILES) },
+                onOverviewClick = { navController.popBackStack(LIVE_MAP, inclusive = false) },
             )
         }
         composable(SETTINGS) {
