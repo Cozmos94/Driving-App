@@ -51,12 +51,17 @@ TfNSW key needed).
   delete confirmation.
 - **Open in nav app**: on the route detail screen, opens Google Maps' "Get
   Directions" URL (`https://www.google.com/maps/dir/?api=1&destination=...&waypoints=...`,
-  free, no key) with the route's end point as the destination and up to 8
-  evenly-sampled points along the route as waypoints — this makes Maps' own
-  computed driving directions track the planned route much more closely than the
-  earlier destination-only version did (real usage showed a single pin gives Maps
-  nothing to shape its path around, so its route could look "completely
-  different"). Still not exact fidelity — Maps computes its own turn-by-turn path
+  free, no key) with the route's end point as the destination and up to 8 points
+  along the route as waypoints. These are sampled **evenly by distance, not by
+  index** (`sampleWaypoints()` in `NavIntent.kt`) — an early index-based version
+  could leave a long straight stretch of the route (a highway run, say) with zero
+  waypoints at all, giving Maps complete freedom to substitute a totally
+  different path through that gap (confirmed as a real cause of "loads a
+  completely different route" reports, worse for loop/there-and-back routes
+  where the waypoint budget has to cover both legs). Distance-based sampling
+  makes Maps' own computed driving directions track the planned route much more
+  closely than either the original destination-only version or the index-sampled
+  one did. Still not exact fidelity — Maps computes its own turn-by-turn path
   between waypoints, it doesn't replay the recorded/tapped points — that would need
   a paid turn-by-turn SDK. Falls back to a plain https intent (whatever handles it)
   if Google Maps isn't installed. See `openInNavApp()` in

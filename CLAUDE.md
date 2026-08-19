@@ -189,6 +189,18 @@ profiles). Specifically:
     filters. `generateCandidateRoutes()` (OSRM) and scoring-data fetching
     (`buildScoringData()` in `GenerateRouteScreen.kt`, Overpass/TfNSW/Room) run
     concurrently, combined via `pickBestRoute()`.
+  - **Fifth-round bug (found via a generated route that took the instructor
+    "north to Sydney" instead of the intended inland-west loop when opened in
+    Google Maps)**: `NavIntent.kt`'s `sampleWaypoints()` sampled evenly by
+    *index*, not distance. An OSRM polyline isn't uniformly spaced -- far more
+    vertices on curvy roads, far fewer on a long straight stretch -- so
+    index-based sampling could leave an entire straight section with zero
+    waypoints, handing Google Maps free rein to substitute a completely
+    different path through that gap. Worse for loop/there-and-back routes,
+    where the 8-waypoint budget has to cover both legs. Fixed: sample evenly
+    by *cumulative distance* along the route instead. Shared by
+    `RouteDetailScreen` too, so this also improves fidelity for saved routes,
+    not just generated ones.
   - **No filter is a hard routing constraint** -- all of them, Highways
     included, are proximity-scored best-of-4-candidates. Highways->Avoid was
     originally OSRM's `exclude=motorway` (a real constraint), but OSRM's
