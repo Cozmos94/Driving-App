@@ -107,9 +107,15 @@ private const val CAMERA_REDLIGHT_SOURCE_ID = "camera-redlight-source"
 private const val CAMERA_REDLIGHT_LAYER_ID = "camera-redlight-layer"
 private const val CAMERA_REDLIGHT_ICON_ID = "camera-redlight-icon"
 
+// Icon marker fallback, for any station Overpass couldn't match to a real road.
 private const val HIGH_VOLUME_SOURCE_ID = "high-volume-source"
 private const val HIGH_VOLUME_LAYER_ID = "high-volume-layer"
 private const val HIGH_VOLUME_ICON_ID = "high-volume-icon"
+
+// The real thing: the matched road segment's actual shape, painted red.
+private const val HIGH_VOLUME_LINE_SOURCE_ID = "high-volume-line-source"
+private const val HIGH_VOLUME_LINE_LAYER_ID = "high-volume-line-layer"
+private const val HIGH_VOLUME_LINE_COLOR = "#B71C1C"
 
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
@@ -196,7 +202,11 @@ fun RouteMapView(
                             ?.takeIf { (_, distance) -> distance <= TAP_HIT_RADIUS_PX }
 
                         val volumeHit = highVolumeRoadsState.value
-                            .map { it to screenDistance(map, it.latitude, it.longitude, tapScreen) }
+                            .map { road ->
+                                val distance = road.geometry?.let { screenDistanceToPolyline(map, it, tapScreen) }
+                                    ?: screenDistance(map, road.latitude, road.longitude, tapScreen)
+                                road to distance
+                            }
                             .minByOrNull { (_, distance) -> distance }
                             ?.takeIf { (_, distance) -> distance <= TAP_HIT_RADIUS_PX }
 
@@ -304,8 +314,11 @@ fun RouteMapView(
 
     LaunchedEffect(highVolumeRoads, mapLibreMap) {
         val style = mapLibreMap?.style ?: return@LaunchedEffect
-        val points = highVolumeRoads.map { LatLng(it.latitude, it.longitude) }
-        (style.getSource(HIGH_VOLUME_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(points))
+        val (withGeometry, withoutGeometry) = highVolumeRoads.partition { it.geometry != null }
+        val lines = withGeometry.mapNotNull { it.geometry }
+        val markerPoints = withoutGeometry.map { LatLng(it.latitude, it.longitude) }
+        (style.getSource(HIGH_VOLUME_LINE_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(multiLineGeoJson(lines))
+        (style.getSource(HIGH_VOLUME_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(markerPoints))
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -333,6 +346,29 @@ fun RouteMapView(
 private fun screenDistance(map: MapLibreMap, latitude: Double, longitude: Double, tapScreen: PointF): Double {
     val screen = map.projection.toScreenLocation(LatLng(latitude, longitude))
     return hypot((screen.x - tapScreen.x).toDouble(), (screen.y - tapScreen.y).toDouble())
+}
+
+/** Minimum screen-space distance from [tapScreen] to any segment of [polyline] --
+ * for tapping a painted road segment rather than a single point marker. */
+private fun screenDistanceToPolyline(map: MapLibreMap, polyline: List<LatLng>, tapScreen: PointF): Double {
+    if (polyline.size < 2) return Double.MAX_VALUE
+    val screenPoints = polyline.map { map.projection.toScreenLocation(it) }
+    var minDistance = Double.MAX_VALUE
+    for (i in 0 until screenPoints.size - 1) {
+        val a = screenPoints[i]
+        val b = screenPoints[i + 1]
+        val dx = (b.x - a.x).toDouble()
+        val dy = (b.y - a.y).toDouble()
+        val lengthSquared = dx * dx + dy * dy
+        val t = if (lengthSquared == 0.0) {
+            0.0
+        } else {
+            (((tapScreen.x - a.x) * dx + (tapScreen.y - a.y) * dy) / lengthSquared).coerceIn(0.0, 1.0)
+        }
+        val distance = hypot(tapScreen.x - (a.x + t * dx), tapScreen.y - (a.y + t * dy))
+        if (distance < minDistance) minDistance = distance
+    }
+    return minDistance
 }
 
 private fun addSourcesAndLayers(style: Style) {
@@ -418,6 +454,13 @@ private fun addSourcesAndLayers(style: Style) {
         ),
     )
 
+    style.addSource(GeoJsonSource(HIGH_VOLUME_LINE_SOURCE_ID))
+    style.addLayer(
+        LineLayer(HIGH_VOLUME_LINE_LAYER_ID, HIGH_VOLUME_LINE_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(HIGH_VOLUME_LINE_COLOR)),
+            PropertyFactory.lineWidth(5f),
+        ),
+    )
     style.addImage(HIGH_VOLUME_ICON_ID, redStripIcon())
     style.addSource(GeoJsonSource(HIGH_VOLUME_SOURCE_ID))
     style.addLayer(
@@ -472,10 +515,9 @@ private fun speedLimitSignIcon(speedLimitKmh: Int, sizePx: Int = 96): Bitmap {
 }
 
 /**
- * Draws a short red "strip of road" marker for high-traffic-volume locations. This
- * is a stylized icon, not literal road geometry -- the source data is individual
- * counting-station points, not road-segment lines, so there's no actual road shape
- * to paint red without a separate road-network dataset to snap to.
+ * Fallback marker for a high-traffic-volume station Overpass couldn't match to a
+ * real road (see matchRoadGeometry) -- most stations get the actual road shape
+ * painted via [HIGH_VOLUME_LINE_LAYER_ID] instead; this is just for the leftovers.
  */
 private fun redStripIcon(sizePx: Int = 96): Bitmap {
     val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
@@ -528,6 +570,19 @@ private fun lineGeoJson(points: List<LatLng>): String {
     if (points.size < 2) return """{"type":"FeatureCollection","features":[]}"""
     val coordinates = points.joinToString(",") { "[${it.longitude},${it.latitude}]" }
     return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coordinates]},"properties":{}}"""
+}
+
+/** Several independent LineString features in one FeatureCollection -- unlike
+ * [lineGeoJson], each entry in [lines] is its own separate segment, not one
+ * connected path. */
+private fun multiLineGeoJson(lines: List<List<LatLng>>): String {
+    val validLines = lines.filter { it.size >= 2 }
+    if (validLines.isEmpty()) return """{"type":"FeatureCollection","features":[]}"""
+    val features = validLines.joinToString(",") { line ->
+        val coordinates = line.joinToString(",") { "[${it.longitude},${it.latitude}]" }
+        """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coordinates]},"properties":{}}"""
+    }
+    return """{"type":"FeatureCollection","features":[$features]}"""
 }
 
 private fun pointsGeoJson(points: List<LatLng>): String {

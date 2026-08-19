@@ -35,6 +35,7 @@ import com.instructor.lessonroutes.data.remote.HighVolumeRoad
 import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
+import com.instructor.lessonroutes.data.remote.matchRoadGeometry
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
@@ -111,7 +112,22 @@ fun LiveMapScreen(
     LaunchedEffect(Unit) {
         if (BuildConfig.TFNSW_API_KEY.isBlank()) return@LaunchedEffect
         try {
-            highVolumeRoads = fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY)
+            val stations = fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY)
+            // Snap each station to its real road shape via OSM/Overpass so the
+            // overlay paints the actual road, not just a marker at the point. Best
+            // effort: if Overpass fails (it's a shared free community service and
+            // can be slow/unavailable), fall back to plain points rather than
+            // losing the traffic-volume data entirely -- RouteMapView renders
+            // those as the old strip-icon marker instead of a painted line.
+            val geometryByIndex = try {
+                matchRoadGeometry(stations.map { LatLng(it.latitude, it.longitude) })
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Overpass road-matching failed, falling back to markers", e)
+                emptyMap()
+            }
+            highVolumeRoads = stations.mapIndexed { index, station ->
+                station.copy(geometry = geometryByIndex[index])
+            }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Failed to fetch high-volume roads", e)
             networkError = "Couldn't load traffic volume data right now"

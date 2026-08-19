@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import org.maplibre.android.geometry.LatLng
 import java.io.IOException
 
 data class HighVolumeRoad(
@@ -15,6 +16,10 @@ data class HighVolumeRoad(
     val longitude: Double,
     val year: Int,
     val trafficCount: Int,
+    /** The real road segment matched via Overpass (see OverpassApi.kt) -- null if
+     * no nearby road way was found (or Overpass matching wasn't attempted/failed),
+     * in which case callers should fall back to a plain marker at the point. */
+    val geometry: List<LatLng>? = null,
 )
 
 private const val TRAFFIC_VOLUME_URL = "https://api.transport.nsw.gov.au/v1/traffic_volume"
