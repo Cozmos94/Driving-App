@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -23,9 +25,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -44,6 +48,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -490,18 +496,19 @@ fun GenerateRouteScreen(
                 ) {
                     Text(if (isGenerating) "Generating…" else "Generate route")
                 }
-                if (isGenerating) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                    Text(
-                        "Trying a few different routes and picking the best fit for your filters — " +
-                            "usually just a few seconds, up to 45 at most.",
-                    )
-                }
                 generationError?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
             }
         }
+    }
+
+    // Modal, not just the inline "Generating…" button label -- easy to miss if
+    // scrolled past the button, and generation can now take up to 45s. Not
+    // dismissible by the user (no route to show yet either way); closes itself
+    // as soon as isGenerating flips back to false in onGenerateClick's `finally`
+    // block, whether that's because a route was found, generation failed, or it
+    // timed out.
+    if (isGenerating) {
+        GeneratingDialog()
     }
 
     if (showStartTimePicker) {
@@ -590,6 +597,28 @@ private fun FilterRow(label: String, preference: FilterPreference, onChange: (Fi
                 onClick = { onChange(FilterPreference.PREFER) },
                 label = { Text("Prefer") },
             )
+        }
+    }
+}
+
+/** Shown modally for the whole of [onGenerateClick]'s network round-trip --
+ * see the isGenerating check above for why (easy to miss the inline button
+ * label once scrolled away, and generation can take up to 45s). Not
+ * dismissible by tap-outside/back -- there's nothing useful to fall back to
+ * mid-generation, and it closes on its own the moment generation finishes,
+ * one way or another. */
+@Composable
+private fun GeneratingDialog() {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    ) {
+        Surface(shape = MaterialTheme.shapes.medium, tonalElevation = 6.dp) {
+            Row(modifier = Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                Spacer(modifier = Modifier.width(16.dp))
+                Text("Generating your route — this can take up to a minute. Please be patient.")
+            }
         }
     }
 }
