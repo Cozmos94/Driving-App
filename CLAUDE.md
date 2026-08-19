@@ -398,11 +398,24 @@ assets) and quiet roads (OSM only) don't need it.
 
 ## Likely next steps
 
+0. **Immediate/pending, as of this handoff**: the tenth-round fix (commit
+   `4c99efa` — `ALTERNATIVES_TIMEOUT_MS = 5_000L` bounding the OSRM
+   alternates call in `RouteGenerator.kt`'s `refineCandidate()`, plus
+   tightening `OsrmApi.kt`'s client to `callTimeout(6s)`/6s connect/read) has
+   **not yet been tested on-device**. Corey explicitly chose "test current fix
+   first" over cutting bearings further (to 2) or considering a paid routing
+   API, when asked which lever to pull next if it's still too slow/unreliable
+   after this. Whatever Corey reports back — still slow, still timing out on
+   Roundabouts/Merging-lanes, or working — is the next thing to act on; don't
+   re-guess at further speed/reliability tuning before hearing that result.
+   Also untested since the same session: the black/white theme swap and the
+   grass-green/compass-needle icon (commit `db20dad`) — worth a glance on-device
+   too, purely visual, low risk of a real bug but never actually seen rendered.
 1. **Test the trip generator again** — the first real-device pass found and fixed
    several bugs (map centering/visibility, mandatory start time, search UX, and
    a possible-hang on Generate — see the status entry above for detail). Still
    needs a full pass to confirm: whether generated routes land close to the
-   target duration in practice, whether the 90s hard timeout is ever actually
+   target duration in practice, whether the 20s hard timeout is ever actually
    hit in normal use (if so, the individual timeouts feeding into it may need
    tuning), and whether the Material3 `TimePicker` API in
    `GenerateRouteScreen.kt` renders correctly (compiled fine against this
