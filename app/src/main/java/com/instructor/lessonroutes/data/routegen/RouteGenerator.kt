@@ -1,5 +1,6 @@
 package com.instructor.lessonroutes.data.routegen
 
+import android.util.Log
 import com.instructor.lessonroutes.data.remote.fetchRoutedPaths
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -9,6 +10,8 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
+
+private const val LOG_TAG = "RouteGenerator"
 
 /** NONE = no preference, AVOID = steer away from it, PREFER = try to include it.
  * Only [RouteGenerationFilters.highways]'s AVOID is a real hard routing
@@ -52,8 +55,12 @@ data class GeneratedRoute(
 // actual OSRM-reported durations afterward, so this only needs to be in the right
 // ballpark, not accurate.
 private const val AVG_SPEED_KMH = 40.0
-private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)
-private const val MAX_RADIUS_ITERATIONS = 4
+// 4 directions x up to 3 refinement rounds = up to 12 OSRM calls per generation
+// (was 8 x 4 = 32) -- halving-plus the concurrent request volume against OSRM's
+// free public demo server, which is shared and rate-limit-prone; heavy concurrent
+// load from one client is a real suspect for slow/stuck generation in practice.
+private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 90.0, 180.0, 270.0)
+private const val MAX_RADIUS_ITERATIONS = 3
 private const val DURATION_TOLERANCE_RATIO = 0.15
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
@@ -101,6 +108,11 @@ suspend fun generateRoute(
     val targetSeconds = targetDurationMinutes * 60.0
     val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
     val excludeHighways = filters.highways == FilterPreference.AVOID
+    Log.d(
+        LOG_TAG,
+        "generateRoute: target=${targetDurationMinutes}min, initialRadius=${"%.2f".format(initialRadiusKm)}km, " +
+            "bearings=${CANDIDATE_BEARINGS_DEGREES.size}, excludeHighways=$excludeHighways",
+    )
 
     val candidates = CANDIDATE_BEARINGS_DEGREES
         .map { bearing ->
@@ -111,6 +123,7 @@ suspend fun generateRoute(
         .awaitAll()
         .filterNotNull()
 
+    Log.d(LOG_TAG, "generateRoute: ${candidates.size}/${CANDIDATE_BEARINGS_DEGREES.size} candidates converged")
     candidates.maxByOrNull { scoreRoute(it.points, filters, scoringData) }
 }
 
@@ -125,11 +138,15 @@ private suspend fun refineCandidate(
 ): GeneratedRoute? {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
-    repeat(MAX_RADIUS_ITERATIONS) {
+    repeat(MAX_RADIUS_ITERATIONS) { iteration ->
         val detourPoint = offset(base, bearingDegrees, radiusKm)
         val routed = try {
             fetchRoutedPaths(listOf(start, detourPoint, destination), excludeHighways).firstOrNull()
         } catch (e: Exception) {
+            // Was silently swallowed before -- logged now since this is the one
+            // place an OSRM failure (network, rate limit, no route found, etc.)
+            // would otherwise leave zero trace of what actually went wrong.
+            Log.e(LOG_TAG, "OSRM call failed (bearing=$bearingDegrees, iteration=$iteration, radius=${"%.2f".format(radiusKm)}km)", e)
             null
         }
         if (routed == null) {

@@ -223,10 +223,11 @@ fun GenerateRouteScreen(
             try {
                 // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
                 // TfNSW) can never leave the spinner running forever -- surfaces
-                // as a timeout error instead. 90s is generous for the worst case
-                // (parallel OSRM candidates each doing up to 4 sequential calls)
-                // but still bounded.
-                val result = withTimeoutOrNull(90_000) {
+                // as a timeout error instead. 45s comfortably covers the worst
+                // case now (4 candidates x up to 3 sequential OSRM calls each,
+                // run concurrently) without asking the instructor to wait
+                // anywhere near as long as before.
+                val result = withTimeoutOrNull(45_000) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
                     val scoringData = buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
@@ -390,6 +391,10 @@ fun GenerateRouteScreen(
                     Box(modifier = Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
                     }
+                    Text(
+                        "Trying a few different routes and picking the best fit for your filters — " +
+                            "this can take up to 45 seconds.",
+                    )
                 }
                 generationError?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
 

@@ -128,6 +128,26 @@ profiles). Specifically:
     visible/active, and having any interaction with them (a map tap, picking
     a search result) automatically uncheck "loop back to start" itself —
     there's no separate step to remember anymore.
+  - **Third-round: Generate still spins with no result.** My 90s timeout from
+    the previous round is a mathematical guarantee of *some* outcome (result
+    or error) by 90s, so either the wait genuinely felt endless (plausible --
+    90s is a long time for a spinner) or the build under test predated that
+    fix. Rather than re-guess blindly: cut candidate bearings 8→4 and
+    refinement rounds 4→3 (up to 32 OSRM calls per generation down to up to
+    12 -- OSRM's free public server is shared and rate-limit-prone, and heavy
+    concurrent load from one client is a real suspect), shortened the overall
+    timeout 90s→45s to match, added a visible "this can take up to 45s"
+    message while generating, and — important for next time this needs
+    debugging — added `Log.e`/`Log.d` in `RouteGenerator.kt` (previously,
+    a per-candidate OSRM failure was silently swallowed with zero trace).
+    **If it still doesn't work after this**: check Logcat filtered to tag
+    `RouteGenerator` for what's actually failing, and confirm whether OSRM
+    is reachable at all from the test device by checking whether tap-mode
+    road-snapping (a much simpler, single OSRM call, see "Road-snapping"
+    above) visibly makes tap-created lines follow roads -- if that's *also*
+    silently falling back to straight lines, it points to OSRM connectivity
+    being broken from that device/network entirely, not a trip-generator-
+    specific bug.
 - 🔲 **NEW, UNTESTED: Trip generator ("Plan a trip")** — a second, separate way to
   get a route: generates one to actually go drive (destination + start/end time +
   avoid/prefer filters), rather than recording/tapping one by hand. This is the
