@@ -4,20 +4,20 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -49,16 +49,19 @@ import java.util.Locale
 fun RouteListScreen(
     dao: RouteDao,
     profileDao: StudentProfileDao,
+    filterProfileId: Long?,
     onRouteClick: (Long) -> Unit,
     onCreateClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onProfilesClick: () -> Unit,
 ) {
     val routesWithProfiles by dao.getAllRoutesWithProfiles().collectAsState(initial = emptyList())
     val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
-    // null = "All" -- no profile filter applied.
-    var filterProfileId by remember { mutableStateOf<Long?>(null) }
+    // Which student profile (if any) this list is scoped to is chosen on the
+    // Student Profiles screen, not here -- this screen just renders the result.
+    val filterProfileName = filterProfileId?.let { id -> allProfiles.find { it.id == id }?.name }
     val visibleRoutes = if (filterProfileId == null) {
         routesWithProfiles
     } else {
@@ -72,40 +75,25 @@ fun RouteListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("My routes") },
+                title = { Text(filterProfileName?.let { "$it's routes" } ?: "My routes") },
                 actions = { TextButton(onClick = onSettingsClick) { Text("Settings") } },
             )
         },
         floatingActionButton = { FloatingActionButton(onClick = onCreateClick) { Text("+") } },
+        bottomBar = {
+            Row(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                OutlinedButton(onClick = onProfilesClick) { Text("Profiles") }
+            }
+        },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (allProfiles.isNotEmpty()) {
-                LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    item {
-                        FilterChip(
-                            selected = filterProfileId == null,
-                            onClick = { filterProfileId = null },
-                            label = { Text("All") },
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
-                    }
-                    items(allProfiles, key = { it.id }) { profile ->
-                        FilterChip(
-                            selected = filterProfileId == profile.id,
-                            onClick = { filterProfileId = profile.id },
-                            label = { Text(profile.name) },
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
-                    }
-                }
-                HorizontalDivider()
-            }
-
             if (visibleRoutes.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         text = if (routesWithProfiles.isEmpty()) {
                             "No routes yet. Tap + to record your first route."
+                        } else if (filterProfileName != null) {
+                            "No routes saved to $filterProfileName yet."
                         } else {
                             "No routes saved to this student profile yet."
                         },

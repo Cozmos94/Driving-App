@@ -29,7 +29,11 @@ TfNSW key needed).
 - **Create route** ([CreateRouteScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/CreateRouteScreen.kt)):
   Tap mode (tap the map to add points) and Record mode (Start/Pause captures a live
   GPS trail via FusedLocationProvider) in one screen, a "mark last point as waypoint"
-  action, and a save dialog (name + notes) that writes to Room.
+  action, and a save dialog (name + notes) that writes to Room. Tap mode also has
+  "Undo" (remove the last tapped point) and "Clear all" (wipe the whole in-progress
+  route, with a confirmation dialog since it can't be undone) — Record mode
+  deliberately doesn't get these, since a live GPS trail isn't something you "undo"
+  a point at a time the same way.
 - **Follow view** ([FollowScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/FollowScreen.kt)):
   a selected route's polyline with a live position dot on top; camera fits the route's
   bounds once and doesn't chase the dot (deliberately, to avoid a jumpy camera).
@@ -47,8 +51,16 @@ TfNSW key needed).
   profiles (many-to-many — see `StudentProfile`/`RouteStudentProfileCrossRef` in
   `data/`). Pick profiles (or create a new one inline) in the save dialog when
   creating a route, or reassign them later via long-press → Edit on the route list.
-  The route list has a filter-chip row ("All" + one per profile) to narrow the list
-  down to one student's routes.
+- **Student Profiles screen** ([StudentProfilesScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/profiles/StudentProfilesScreen.kt)):
+  the new landing point for "Plan a route" from the live map's bottom button — a
+  searchable list of student profiles plus a pinned "All" entry; tapping either
+  navigates to the route list scoped to that profile (or unfiltered for "All").
+  "+" creates a new profile directly from here. Creating a route while scoped to a
+  profile pre-selects that profile in the save dialog's checklist (still editable).
+  The route list and this screen have matching bottom-left toggle buttons
+  ("Profiles" / "Routes") to switch between them without repeated back-presses; the
+  current filter is hoisted state in `AppNavHost`, not a nav argument, so the route
+  list stays a single plain destination.
 - **Settings** ([SettingsScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/settings/SettingsScreen.kt),
   reached via a "Settings" button on the route list's top bar): app info, data-source
   attribution, and a "clear all saved routes" action. Deliberately minimal — there's

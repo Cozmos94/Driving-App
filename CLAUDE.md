@@ -27,11 +27,18 @@ profiles). Specifically:
   device, not the Novigi-managed one — no Netskope involved).
 - ✅ **Student profiles (new, post-spec)**: a route can be linked to zero, one, or
   several student profiles (many-to-many via `RouteStudentProfileCrossRef`). Create
-  a profile inline from the save-route dialog or the edit-route dialog; the route
-  list has filter chips ("All" + one per profile). Bumped Room to schema v3 with a
-  real hand-written `Migration(2, 3)` (see `AppDatabase.kt`) instead of another
-  destructive fallback — first real migration in this project, worth double-checking
-  on upgrade from a v2 install if anything seems off.
+  a profile inline from the save-route dialog or the edit-route dialog, or directly
+  via "+" on the new **Student Profiles screen** (`StudentProfilesScreen.kt`) — a
+  searchable list of profiles plus a pinned "All" entry, now the landing point for
+  "Plan a route" from the live map. Tapping a profile (or "All") opens the route
+  list scoped to it; the route list and this screen have matching bottom-left
+  toggle buttons ("Profiles" / "Routes") to switch between them. The current filter
+  is hoisted state in `AppNavHost` (`routeListFilter`), not a nav argument — kept
+  `ROUTE_LIST` as a single plain destination on purpose. Creating a route while
+  scoped to a profile pre-selects it in the save dialog. Bumped Room to schema v3
+  with a real hand-written `Migration(2, 3)` (see `AppDatabase.kt`) instead of
+  another destructive fallback — first real migration in this project, worth
+  double-checking on upgrade from a v2 install if anything seems off.
 - ✅ **"Open in nav app" now targets Google Maps specifically**: tries a
   `google.navigation:` turn-by-turn deep link first, falls back to the old generic
   `geo:` intent if Maps isn't installed. Needed a new `<queries>` block in
@@ -71,6 +78,9 @@ profiles). Specifically:
 - `app/src/main/java/com/instructor/lessonroutes/ui/routes/ProfilePicker.kt` — the
   shared multi-select-plus-inline-create UI used by both the save-route and
   edit-route dialogs.
+- `app/src/main/java/com/instructor/lessonroutes/ui/profiles/StudentProfilesScreen.kt` —
+  the searchable profile-picker landing screen; see `AppNavHost.kt` for how
+  `routeListFilter` gets threaded from here into `RouteListScreen`/`CreateRouteScreen`.
 - `app/src/main/assets/school_zones.json`, `speed_cameras.json` — processed
   static data snapshots (the original ~500MB source shapefile isn't in the repo).
 
@@ -99,8 +109,10 @@ assets) and quiet roads (OSM only) don't need it.
 
 ## Likely next steps
 
-1. Confirm steps 5–8 (create/record/follow/edit/delete) and the new student-profile
-   picker/filter still work end to end — test pass hasn't happened yet.
+1. Confirm steps 5–8 (create/record/follow/edit/delete), the student-profile
+   picker/filter, and the new Student Profiles screen (search, "+", the
+   Profiles/Routes toggle, Undo/Clear-all in Tap mode) all work end to end — test
+   pass hasn't happened yet.
 2. Quiet roads deliberately still only fetch once at startup (confirmed as desired
    behavior, not a bug — don't "fix" this without checking first).
 3. If real crash/black-spot data turns up: same Overpass-snapping approach as

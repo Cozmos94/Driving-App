@@ -66,6 +66,7 @@ private data class DraftPoint(
 fun CreateRouteScreen(
     dao: RouteDao,
     profileDao: StudentProfileDao,
+    preselectedProfileId: Long? = null,
     onSaved: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -76,9 +77,13 @@ fun CreateRouteScreen(
     val points = remember { mutableStateListOf<DraftPoint>() }
     var isRecording by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
+    var showClearPointsConfirm by remember { mutableStateOf(false) }
 
     val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
-    var selectedProfileIds by remember { mutableStateOf(emptySet<Long>()) }
+    // Pre-selects whichever student profile the instructor was browsing when they
+    // tapped +, since that's almost always who this new route is for -- still
+    // editable in the save dialog's checklist.
+    var selectedProfileIds by remember { mutableStateOf(setOfNotNull(preselectedProfileId)) }
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -168,6 +173,21 @@ fun CreateRouteScreen(
                     }
                 }
             } else if (points.isNotEmpty()) {
+                Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    OutlinedButton(
+                        onClick = { points.removeAt(points.lastIndex) },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Undo")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = { showClearPointsConfirm = true },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Clear all")
+                    }
+                }
                 OutlinedButton(
                     onClick = {
                         val last = points.removeAt(points.lastIndex)
@@ -235,6 +255,18 @@ fun CreateRouteScreen(
                     onSaved()
                 }
             },
+        )
+    }
+
+    if (showClearPointsConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearPointsConfirm = false },
+            title = { Text("Clear all points?") },
+            text = { Text("This removes all ${points.size} tapped points. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = { points.clear(); showClearPointsConfirm = false }) { Text("Clear") }
+            },
+            dismissButton = { TextButton(onClick = { showClearPointsConfirm = false }) { Text("Cancel") } },
         )
     }
 }

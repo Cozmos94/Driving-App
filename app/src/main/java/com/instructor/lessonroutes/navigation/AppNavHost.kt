@@ -20,6 +20,7 @@ import androidx.navigation.navArgument
 import com.instructor.lessonroutes.data.AppDatabase
 import com.instructor.lessonroutes.data.seedStaticDataIfNeeded
 import com.instructor.lessonroutes.ui.map.LiveMapScreen
+import com.instructor.lessonroutes.ui.profiles.StudentProfilesScreen
 import com.instructor.lessonroutes.ui.routes.CreateRouteScreen
 import com.instructor.lessonroutes.ui.routes.FollowScreen
 import com.instructor.lessonroutes.ui.routes.RouteDetailScreen
@@ -27,6 +28,7 @@ import com.instructor.lessonroutes.ui.routes.RouteListScreen
 import com.instructor.lessonroutes.ui.settings.SettingsScreen
 
 private const val LIVE_MAP = "liveMap"
+private const val STUDENT_PROFILES = "studentProfiles"
 private const val ROUTE_LIST = "routeList"
 private const val ROUTE_DETAIL = "routeDetail/{routeId}"
 private const val ROUTE_CREATE = "createRoute"
@@ -41,6 +43,11 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
     val schoolZoneDao = remember { database.schoolZoneDao() }
     val speedCameraDao = remember { database.speedCameraDao() }
     val profileDao = remember { database.studentProfileDao() }
+
+    // Which student profile (if any) the route list is scoped to -- set by the
+    // Student Profiles screen, read by the route list. Hoisted here rather than
+    // carried as a nav argument so ROUTE_LIST can stay a single plain destination.
+    var routeListFilter by remember { mutableStateOf<Long?>(null) }
 
     // One-time seed of static reference data (school zones, speed cameras) from
     // bundled asset snapshots -- see StaticDataSeeder.kt. Gates rendering the real
@@ -66,16 +73,31 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
             LiveMapScreen(
                 schoolZoneDao = schoolZoneDao,
                 speedCameraDao = speedCameraDao,
-                onPlanRouteClick = { navController.navigate(ROUTE_LIST) },
+                onPlanRouteClick = { navController.navigate(STUDENT_PROFILES) },
+            )
+        }
+        composable(STUDENT_PROFILES) {
+            StudentProfilesScreen(
+                profileDao = profileDao,
+                onProfileClick = { profileId ->
+                    routeListFilter = profileId
+                    navController.navigate(ROUTE_LIST)
+                },
+                onAllRoutesClick = {
+                    routeListFilter = null
+                    navController.navigate(ROUTE_LIST)
+                },
             )
         }
         composable(ROUTE_LIST) {
             RouteListScreen(
                 dao = dao,
                 profileDao = profileDao,
+                filterProfileId = routeListFilter,
                 onRouteClick = { routeId -> navController.navigate("routeDetail/$routeId") },
                 onCreateClick = { navController.navigate(ROUTE_CREATE) },
                 onSettingsClick = { navController.navigate(SETTINGS) },
+                onProfilesClick = { navController.navigate(STUDENT_PROFILES) },
             )
         }
         composable(SETTINGS) {
@@ -96,6 +118,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
             CreateRouteScreen(
                 dao = dao,
                 profileDao = profileDao,
+                preselectedProfileId = routeListFilter,
                 onSaved = { navController.popBackStack() },
                 onCancel = { navController.popBackStack() },
             )
