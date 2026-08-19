@@ -47,6 +47,7 @@ import org.maplibre.android.geometry.LatLng
 fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Unit) {
     val context = LocalContext.current
     val routeWithPoints by dao.getRouteWithPoints(routeId).collectAsState(initial = null)
+    val routeWithProfiles by dao.getRouteWithProfiles(routeId).collectAsState(initial = null)
     val current = routeWithPoints
 
     // Phase 2 step 9: live hazards overlay, no caching (fetched fresh each time it's
@@ -101,6 +102,12 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                 if (!current.route.notes.isNullOrBlank()) {
                     Text(text = current.route.notes, modifier = Modifier.padding(16.dp))
                 }
+                routeWithProfiles?.profiles?.takeIf { it.isNotEmpty() }?.let { profiles ->
+                    Text(
+                        text = "For: ${profiles.joinToString(", ") { it.name }}",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -144,10 +151,26 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
     }
 }
 
-/** No SDK, no cost — just hands off to whatever nav app the user already has. */
+/**
+ * No SDK, no cost. Prefers Google Maps turn-by-turn driving navigation specifically
+ * (per instructor request) via its `google.navigation:` deep link; falls back to a
+ * generic `geo:` intent (whatever map app the device has) if Google Maps isn't
+ * installed. Destination-only -- the recorded route is a raw GPS trail, not a
+ * routable path, so Maps computes its own driving directions to this point rather
+ * than following the recorded trail.
+ */
 private fun openInNavApp(context: Context, latitude: Double, longitude: Double, label: String) {
-    val uri = Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude(${Uri.encode(label)})")
-    val intent = Intent(Intent.ACTION_VIEW, uri)
+    val googleMapsIntent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$latitude,$longitude&mode=d"))
+        .setPackage("com.google.android.apps.maps")
+    val fallbackIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude(${Uri.encode(label)})"),
+    )
+    val intent = if (googleMapsIntent.resolveActivity(context.packageManager) != null) {
+        googleMapsIntent
+    } else {
+        fallbackIntent
+    }
     if (intent.resolveActivity(context.packageManager) != null) {
         context.startActivity(intent)
     }

@@ -40,6 +40,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
     val dao = remember { database.routeDao() }
     val schoolZoneDao = remember { database.schoolZoneDao() }
     val speedCameraDao = remember { database.speedCameraDao() }
+    val profileDao = remember { database.studentProfileDao() }
 
     // One-time seed of static reference data (school zones, speed cameras) from
     // bundled asset snapshots -- see StaticDataSeeder.kt. Gates rendering the real
@@ -71,6 +72,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
         composable(ROUTE_LIST) {
             RouteListScreen(
                 dao = dao,
+                profileDao = profileDao,
                 onRouteClick = { routeId -> navController.navigate("routeDetail/$routeId") },
                 onCreateClick = { navController.navigate(ROUTE_CREATE) },
                 onSettingsClick = { navController.navigate(SETTINGS) },
@@ -93,6 +95,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
         composable(ROUTE_CREATE) {
             CreateRouteScreen(
                 dao = dao,
+                profileDao = profileDao,
                 onSaved = { navController.popBackStack() },
                 onCancel = { navController.popBackStack() },
             )

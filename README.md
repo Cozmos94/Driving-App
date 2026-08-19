@@ -35,8 +35,20 @@ TfNSW key needed).
   bounds once and doesn't chase the dot (deliberately, to avoid a jumpy camera).
 - **Edit/delete**: long-press a route in the list for a rename/notes-edit dialog or a
   delete confirmation.
-- **Open in nav app**: a `geo:` intent on the route detail screen, targeting the
-  route's first point — no SDK, no cost.
+- **Open in nav app**: on the route detail screen, targets the route's first point
+  (destination-only — a recorded GPS trail can't be handed to Maps as a routable
+  path). Prefers a Google Maps `google.navigation:` turn-by-turn deep link, falling
+  back to a generic `geo:` intent if Maps isn't installed — no SDK, no cost. See
+  `openInNavApp()` in
+  [RouteDetailScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/routes/RouteDetailScreen.kt).
+  Needs the `<queries>` block in `AndroidManifest.xml` (API 30+ package visibility) —
+  without it `resolveActivity()` silently returns null even with Maps installed.
+- **Student profiles**: a route can be saved against zero, one, or several student
+  profiles (many-to-many — see `StudentProfile`/`RouteStudentProfileCrossRef` in
+  `data/`). Pick profiles (or create a new one inline) in the save dialog when
+  creating a route, or reassign them later via long-press → Edit on the route list.
+  The route list has a filter-chip row ("All" + one per profile) to narrow the list
+  down to one student's routes.
 - **Settings** ([SettingsScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/settings/SettingsScreen.kt),
   reached via a "Settings" button on the route list's top bar): app info, data-source
   attribution, and a "clear all saved routes" action. Deliberately minimal — there's
@@ -159,13 +171,15 @@ hand-editing the JSON.
 ### Database version bump
 
 Adding `SchoolZone`/`SpeedCamera` bumped the Room schema to version 2 with
-`fallbackToDestructiveMigration()` rather than a hand-written `Migration` — a
-migration has to match Room's expected SQL exactly or it crashes on upgrade, and at
-this dev stage that risk wasn't worth it for two new additive tables. **Practical
-effect: anyone with the app already installed loses their saved routes when they
-update to this version** (uninstall/reinstall has the same effect, if you want to
-force it deliberately). Worth writing a real migration before this app has real
-users' data to protect.
+`fallbackToDestructiveMigration()` rather than a hand-written `Migration`. Version 3
+(student profiles, see below) replaced that with a real
+[`Migration(2, 3)`](app/src/main/java/com/instructor/lessonroutes/data/AppDatabase.kt)
+that hand-writes the `CREATE TABLE`/`CREATE INDEX` SQL for the two new tables —
+purely additive, no existing table changed, so existing installs upgrade in place
+without losing saved routes. If a future schema change alters an *existing* table
+(not just adds new ones), write and test its migration with the same care; a
+migration's SQL has to match Room's expected schema exactly or it crashes on
+upgrade.
 
 ## High traffic volume overlay (step 11, substituted for crash/black-spot data)
 

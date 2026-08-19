@@ -15,13 +15,28 @@ running cost, no billing account, no login/cloud sync. Package:
 
 ## Current status (as of this handoff)
 
-Everything in `spec.md` is built in some form. Specifically:
+Everything in `spec.md` is built in some form, plus a post-spec addition (student
+profiles). Specifically:
 
 - ✅ **Confirmed working**: map rendering, Room layer, polyline drawing, route
   list/detail navigation, live hazards (incidents + roadworks, tap for info),
   school zones + speed cameras, MapLibre attribution UI tidied up.
 - 🔲 **Built but not re-confirmed** after later changes: create route (tap +
-  record mode), follow view, edit/delete, notes/tags/waypoints. Worth a test pass.
+  record mode), follow view, edit/delete, notes/tags/waypoints, and the new
+  student-profiles work below. Worth a test pass (Corey does this on a personal
+  device, not the Novigi-managed one — no Netskope involved).
+- ✅ **Student profiles (new, post-spec)**: a route can be linked to zero, one, or
+  several student profiles (many-to-many via `RouteStudentProfileCrossRef`). Create
+  a profile inline from the save-route dialog or the edit-route dialog; the route
+  list has filter chips ("All" + one per profile). Bumped Room to schema v3 with a
+  real hand-written `Migration(2, 3)` (see `AppDatabase.kt`) instead of another
+  destructive fallback — first real migration in this project, worth double-checking
+  on upgrade from a v2 install if anything seems off.
+- ✅ **"Open in nav app" now targets Google Maps specifically**: tries a
+  `google.navigation:` turn-by-turn deep link first, falls back to the old generic
+  `geo:` intent if Maps isn't installed. Needed a new `<queries>` block in
+  `AndroidManifest.xml` for `resolveActivity()` to see either intent target on API
+  30+ — easy to forget this is required, it fails silently otherwise.
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was
@@ -47,8 +62,15 @@ Everything in `spec.md` is built in some form. Specifically:
   responses before being built, not guessed at — see README's "Overpass gotchas"
   section before touching these.
 - `app/src/main/java/com/instructor/lessonroutes/data/` — Room entities/DAOs.
-  Schema is at version 2 with `fallbackToDestructiveMigration()` — see README's
-  "Database version bump" note before adding another entity.
+  Schema is at version 3 with a real `Migration(2, 3)` (student profiles) — see
+  README's "Database version bump" note before adding another entity, and match
+  Room's expected SQL exactly if you hand-write another migration.
+- `app/src/main/java/com/instructor/lessonroutes/data/StudentProfile.kt`,
+  `RouteStudentProfileCrossRef.kt`, `RouteWithProfiles.kt`, `StudentProfileDao.kt` —
+  the student-profile feature's data layer (many-to-many with `Route`).
+- `app/src/main/java/com/instructor/lessonroutes/ui/routes/ProfilePicker.kt` — the
+  shared multi-select-plus-inline-create UI used by both the save-route and
+  edit-route dialogs.
 - `app/src/main/assets/school_zones.json`, `speed_cameras.json` — processed
   static data snapshots (the original ~500MB source shapefile isn't in the repo).
 
@@ -77,11 +99,14 @@ assets) and quiet roads (OSM only) don't need it.
 
 ## Likely next steps
 
-1. Confirm steps 5–8 (create/record/follow/edit/delete) still work after all the
-   map-layer changes since they were last tested.
-2. If quiet roads should follow the map as you pan (not just show near the start
-   location): hook into MapLibre's camera-idle event, debounce, re-fetch.
+1. Confirm steps 5–8 (create/record/follow/edit/delete) and the new student-profile
+   picker/filter still work end to end — test pass hasn't happened yet.
+2. Quiet roads deliberately still only fetch once at startup (confirmed as desired
+   behavior, not a bug — don't "fix" this without checking first).
 3. If real crash/black-spot data turns up: same Overpass-snapping approach as
-   `TrafficVolumeApi.kt`/`OverpassApi.kt` would apply.
-4. A real Room `Migration` (instead of destructive fallback) before this app has
-   real user data worth protecting.
+   `TrafficVolumeApi.kt`/`OverpassApi.kt` would apply (confirmed as the right
+   approach when that data is identified).
+4. Student profiles currently have just a name. If Corey wants more per-student
+   detail (skill level, notes, contact info), extend the `StudentProfile` entity —
+   remember to bump the Room version and write another real `Migration` (v3 → v4)
+   rather than reaching for `fallbackToDestructiveMigration()` again.

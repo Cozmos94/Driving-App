@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
@@ -33,6 +36,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.data.Route
 import com.instructor.lessonroutes.data.RouteDao
+import com.instructor.lessonroutes.data.RouteWithProfiles
+import com.instructor.lessonroutes.data.StudentProfile
+import com.instructor.lessonroutes.data.StudentProfileDao
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -42,15 +48,25 @@ import java.util.Locale
 @Composable
 fun RouteListScreen(
     dao: RouteDao,
+    profileDao: StudentProfileDao,
     onRouteClick: (Long) -> Unit,
     onCreateClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
-    val routes by dao.getAllRoutes().collectAsState(initial = emptyList())
+    val routesWithProfiles by dao.getAllRoutesWithProfiles().collectAsState(initial = emptyList())
+    val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
-    var actionTarget by remember { mutableStateOf<Route?>(null) }
-    var editTarget by remember { mutableStateOf<Route?>(null) }
+    // null = "All" -- no profile filter applied.
+    var filterProfileId by remember { mutableStateOf<Long?>(null) }
+    val visibleRoutes = if (filterProfileId == null) {
+        routesWithProfiles
+    } else {
+        routesWithProfiles.filter { rwp -> rwp.profiles.any { it.id == filterProfileId } }
+    }
+
+    var actionTarget by remember { mutableStateOf<RouteWithProfiles?>(null) }
+    var editTarget by remember { mutableStateOf<RouteWithProfiles?>(null) }
     var deleteTarget by remember { mutableStateOf<Route?>(null) }
 
     Scaffold(
@@ -62,51 +78,98 @@ fun RouteListScreen(
         },
         floatingActionButton = { FloatingActionButton(onClick = onCreateClick) { Text("+") } },
     ) { padding ->
-        if (routes.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "No routes yet. Tap + to record your first route.",
-                    modifier = Modifier.padding(32.dp),
-                    textAlign = TextAlign.Center,
-                )
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (allProfiles.isNotEmpty()) {
+                LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    item {
+                        FilterChip(
+                            selected = filterProfileId == null,
+                            onClick = { filterProfileId = null },
+                            label = { Text("All") },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                    items(allProfiles, key = { it.id }) { profile ->
+                        FilterChip(
+                            selected = filterProfileId == profile.id,
+                            onClick = { filterProfileId = profile.id },
+                            label = { Text(profile.name) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                }
+                HorizontalDivider()
             }
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-                items(routes, key = { it.id }) { route ->
-                    RouteRow(
-                        route = route,
-                        onClick = { onRouteClick(route.id) },
-                        onLongClick = { actionTarget = route },
+
+            if (visibleRoutes.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = if (routesWithProfiles.isEmpty()) {
+                            "No routes yet. Tap + to record your first route."
+                        } else {
+                            "No routes saved to this student profile yet."
+                        },
+                        modifier = Modifier.padding(32.dp),
+                        textAlign = TextAlign.Center,
                     )
-                    HorizontalDivider()
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(visibleRoutes, key = { it.route.id }) { rwp ->
+                        RouteRow(
+                            route = rwp.route,
+                            profiles = rwp.profiles,
+                            onClick = { onRouteClick(rwp.route.id) },
+                            onLongClick = { actionTarget = rwp },
+                        )
+                        HorizontalDivider()
+                    }
                 }
             }
         }
     }
 
-    actionTarget?.let { route ->
+    actionTarget?.let { rwp ->
         AlertDialog(
             onDismissRequest = { actionTarget = null },
-            title = { Text(route.name) },
+            title = { Text(rwp.route.name) },
             text = { Text("What would you like to do?") },
             confirmButton = {
-                TextButton(onClick = { editTarget = route; actionTarget = null }) { Text("Edit") }
+                TextButton(onClick = { editTarget = rwp; actionTarget = null }) { Text("Edit") }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = route; actionTarget = null }) { Text("Delete") }
+                TextButton(onClick = { deleteTarget = rwp.route; actionTarget = null }) { Text("Delete") }
             },
         )
     }
 
-    editTarget?.let { route ->
+    editTarget?.let { rwp ->
+        var selectedProfileIds by remember(rwp.route.id) {
+            mutableStateOf(rwp.profiles.map { it.id }.toSet())
+        }
         EditRouteDialog(
-            route = route,
+            route = rwp.route,
+            allProfiles = allProfiles,
+            selectedProfileIds = selectedProfileIds,
+            onToggleProfile = { id ->
+                selectedProfileIds = if (selectedProfileIds.contains(id)) {
+                    selectedProfileIds - id
+                } else {
+                    selectedProfileIds + id
+                }
+            },
+            onCreateProfile = { name ->
+                scope.launch {
+                    val id = profileDao.insertProfile(StudentProfile(name = name, dateCreated = System.currentTimeMillis()))
+                    selectedProfileIds = selectedProfileIds + id
+                }
+            },
             onDismiss = { editTarget = null },
             onSave = { name, notes ->
-                scope.launch { dao.updateRoute(route.copy(name = name, notes = notes.ifBlank { null })) }
+                scope.launch {
+                    dao.updateRoute(rwp.route.copy(name = name, notes = notes.ifBlank { null }))
+                    dao.setProfilesForRoute(rwp.route.id, selectedProfileIds.toList())
+                }
                 editTarget = null
             },
         )
@@ -129,19 +192,33 @@ fun RouteListScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RouteRow(route: Route, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun RouteRow(
+    route: Route,
+    profiles: List<StudentProfile>,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     ListItem(
         headlineContent = { Text(route.name) },
         supportingContent = {
             val tagPrefix = route.tag?.let { "$it • " } ?: ""
-            Text("$tagPrefix${formatDate(route.dateCreated)}")
+            val profileSuffix = if (profiles.isNotEmpty()) " • ${profiles.joinToString(", ") { it.name }}" else ""
+            Text("$tagPrefix${formatDate(route.dateCreated)}$profileSuffix")
         },
         modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
     )
 }
 
 @Composable
-private fun EditRouteDialog(route: Route, onDismiss: () -> Unit, onSave: (name: String, notes: String) -> Unit) {
+private fun EditRouteDialog(
+    route: Route,
+    allProfiles: List<StudentProfile>,
+    selectedProfileIds: Set<Long>,
+    onToggleProfile: (Long) -> Unit,
+    onCreateProfile: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: (name: String, notes: String) -> Unit,
+) {
     var name by remember { mutableStateOf(route.name) }
     var notes by remember { mutableStateOf(route.notes ?: "") }
 
@@ -158,6 +235,13 @@ private fun EditRouteDialog(route: Route, onDismiss: () -> Unit, onSave: (name: 
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") })
+                Spacer(modifier = Modifier.height(8.dp))
+                ProfilePickerSection(
+                    allProfiles = allProfiles,
+                    selectedIds = selectedProfileIds,
+                    onToggle = onToggleProfile,
+                    onCreateProfile = onCreateProfile,
+                )
             }
         },
         confirmButton = {

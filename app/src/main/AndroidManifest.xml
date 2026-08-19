@@ -12,6 +12,25 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!--
+      Package-visibility declarations (required on API 30+) so
+      Intent#resolveActivity() in openInNavApp() (RouteDetailScreen.kt) can actually
+      see Google Maps / a geo: handler — without these, resolveActivity() silently
+      returns null even when a matching app is installed, and the "Open in nav app"
+      button does nothing.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
+        <package android:name="com.google.android.apps.maps" />
+    </queries>
+
     <application
         android:name=".LessonRoutesApp"
         android:allowBackup="true"

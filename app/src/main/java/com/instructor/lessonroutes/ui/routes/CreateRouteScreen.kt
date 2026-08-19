@@ -21,6 +21,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,8 @@ import com.google.android.gms.location.Priority
 import com.instructor.lessonroutes.data.Route
 import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.RoutePoint
+import com.instructor.lessonroutes.data.StudentProfile
+import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -60,7 +63,12 @@ private data class DraftPoint(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CreateRouteScreen(dao: RouteDao, onSaved: () -> Unit, onCancel: () -> Unit) {
+fun CreateRouteScreen(
+    dao: RouteDao,
+    profileDao: StudentProfileDao,
+    onSaved: () -> Unit,
+    onCancel: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -68,6 +76,9 @@ fun CreateRouteScreen(dao: RouteDao, onSaved: () -> Unit, onCancel: () -> Unit) 
     val points = remember { mutableStateListOf<DraftPoint>() }
     var isRecording by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
+
+    val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
+    var selectedProfileIds by remember { mutableStateOf(emptySet<Long>()) }
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -180,6 +191,21 @@ fun CreateRouteScreen(dao: RouteDao, onSaved: () -> Unit, onCancel: () -> Unit) 
 
     if (showSaveDialog) {
         SaveRouteDialog(
+            allProfiles = allProfiles,
+            selectedProfileIds = selectedProfileIds,
+            onToggleProfile = { id ->
+                selectedProfileIds = if (selectedProfileIds.contains(id)) {
+                    selectedProfileIds - id
+                } else {
+                    selectedProfileIds + id
+                }
+            },
+            onCreateProfile = { name ->
+                scope.launch {
+                    val id = profileDao.insertProfile(StudentProfile(name = name, dateCreated = System.currentTimeMillis()))
+                    selectedProfileIds = selectedProfileIds + id
+                }
+            },
             onDismiss = { showSaveDialog = false },
             onConfirm = { name, notes ->
                 scope.launch {
@@ -202,6 +228,9 @@ fun CreateRouteScreen(dao: RouteDao, onSaved: () -> Unit, onCancel: () -> Unit) 
                             )
                         },
                     )
+                    if (selectedProfileIds.isNotEmpty()) {
+                        dao.setProfilesForRoute(id, selectedProfileIds.toList())
+                    }
                     showSaveDialog = false
                     onSaved()
                 }
@@ -220,7 +249,14 @@ private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit, mo
 }
 
 @Composable
-private fun SaveRouteDialog(onDismiss: () -> Unit, onConfirm: (name: String, notes: String) -> Unit) {
+private fun SaveRouteDialog(
+    allProfiles: List<StudentProfile>,
+    selectedProfileIds: Set<Long>,
+    onToggleProfile: (Long) -> Unit,
+    onCreateProfile: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, notes: String) -> Unit,
+) {
     var name by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
 
@@ -240,6 +276,13 @@ private fun SaveRouteDialog(onDismiss: () -> Unit, onConfirm: (name: String, not
                     value = notes,
                     onValueChange = { notes = it },
                     label = { Text("Notes (optional)") },
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                ProfilePickerSection(
+                    allProfiles = allProfiles,
+                    selectedIds = selectedProfileIds,
+                    onToggle = onToggleProfile,
+                    onCreateProfile = onCreateProfile,
                 )
             }
         },
