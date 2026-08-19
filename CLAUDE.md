@@ -218,6 +218,21 @@ profiles). Specifically:
   - New Overpass queries: `fetchRoundabouts` (solid — real OSM tags) and
     `fetchMergeLaneProxies`/`fetchMajorRoads` (the former is a known
     approximation — see its doc comment).
+  - **Seventh round: real ANR-style freeze with Highways/Roundabouts/Merging
+    lanes** (not just a slow/failed generation — the whole UI became
+    unresponsive). Root cause: `pickBestRoute()`'s nested proximity-comparison
+    loop (every scoring point x every route point) is genuine CPU work, but it
+    ran directly inside `scope.launch { }` from `rememberCoroutineScope()`,
+    whose default dispatcher is Main -- so it was blocking the UI thread
+    outright. Fixed with `withContext(Dispatchers.Default) { pickBestRoute(...) }`.
+    Also reduced the actual data volume driving that loop: `fetchMajorRoads`/
+    `fetchMergeLaneProxies` return **every vertex of every matching road** from
+    Overpass, which for a wide search area can be thousands of points --
+    `sampleForScoring()` (new, in `GenerateRouteScreen.kt`) caps this to ~4
+    representative points per way, since a 40m proximity check never needed
+    the full vertex list. Address search results are now tappable directly
+    (the whole `ListItem`, via `Modifier.clickable`) instead of needing a
+    separate "Use this address" button below each.
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was

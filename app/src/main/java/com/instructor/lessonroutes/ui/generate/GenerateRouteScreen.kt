@@ -3,6 +3,7 @@ package com.instructor.lessonroutes.ui.generate
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,10 +79,12 @@ import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.maplibre.android.geometry.LatLng
 import java.time.Duration
@@ -239,7 +242,18 @@ fun GenerateRouteScreen(
                         buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
                     }
                     val candidatesDeferred = async { generateCandidateRoutes(start, end, minutes) }
-                    pickBestRoute(candidatesDeferred.await(), filters, scoringDataDeferred.await())
+                    val candidates = candidatesDeferred.await()
+                    val scoringData = scoringDataDeferred.await()
+                    // pickBestRoute does a nested proximity-comparison loop over
+                    // every scoring point x every route point -- for Highways/
+                    // Roundabouts/Merging lanes, whose Overpass data is every
+                    // vertex of every matching road (can be thousands for a wide
+                    // search area), that's real CPU work, not I/O. scope.launch
+                    // here runs on the Main dispatcher (rememberCoroutineScope's
+                    // default), so without this it was blocking the UI thread
+                    // outright -- the reported "hangs and becomes unresponsive",
+                    // not just a slow network wait.
+                    withContext(Dispatchers.Default) { pickBestRoute(candidates, filters, scoringData) }
                 }
                 if (result == null) {
                     generationError = "Couldn't generate a route right now (timed out or no route found) — " +
@@ -370,17 +384,14 @@ fun GenerateRouteScreen(
                 searchResults.forEach { result ->
                     ListItem(
                         headlineContent = { Text(result.label) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    TextButton(
-                        onClick = {
+                        modifier = Modifier.fillMaxWidth().clickable {
                             destination = result.location
                             loopBackToStart = false
                             searchResults = emptyList()
                             lastAppliedResultLabel = result.label
                             searchQuery = result.label
                         },
-                    ) { Text("Use this address") }
+                    )
                     HorizontalDivider()
                 }
 
@@ -630,12 +641,12 @@ private suspend fun buildScoringData(
         null
     }
     val mergeLanes: Deferred<List<LatLng>>? = if (filters.mergingLanes != FilterPreference.NONE) {
-        async { runCatching { fetchMergeLaneProxies(center, radiusDegrees).flatten() }.getOrDefault(emptyList()) }
+        async { runCatching { fetchMergeLaneProxies(center, radiusDegrees).sampleForScoring() }.getOrDefault(emptyList()) }
     } else {
         null
     }
     val majorRoads: Deferred<List<LatLng>>? = if (filters.highways != FilterPreference.NONE) {
-        async { runCatching { fetchMajorRoads(center, radiusDegrees).flatten() }.getOrDefault(emptyList()) }
+        async { runCatching { fetchMajorRoads(center, radiusDegrees).sampleForScoring() }.getOrDefault(emptyList()) }
     } else {
         null
     }
@@ -649,6 +660,26 @@ private suspend fun buildScoringData(
         mergeLaneProxies = mergeLanes?.await() ?: emptyList(),
         majorRoads = majorRoads?.await() ?: emptyList(),
     )
+}
+
+/** Max representative points kept per matched road ("way") for scoring. Overpass
+ * returns every vertex of every matching way -- for a wide search area, major
+ * roads/motorway_link+trunk_link ways can add up to thousands of points, and
+ * proximity-scoring checks every scoring point against every route point (an
+ * O(n*m) nested loop in RouteGenerator.scoreRoute) -- flattening the full vertex
+ * list made that comparison expensive enough to visibly freeze the UI even after
+ * moving the scoring step off the main thread. A ~40m proximity check doesn't
+ * need every vertex of a road to know whether a route passes near it; a handful
+ * of evenly-spread points per way is more than enough. */
+private const val MAX_SCORING_POINTS_PER_WAY = 4
+
+private fun List<List<LatLng>>.sampleForScoring(): List<LatLng> = flatMap { way ->
+    if (way.size <= MAX_SCORING_POINTS_PER_WAY) {
+        way
+    } else {
+        val stride = way.size.toDouble() / MAX_SCORING_POINTS_PER_WAY
+        (0 until MAX_SCORING_POINTS_PER_WAY).map { i -> way[(i * stride).toInt()] }
+    }
 }
 
 private fun formatTime(time: LocalTime): String =
