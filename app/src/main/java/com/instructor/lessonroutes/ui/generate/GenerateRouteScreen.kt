@@ -58,6 +58,7 @@ import com.instructor.lessonroutes.data.SpeedCameraDao
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.data.remote.GeocodeResult
+import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchMajorRoads
 import com.instructor.lessonroutes.data.remote.fetchMergeLaneProxies
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
@@ -241,7 +242,27 @@ fun GenerateRouteScreen(
                     val scoringDataDeferred = async {
                         buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
                     }
-                    val candidatesDeferred = async { generateCandidateRoutes(start, end, minutes) }
+                    // fetchAlternatives adds one extra sequential OSRM call per
+                    // bearing (after that bearing's own refinement converges), so
+                    // it's only turned on for the filters that actually need a
+                    // meaningfully different path shape per bearing to be worth
+                    // scoring against -- Highways/Roundabouts/Merging lanes, none
+                    // of which OSRM can be told to route around directly (unlike
+                    // a real exclude constraint, which doesn't exist here -- see
+                    // RouteGenerator's doc comments). Hazards/school-zones/etc.
+                    // don't get this, keeping that path just as fast as before.
+                    val needsAlternatives = filters.highways != FilterPreference.NONE ||
+                        filters.roundabouts != FilterPreference.NONE ||
+                        filters.mergingLanes != FilterPreference.NONE
+                    val candidatesDeferred = async {
+                        generateCandidateRoutes(
+                            start,
+                            end,
+                            minutes,
+                            avoidHighways = filters.highways == FilterPreference.AVOID,
+                            fetchAlternatives = needsAlternatives,
+                        )
+                    }
                     val candidates = candidatesDeferred.await()
                     val scoringData = scoringDataDeferred.await()
                     // pickBestRoute does a nested proximity-comparison loop over
@@ -413,19 +434,24 @@ fun GenerateRouteScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Filters")
                 if (BuildConfig.TFNSW_API_KEY.isBlank()) {
-                    Text("Hazards/construction filters need a Transport for NSW API key (see Settings) — they'll have no effect without one.")
+                    Text(
+                        "Hazards/construction/high traffic filters need a Transport for NSW API key " +
+                            "(see Settings) — they'll have no effect without one.",
+                    )
                 }
                 FilterRow("Hazards", filters.incidents) { filters = filters.copy(incidents = it) }
                 FilterRow("Construction zones", filters.constructionZones) { filters = filters.copy(constructionZones = it) }
                 FilterRow("School zones", filters.schoolZones) { filters = filters.copy(schoolZones = it) }
                 FilterRow("Speed cameras", filters.speedCameras) { filters = filters.copy(speedCameras = it) }
+                FilterRow("High traffic roads", filters.highTraffic) { filters = filters.copy(highTraffic = it) }
                 FilterRow("Highways", filters.highways) { filters = filters.copy(highways = it) }
                 FilterRow("Roundabouts", filters.roundabouts) { filters = filters.copy(roundabouts = it) }
                 FilterRow("Merging lanes", filters.mergingLanes) { filters = filters.copy(mergingLanes = it) }
                 Text(
                     "These are best-effort, not guarantees: a few candidate routes are generated and " +
                         "whichever one best matches your filters is picked — none of them can be steered " +
-                        "around a specific hazard/zone while being generated.",
+                        "around a specific hazard/zone while being generated. Highways/Roundabouts/Merging " +
+                        "lanes add a little extra time to generation (an extra check per route direction).",
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -650,6 +676,14 @@ private suspend fun buildScoringData(
     } else {
         null
     }
+    val highTraffic: Deferred<List<LatLng>>? = if (filters.highTraffic != FilterPreference.NONE) {
+        async {
+            runCatching { fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
+                .getOrDefault(emptyList())
+        }
+    } else {
+        null
+    }
 
     ScoringData(
         incidents = incidents?.await() ?: emptyList(),
@@ -657,6 +691,7 @@ private suspend fun buildScoringData(
         schoolZones = schoolZones?.await() ?: emptyList(),
         speedCameras = speedCameras?.await() ?: emptyList(),
         roundabouts = roundabouts?.await() ?: emptyList(),
+        highTraffic = highTraffic?.await() ?: emptyList(),
         mergeLaneProxies = mergeLanes?.await() ?: emptyList(),
         majorRoads = majorRoads?.await() ?: emptyList(),
     )

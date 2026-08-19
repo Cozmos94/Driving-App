@@ -276,13 +276,30 @@ not supported."}`) — this public demo server simply doesn't support `exclude`
 at all, so that path failed 100% of the time it was used. Removed; Highways is
 now scored the same way as everything else:
 
-- **Hazards, construction zones, school zones, speed cameras, highways,
-  roundabouts, merging lanes — all of them, both Avoid and Prefer** — are soft
-  proximity scoring: the 3 candidate routes are each scored by how many
-  chosen-category points/roads they pass within ~40m of, and the best-scoring
-  candidate is picked. This is a genuine best-of-a-few-alternates selection,
-  not a guarantee any given hazard/camera/roundabout/highway is actually
-  avoided or included.
+- **Hazards, construction zones, school zones, speed cameras, high-traffic
+  roads, highways, roundabouts, merging lanes — all of them, both Avoid and
+  Prefer** — are soft proximity scoring: the candidate routes are each scored
+  by how many chosen-category points/roads they pass within ~40m of, and the
+  best-scoring candidate is picked. This is a genuine best-of-a-few-alternates
+  selection, not a guarantee any given hazard/camera/roundabout/highway is
+  actually avoided or included.
+- **Two extra levers specifically for Highways/Roundabouts/Merging lanes**,
+  since OSRM can't be told to route around them directly: (1) Highways→Avoid
+  assumes a *slower* local-roads speed (25km/h vs the usual 40km/h) for the
+  initial detour-distance guess, since a longer implied trip all but
+  guarantees OSRM's fastest-path default reaches for a highway anyway — a
+  shorter, plausibly-local-roads-only distance is the only real lever
+  available. (2) Whenever any of these three filters is set, each bearing
+  also asks OSRM for alternate paths (`alternatives=true`) at its converged
+  detour point, not just its single default route — without this, scoring can
+  only rank bearings against each other, never find a meaningfully different
+  shape for the *same* bearing. This adds one extra sequential OSRM call per
+  bearing, so these three filters make generation a bit slower than the rest.
+- **High traffic roads** reuses the same TfNSW Traffic Volume Counts API data
+  already used for the live map's high-traffic-volume overlay
+  (`fetchHighVolumeRoads` — needs a TfNSW API key) — just the station points,
+  not their Overpass-matched road geometry, since the geometry is only needed
+  for on-map rendering, not 40m-proximity scoring.
 - **Roundabouts** (`OverpassApi.fetchRoundabouts` — `junction=roundabout` ways +
   `highway=mini_roundabout` nodes) and **major roads** (`fetchMajorRoads`, for
   Highways scoring, both directions) are solid free OSM data via Overpass.
@@ -290,9 +307,10 @@ now scored the same way as everything else:
   `trunk_link` ways) are an approximation, not real merge-lane data: OSM has no
   dedicated merge-lane tag, doesn't distinguish an on-ramp from an off-ramp in one
   field, and doesn't tag ordinary lane-merges on non-highway roads at all.
-- Hazards/construction zones reuse the existing `fetchOpenIncidents`/
-  `fetchOpenRoadworks` (needs a TfNSW API key — those filters have no effect
-  without one); school zones/speed cameras reuse the existing seeded Room tables.
+- Hazards/construction zones/high traffic roads reuse the existing
+  `fetchOpenIncidents`/`fetchOpenRoadworks`/`fetchHighVolumeRoads` (all need a
+  TfNSW API key — those filters have no effect without one); school
+  zones/speed cameras reuse the existing seeded Room tables.
 
 A generated route can be saved (writes a normal `Route` — same schema as a
 tapped/recorded one, `timestamp = null` on every point so it also gets

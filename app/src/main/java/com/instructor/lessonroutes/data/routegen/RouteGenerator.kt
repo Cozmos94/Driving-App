@@ -32,6 +32,7 @@ data class RouteGenerationFilters(
     val highways: FilterPreference = FilterPreference.NONE,
     val roundabouts: FilterPreference = FilterPreference.NONE,
     val mergingLanes: FilterPreference = FilterPreference.NONE,
+    val highTraffic: FilterPreference = FilterPreference.NONE,
 )
 
 /** Every point-of-interest list the generator scores candidate routes against --
@@ -46,6 +47,7 @@ data class ScoringData(
     val roundabouts: List<LatLng> = emptyList(),
     val mergeLaneProxies: List<LatLng> = emptyList(),
     val majorRoads: List<LatLng> = emptyList(),
+    val highTraffic: List<LatLng> = emptyList(),
 )
 
 data class GeneratedRoute(
@@ -58,6 +60,15 @@ data class GeneratedRoute(
 // actual OSRM-reported durations afterward, so this only needs to be in the right
 // ballpark, not accurate.
 private const val AVG_SPEED_KMH = 40.0
+// Used instead of AVG_SPEED_KMH when avoiding highways: since OSRM's public
+// server can't be told to actually exclude motorways (see FilterPreference's
+// doc comment), "avoid highways" can only work by choosing a *shorter* target
+// distance in the first place -- one plausibly drivable on local roads without
+// needing a highway's speed advantage to cover it in the time budget. A route
+// generated assuming 40kmh will often be far enough that OSRM's fastest-path
+// default hops onto a highway regardless of scoring afterward; assuming a
+// slower local-roads speed keeps the implied distance shorter.
+private const val SUBURBAN_AVG_SPEED_KMH = 25.0
 // Bearings run in parallel, but each bearing's refinement rounds are inherently
 // sequential (each depends on the previous round's OSRM response) -- that per-
 // bearing round-trip chain, not the bearing count, is the dominant latency cost.
@@ -81,33 +92,52 @@ private const val KM_PER_DEGREE_LAT = 111.32
  */
 fun estimateSearchRadiusDegrees(targetDurationMinutes: Int): Double {
     // Generous headroom over the initial guess: iterative refinement can grow the
-    // radius a fair bit if the first guess undershoots the target duration.
-    return (initialRadiusKm(targetDurationMinutes) * 3.0) / KM_PER_DEGREE_LAT
+    // radius a fair bit if the first guess undershoots the target duration. Uses
+    // the general (not suburban) speed assumption regardless of filters -- a
+    // slightly larger scoring-data search area never hurts, it's just a bbox for
+    // fetching points of interest, not the actual candidate radius.
+    return (initialRadiusKm(targetDurationMinutes, avoidHighways = false) * 3.0) / KM_PER_DEGREE_LAT
 }
 
-private fun initialRadiusKm(targetDurationMinutes: Int): Double =
+private fun initialRadiusKm(targetDurationMinutes: Int, avoidHighways: Boolean): Double {
+    val avgSpeedKmh = if (avoidHighways) SUBURBAN_AVG_SPEED_KMH else AVG_SPEED_KMH
     // A there-and-back trip covers the detour distance roughly twice (out + back),
     // so split the time budget accordingly.
-    (AVG_SPEED_KMH * targetDurationMinutes / 60.0) / 2.5
+    return (avgSpeedKmh * targetDurationMinutes / 60.0) / 2.5
+}
 
 /**
  * Generates candidate routes from [start] to [destination] (pass the same point
  * for both to plan a loop that returns to where it began) aiming for
- * [targetDurationMinutes] of driving -- one candidate per compass bearing tried,
- * whichever converged. Doesn't score/pick a winner itself; pair with
- * [pickBestRoute] once filter scoring data is ready. Deliberately split into two
- * functions rather than one combined call so a caller can fetch scoring data
- * (Overpass/TfNSW/Room, all independent of this) *concurrently* with this
- * instead of waiting for one then the other -- Overpass in particular is a
- * heavily loaded shared community server, and needlessly serializing two
- * already-independent slow operations was eating into the same overall time
- * budget for no reason.
+ * [targetDurationMinutes] of driving -- one or more candidates per compass
+ * bearing tried, whichever converged (see [fetchAlternatives]). Doesn't score/
+ * pick a winner itself; pair with [pickBestRoute] once filter scoring data is
+ * ready. Deliberately split into two functions rather than one combined call so
+ * a caller can fetch scoring data (Overpass/TfNSW/Room, all independent of this)
+ * *concurrently* with this instead of waiting for one then the other -- Overpass
+ * in particular is a heavily loaded shared community server, and needlessly
+ * serializing two already-independent slow operations was eating into the same
+ * overall time budget for no reason.
  *
  * No free routing API can plan "a route of duration X" directly, so this is a
  * heuristic: try a detour point at each compass bearing around the start/
  * destination midpoint, ask OSRM for its actual drive time, and adjust the detour
  * distance iteratively (up to [MAX_RADIUS_ITERATIONS] times) until it converges
  * near the target.
+ *
+ * @param avoidHighways Assumes a slower local-roads speed for the initial detour
+ * distance guess instead of the general assumption -- since OSRM can't actually
+ * be told to exclude motorways (see [FilterPreference]'s doc comment), the only
+ * lever available is keeping the implied trip short enough that a highway's
+ * speed advantage isn't needed to cover it in the time budget; a longer implied
+ * distance all but guarantees OSRM's fastest-path default reaches for one anyway.
+ * @param fetchAlternatives When true, asks OSRM for alternate paths at each
+ * bearing's final (converged) detour point too, not just its single default
+ * route -- gives [pickBestRoute] more than one shape per bearing to choose
+ * between, which matters for filters OSRM can't be told to route around
+ * directly (Highways, Roundabouts, Merging lanes): without this, scoring can
+ * only rank bearings against each other, never find a meaningfully different
+ * path for the *same* bearing.
  *
  * Returns every candidate that converged; empty if every attempt failed outright
  * (e.g. no network).
@@ -116,22 +146,27 @@ suspend fun generateCandidateRoutes(
     start: LatLng,
     destination: LatLng,
     targetDurationMinutes: Int,
+    avoidHighways: Boolean = false,
+    fetchAlternatives: Boolean = false,
 ): List<GeneratedRoute> = coroutineScope {
     val base = midpoint(start, destination)
     val targetSeconds = targetDurationMinutes * 60.0
-    val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
+    val initialRadiusKm = initialRadiusKm(targetDurationMinutes, avoidHighways)
     Log.d(
         LOG_TAG,
         "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
-            "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}",
+            "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
+            "avoidHighways=$avoidHighways, fetchAlternatives=$fetchAlternatives",
     )
 
     val candidates = CANDIDATE_BEARINGS_DEGREES
-        .map { bearing -> async { refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds) } }
+        .map { bearing ->
+            async { refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, fetchAlternatives) }
+        }
         .awaitAll()
-        .filterNotNull()
+        .flatten()
 
-    Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size}/${CANDIDATE_BEARINGS_DEGREES.size} candidates converged")
+    Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size} candidate route(s) from ${CANDIDATE_BEARINGS_DEGREES.size} bearings")
     candidates
 }
 
@@ -142,6 +177,10 @@ suspend fun generateCandidateRoutes(
 fun pickBestRoute(candidates: List<GeneratedRoute>, filters: RouteGenerationFilters, scoringData: ScoringData): GeneratedRoute? =
     candidates.maxByOrNull { scoreRoute(it.points, filters, scoringData) }
 
+/** Returns the primary (converged, or best-effort) route for this bearing, plus
+ * any alternates OSRM offers at that same final detour point if
+ * [fetchAlternatives] is true -- empty if every attempt at this bearing failed
+ * outright. */
 private suspend fun refineCandidate(
     start: LatLng,
     destination: LatLng,
@@ -149,10 +188,14 @@ private suspend fun refineCandidate(
     bearingDegrees: Double,
     initialRadiusKm: Double,
     targetSeconds: Double,
-): GeneratedRoute? {
+    fetchAlternatives: Boolean,
+): List<GeneratedRoute> {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
+    var bestDetourPoint: LatLng? = null
+    var converged = false
     repeat(MAX_RADIUS_ITERATIONS) { iteration ->
+        if (converged) return@repeat // already converged -- skip remaining rounds without another call
         val detourPoint = offset(base, bearingDegrees, radiusKm)
         val routed = try {
             fetchRoutedPaths(listOf(start, detourPoint, destination)).firstOrNull()
@@ -170,14 +213,30 @@ private suspend fun refineCandidate(
             radiusKm *= 0.7
             return@repeat
         }
+        bestDetourPoint = detourPoint
         best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
-        if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) return best
-        // Damped adjustment (not a straight multiply) so a wildly-off first guess
-        // doesn't overshoot into an even-worse radius next iteration.
-        radiusKm *= ratio.coerceIn(0.4, 2.5)
+        if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) {
+            converged = true
+        } else {
+            // Damped adjustment (not a straight multiply) so a wildly-off first
+            // guess doesn't overshoot into an even-worse radius next round.
+            radiusKm *= ratio.coerceIn(0.4, 2.5)
+        }
     }
-    return best
+
+    val primary = best ?: return emptyList()
+    if (!fetchAlternatives) return listOf(primary)
+
+    return try {
+        val alternates = fetchRoutedPaths(listOf(start, bestDetourPoint!!, destination), alternatives = true)
+            .drop(1) // first result duplicates `primary`, already included
+            .map { GeneratedRoute(it.points, it.durationSeconds, it.distanceMeters) }
+        listOf(primary) + alternates
+    } catch (e: Exception) {
+        Log.e(LOG_TAG, "OSRM alternatives call failed (bearing=$bearingDegrees)", e)
+        listOf(primary)
+    }
 }
 
 private fun scoreRoute(route: List<LatLng>, filters: RouteGenerationFilters, data: ScoringData): Int {
@@ -194,6 +253,7 @@ private fun scoreRoute(route: List<LatLng>, filters: RouteGenerationFilters, dat
     apply(filters.roundabouts, data.roundabouts)
     apply(filters.mergingLanes, data.mergeLaneProxies)
     apply(filters.highways, data.majorRoads)
+    apply(filters.highTraffic, data.highTraffic)
     return score
 }
 

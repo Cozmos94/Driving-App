@@ -249,6 +249,33 @@ profiles). Specifically:
     still too slow, the next lever is probably fewer bearings still (down to
     2) before touching anything else, since the round-trip chain length is
     already near its practical floor.
+  - **Ninth round**: Corey confirmed the speed tuning worked, but flagged that
+    Highways→Avoid still put him on a highway when suburban roads clearly
+    could have covered the same distance. Root cause: OSRM always computes
+    the *fastest* route by default, and scoring-after-the-fact can only pick
+    the least-bad of whatever candidates OSRM already generated -- if every
+    candidate already used a highway (likely, since OSRM defaults to it when
+    available and the implied trip distance was long enough to want one),
+    scoring has nothing better to pick from. Two new levers, both in
+    `RouteGenerator.kt`: (1) `avoidHighways` now assumes a slower 25km/h
+    local-roads speed (vs the usual 40km/h) for the initial detour-distance
+    guess when Highways→Avoid is set, keeping the implied trip short enough
+    that a highway's speed advantage isn't needed to cover it -- a longer
+    implied distance all but guarantees OSRM reaches for one anyway. (2) New
+    `fetchAlternatives` param on `generateCandidateRoutes`/`refineCandidate`:
+    when Highways/Roundabouts/Merging lanes is set, each bearing also asks
+    OSRM for alternate paths (`alternatives=true`) at its converged detour
+    point, giving `pickBestRoute` more than one shape per bearing to choose
+    from -- previously it could only rank bearings against each other, never
+    find a different path for the *same* bearing. This adds one extra
+    sequential OSRM call per bearing, so these three filters are a bit slower
+    than the rest by design (traded off against the eighth round's speed
+    work, deliberately, since result quality matters more for these three).
+    Also added a **new "High traffic roads" filter**, reusing the existing
+    TfNSW Traffic Volume Counts API data (`fetchHighVolumeRoads`) already used
+    for the live map's overlay -- just the station points, not the
+    Overpass-matched road geometry (only needed for on-map rendering, not
+    proximity scoring). **None of this has been tested on-device yet.**
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was
