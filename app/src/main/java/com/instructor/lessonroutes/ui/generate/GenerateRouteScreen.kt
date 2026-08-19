@@ -237,7 +237,7 @@ fun GenerateRouteScreen(
             filters.roundabouts != FilterPreference.NONE ||
             filters.mergingLanes != FilterPreference.NONE
         // Populated *during* the withTimeoutOrNull block below, not read from its
-        // return value -- if the 20s ceiling fires, the block's own result is
+        // return value -- if the 45s ceiling fires, the block's own result is
         // discarded entirely, but these plain vars keep whatever they were last
         // set to, which is exactly the partial state needed to tell the
         // instructor what actually went wrong (a specific slow filter's data
@@ -248,14 +248,12 @@ fun GenerateRouteScreen(
             try {
                 // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
                 // TfNSW) can never leave the spinner running forever -- surfaces
-                // as a timeout error instead. 20s comfortably covers the worst
-                // case now (3 bearings running concurrently, each up to 2
-                // sequential OSRM calls at 6s max plus, when Highways/
-                // Roundabouts/Merging lanes is set, one more bounded at 5s --
-                // see OsrmApi.kt/RouteGenerator.kt's own tighter per-call
-                // timeouts) while target typical-case generation is well under
-                // 10s.
-                val result = withTimeoutOrNull(20_000) {
+                // as a timeout error instead. Widened 20s->45s: the 20s budget
+                // left little slack once a slow-but-not-timed-out-itself Overpass
+                // response ate into it (see SCORING_FETCH_TIMEOUT_MS's own 8s
+                // per-category bound below), and typical-case generation is still
+                // well under 10s regardless of this ceiling.
+                val result = withTimeoutOrNull(45_000) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
                     // Genuinely independent of each other -- run concurrently
@@ -498,7 +496,7 @@ fun GenerateRouteScreen(
                     }
                     Text(
                         "Trying a few different routes and picking the best fit for your filters — " +
-                            "usually just a few seconds, up to 20 at most.",
+                            "usually just a few seconds, up to 45 at most.",
                     )
                 }
                 generationError?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
@@ -659,7 +657,7 @@ private fun SaveGeneratedRouteDialog(
  * didn't finish within [SCORING_FETCH_TIMEOUT_MS] and was skipped as a result --
  * surfaced to the instructor when generation fails, so a slow filter's data
  * fetch (usually Overpass, a shared community server whose own client timeout
- * is actually *longer* than the overall 20s generation deadline) can be named
+ * is actually longer than each category's own 8s bound below) can be named
  * specifically instead of just producing a generic timeout. */
 private data class ScoringFetchResult(val data: ScoringData, val slowCategories: List<String>)
 
