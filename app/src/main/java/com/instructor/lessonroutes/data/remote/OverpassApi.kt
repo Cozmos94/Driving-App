@@ -24,8 +24,11 @@ private val ROAD_HIGHWAY_TYPES = listOf(
     "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
 )
 
+// Must exceed the query's own [timeout:120] below -- a shorter client timeout was
+// killing the connection before Overpass even had the time we told it it had.
 private val client = OkHttpClient.Builder()
-    .callTimeout(30, TimeUnit.SECONDS)
+    .callTimeout(150, TimeUnit.SECONDS)
+    .readTimeout(150, TimeUnit.SECONDS)
     .build()
 
 /**
@@ -49,7 +52,10 @@ suspend fun matchRoadGeometry(points: List<LatLng>): Map<Int, List<LatLng>> {
         val clauses = points.joinToString("\n") {
             "way(around:$SEARCH_RADIUS_METERS,${it.latitude},${it.longitude})[highway~\"^($highwayFilter)\$\"];"
         }
-        val query = "[out:json][timeout:60];\n($clauses\n);\nout geom;"
+        // Every high-volume station gets its own `around` clause in one query, so
+        // this can genuinely take a while with a large batch -- give the server (and
+        // the client above) real headroom rather than tuning both down to "usually enough".
+        val query = "[out:json][timeout:120];\n($clauses\n);\nout geom;"
 
         val request = Request.Builder()
             .url(OVERPASS_URL)
