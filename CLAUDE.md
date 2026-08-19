@@ -292,6 +292,29 @@ profiles). Specifically:
     for the live map's overlay -- just the station points, not the
     Overpass-matched road geometry (only needed for on-map rendering, not
     proximity scoring). **None of this has been tested on-device yet.**
+  - **Tenth round: confirmed timeout with Roundabouts→Avoid + Merging lanes→
+    Prefer.** Root cause: the ninth round's `fetchAlternatives` call had no
+    timeout of its own -- it only shared the overall 20s budget via
+    `withTimeoutOrNull` in `GenerateRouteScreen.kt`. An `alternatives=true`
+    request is real extra graph-search work for OSRM and can run noticeably
+    slower than normal; without its own bound, one slow bearing's alternatives
+    call could consume the *entire* 20s by itself and cancel every bearing's
+    work, including ones that had already succeeded. Also: `OsrmApi.kt`'s
+    client `connectTimeout`/`readTimeout` (10s each) meant a *single* normal
+    OSRM call could already take up to 20s worst case -- equal to the entire
+    generation budget on its own, before any alternates call. Fixed both:
+    added `ALTERNATIVES_TIMEOUT_MS` (5s) around just the alternatives call in
+    `refineCandidate` (falls back to the primary route alone if it's slow, not
+    a total failure), and tightened `OsrmApi.kt`'s client to `callTimeout(6s)`
+    (bounds the entire request regardless of which phase is slow) plus
+    matching 6s connect/read. Worst case per bearing is now ~17s (2 rounds x
+    6s + 1 alternates x 5s), fitting under the 20s overall ceiling with
+    margin. **Also answered directly for Corey: generation does NOT use any
+    Google Maps API** -- it's OSRM (routing) + Overpass (OSM scoring data) +
+    TfNSW (hazards/traffic-volume/school-zones), all free/keyless (TfNSW needs
+    a free API key) and unrelated to Google. Google Maps is only involved in
+    the separate "Open in nav app" hand-off button. **None of this has been
+    tested on-device yet either.**
 - ✅ **Phase 2 done**, with two known, documented simplifications (not bugs):
   - High-traffic-volume overlay substitutes for "high-risk roads" (crash data) —
     the real crash dataset was never identified; a Traffic Volume Counts API was

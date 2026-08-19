@@ -5,6 +5,7 @@ import com.instructor.lessonroutes.data.remote.fetchRoutedPaths
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import org.maplibre.android.geometry.LatLng
 import kotlin.math.abs
 import kotlin.math.cos
@@ -81,6 +82,13 @@ private const val SUBURBAN_AVG_SPEED_KMH = 25.0
 private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
 private const val MAX_RADIUS_ITERATIONS = 2
 private const val DURATION_TOLERANCE_RATIO = 0.25
+// Separate, tighter bound for the alternatives=true call specifically (see its
+// use in refineCandidate) -- asking OSRM to search for more than one path is
+// real extra graph-search work and can run slower than a normal request; without
+// its own limit, one slow bearing's alternatives call could consume the entire
+// overall generation timeout by itself, cancelling every bearing's work
+// (confirmed as a real cause of "times out with no route at all").
+private const val ALTERNATIVES_TIMEOUT_MS = 5_000L
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
 
@@ -228,15 +236,26 @@ private suspend fun refineCandidate(
     val primary = best ?: return emptyList()
     if (!fetchAlternatives) return listOf(primary)
 
-    return try {
-        val alternates = fetchRoutedPaths(listOf(start, bestDetourPoint!!, destination), alternatives = true)
-            .drop(1) // first result duplicates `primary`, already included
-            .map { GeneratedRoute(it.points, it.durationSeconds, it.distanceMeters) }
-        listOf(primary) + alternates
+    // Bounded on its own, separate from the overall generation timeout: an
+    // alternatives=true request asks OSRM to search for more than one path,
+    // which is real extra graph-search work and can run noticeably slower than
+    // a normal request. Without its own limit, one slow bearing's alternatives
+    // call could consume the *entire* overall timeout budget by itself and
+    // cancel every bearing's work, including ones that had already succeeded --
+    // confirmed as a real cause of "times out with no route at all" when
+    // Highways/Roundabouts/Merging lanes was set. Falls back to just the
+    // primary route rather than failing this bearing outright.
+    val alternates = try {
+        withTimeoutOrNull(ALTERNATIVES_TIMEOUT_MS) {
+            fetchRoutedPaths(listOf(start, bestDetourPoint!!, destination), alternatives = true)
+                .drop(1) // first result duplicates `primary`, already included
+                .map { GeneratedRoute(it.points, it.durationSeconds, it.distanceMeters) }
+        } ?: emptyList()
     } catch (e: Exception) {
         Log.e(LOG_TAG, "OSRM alternatives call failed (bearing=$bearingDegrees)", e)
-        listOf(primary)
+        emptyList()
     }
+    return listOf(primary) + alternates
 }
 
 private fun scoreRoute(route: List<LatLng>, filters: RouteGenerationFilters, data: ScoringData): Int {

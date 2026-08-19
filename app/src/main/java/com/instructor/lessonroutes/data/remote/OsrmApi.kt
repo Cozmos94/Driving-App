@@ -11,9 +11,16 @@ import java.util.concurrent.TimeUnit
 
 private const val OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
 
+// callTimeout bounds the *entire* request (connect + write + read combined) at
+// 6s, tighter than connect/read alone would give -- a single call could
+// otherwise take up to connectTimeout+readTimeout (20s) worst case, which on
+// its own was already equal to the route generator's entire 20s overall budget
+// (RouteGenerator.kt), leaving no room for the several sequential calls one
+// bearing's refinement can need.
 private val client = OkHttpClient.Builder()
-    .connectTimeout(10, TimeUnit.SECONDS)
-    .readTimeout(10, TimeUnit.SECONDS)
+    .callTimeout(6, TimeUnit.SECONDS)
+    .connectTimeout(6, TimeUnit.SECONDS)
+    .readTimeout(6, TimeUnit.SECONDS)
     .build()
 
 /** One routed path between a set of waypoints, in order: the actual road-following

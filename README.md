@@ -295,6 +295,14 @@ now scored the same way as everything else:
   only rank bearings against each other, never find a meaningfully different
   shape for the *same* bearing. This adds one extra sequential OSRM call per
   bearing, so these three filters make generation a bit slower than the rest.
+  That extra call is bounded on its own (`ALTERNATIVES_TIMEOUT_MS`, 5s, falls
+  back to just the primary route if it's slow) rather than sharing the overall
+  generation timeout — an `alternatives=true` request is real extra
+  graph-search work for OSRM and can run noticeably slower than a normal one,
+  and without its own limit one slow bearing's alternatives call could consume
+  the *entire* overall budget by itself and cancel every bearing's work,
+  including ones that had already succeeded (confirmed as a real cause of
+  "times out with no route at all" when these filters were used).
 - **High traffic roads** reuses the same TfNSW Traffic Volume Counts API data
   already used for the live map's high-traffic-volume overlay
   (`fetchHighVolumeRoads` — needs a TfNSW API key) — just the station points,

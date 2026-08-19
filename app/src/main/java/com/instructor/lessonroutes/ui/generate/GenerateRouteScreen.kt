@@ -229,9 +229,12 @@ fun GenerateRouteScreen(
                 // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
                 // TfNSW) can never leave the spinner running forever -- surfaces
                 // as a timeout error instead. 20s comfortably covers the worst
-                // case now (3 candidates x up to 2 sequential OSRM calls each,
-                // run concurrently) while target typical-case generation is well
-                // under 10s.
+                // case now (3 bearings running concurrently, each up to 2
+                // sequential OSRM calls at 6s max plus, when Highways/
+                // Roundabouts/Merging lanes is set, one more bounded at 5s --
+                // see OsrmApi.kt/RouteGenerator.kt's own tighter per-call
+                // timeouts) while target typical-case generation is well under
+                // 10s.
                 val result = withTimeoutOrNull(20_000) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
