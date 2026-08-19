@@ -15,16 +15,34 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
+// Every role below is set explicitly -- leaving any of these unset falls back to
+// Compose Material3's baseline default scheme, which is purple/violet-seeded, not
+// neutral gray. That's what was showing through as pink/purple on ListItem
+// backgrounds (reads surface/surfaceVariant) and the TimePicker's AM/PM selector
+// (reads tertiaryContainer), neither of which this theme used to define.
 private val LightColors = lightColorScheme(
     primary = PrimaryLight,
     onPrimary = OnPrimaryLight,
     primaryContainer = PrimaryContainerLight,
     onPrimaryContainer = OnPrimaryContainerLight,
+    inversePrimary = InversePrimaryLight,
     secondary = SecondaryLight,
     onSecondary = OnSecondaryLight,
     secondaryContainer = SecondaryContainerLight,
     onSecondaryContainer = OnSecondaryContainerLight,
+    tertiary = TertiaryLight,
+    onTertiary = OnTertiaryLight,
+    tertiaryContainer = TertiaryContainerLight,
+    onTertiaryContainer = OnTertiaryContainerLight,
     background = Neutral95,
+    surface = SurfaceLight,
+    onSurface = OnSurfaceLight,
+    surfaceVariant = SurfaceVariantLight,
+    onSurfaceVariant = OnSurfaceVariantLight,
+    outline = OutlineLight,
+    outlineVariant = OutlineVariantLight,
+    inverseSurface = InverseSurfaceLight,
+    inverseOnSurface = InverseOnSurfaceLight,
 )
 
 private val DarkColors = darkColorScheme(
@@ -32,11 +50,24 @@ private val DarkColors = darkColorScheme(
     onPrimary = OnPrimaryDark,
     primaryContainer = PrimaryContainerDark,
     onPrimaryContainer = OnPrimaryContainerDark,
+    inversePrimary = InversePrimaryDark,
     secondary = SecondaryDark,
     onSecondary = OnSecondaryDark,
     secondaryContainer = SecondaryContainerDark,
     onSecondaryContainer = OnSecondaryContainerDark,
+    tertiary = TertiaryDark,
+    onTertiary = OnTertiaryDark,
+    tertiaryContainer = TertiaryContainerDark,
+    onTertiaryContainer = OnTertiaryContainerDark,
     background = Neutral10,
+    surface = SurfaceDark,
+    onSurface = OnSurfaceDark,
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = OnSurfaceVariantDark,
+    outline = OutlineDark,
+    outlineVariant = OutlineVariantDark,
+    inverseSurface = InverseSurfaceDark,
+    inverseOnSurface = InverseOnSurfaceDark,
 )
 
 @Composable

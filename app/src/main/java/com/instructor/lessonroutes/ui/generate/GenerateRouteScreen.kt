@@ -575,29 +575,29 @@ fun GenerateRouteScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FilterRow(label: String, preference: FilterPreference, onChange: (FilterPreference) -> Unit) {
-    // Three explicit, mutually-exclusive chips (including a visible "None") rather
-    // than two toggle-on-tap-again chips -- tapping any one of the three always
-    // sets that exact state directly, so there's no separate "deselect" gesture
-    // that could leave Avoid and Prefer both looking selected.
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text(label)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
-            FilterChip(
-                selected = preference == FilterPreference.NONE,
-                onClick = { onChange(FilterPreference.NONE) },
-                label = { Text("None") },
-            )
-            FilterChip(
-                selected = preference == FilterPreference.AVOID,
-                onClick = { onChange(FilterPreference.AVOID) },
-                label = { Text("Avoid") },
-            )
-            FilterChip(
-                selected = preference == FilterPreference.PREFER,
-                onClick = { onChange(FilterPreference.PREFER) },
-                label = { Text("Prefer") },
-            )
-        }
+    // Just Avoid/Prefer -- preference is a single FilterPreference value, so it
+    // can never actually hold both AVOID and PREFER at once; tapping the
+    // already-selected chip clears it back to NONE (no separate "None" chip
+    // needed). The two chips looking simultaneously selected on-device was very
+    // likely the theme's missing surface/outline colors (see Theme.kt/Color.kt)
+    // making an *unselected* chip's outline hard to tell apart from a selected
+    // one's fill, not an actual dual-selection bug.
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, modifier = Modifier.weight(1f))
+        FilterChip(
+            selected = preference == FilterPreference.AVOID,
+            onClick = { onChange(if (preference == FilterPreference.AVOID) FilterPreference.NONE else FilterPreference.AVOID) },
+            label = { Text("Avoid") },
+            modifier = Modifier.padding(end = 4.dp),
+        )
+        FilterChip(
+            selected = preference == FilterPreference.PREFER,
+            onClick = { onChange(if (preference == FilterPreference.PREFER) FilterPreference.NONE else FilterPreference.PREFER) },
+            label = { Text("Prefer") },
+        )
     }
 }
 

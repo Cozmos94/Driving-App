@@ -36,3 +36,40 @@ val OnSecondaryContainerDark = BrandWhite
 
 val Neutral95 = Color(0xFFF5F5F5)
 val Neutral10 = Color(0xFF1A1A1A)
+
+// Every other M3 color role (tertiary, surface[Variant], outline, inverse*)
+// used to fall through to Compose Material3's baseline default scheme when left
+// unset -- which is seeded from a purple/violet swatch, not neutral gray, and
+// visibly leaked through on anything that reads one of these roles directly
+// (e.g. ListItem's container/text colors, TimePicker's AM/PM selector, which
+// defaults to tertiaryContainer). Reusing the secondary/gray tones already
+// defined above for tertiary, and adding real gray surface/outline/inverse
+// values, keeps every role -- not just primary/secondary -- inside the
+// black/white/gray brand palette.
+val TertiaryLight = SecondaryLight
+val OnTertiaryLight = OnSecondaryLight
+val TertiaryContainerLight = SecondaryContainerLight
+val OnTertiaryContainerLight = OnSecondaryContainerLight
+val SurfaceLight = Neutral95
+val OnSurfaceLight = BrandBlack
+val SurfaceVariantLight = Color(0xFFE0E0E0)
+val OnSurfaceVariantLight = Color(0xFF424242)
+val OutlineLight = Color(0xFF757575)
+val OutlineVariantLight = Color(0xFFBDBDBD)
+val InverseSurfaceLight = BrandBlack
+val InverseOnSurfaceLight = BrandWhite
+val InversePrimaryLight = Color(0xFFBDBDBD)
+
+val TertiaryDark = SecondaryDark
+val OnTertiaryDark = OnSecondaryDark
+val TertiaryContainerDark = SecondaryContainerDark
+val OnTertiaryContainerDark = OnSecondaryContainerDark
+val SurfaceDark = Neutral10
+val OnSurfaceDark = BrandWhite
+val SurfaceVariantDark = Color(0xFF424242)
+val OnSurfaceVariantDark = Color(0xFFBDBDBD)
+val OutlineDark = Color(0xFF9E9E9E)
+val OutlineVariantDark = Color(0xFF616161)
+val InverseSurfaceDark = BrandWhite
+val InverseOnSurfaceDark = BrandBlack
+val InversePrimaryDark = Color(0xFF424242)
