@@ -43,20 +43,36 @@ profiles). Specifically:
 - ✅ **App name + icon**: full name "NSW Driving Instructor Route Planner",
   shorthand "Route Planner" (`app_name` in `strings.xml` — shown under the
   launcher icon, kept short; `app_name_full` + the Settings screen heading carry
-  the full name). Launcher icon (hand-built vector drawables, no PNGs) is now
-  purple background + white road glyph + a new yellow nav-arrow glyph top-right.
+  the full name). Launcher icon (hand-built vector drawables, no PNGs) is
+  **grass-green `#7CB342` background + white road glyph + a half-red/half-white
+  compass-needle icon top-right** (no background circle behind it -- see next
+  bullet). Was purple bg + yellow nav-arrow originally; Corey later asked for
+  this green/compass-needle version instead, and separately asked for the
+  in-app UI theme (next bullet) to become black/white -- **the icon palette and
+  the UI theme are deliberately independent now, not tied together** the way
+  the original purple/yellow choice tracked both.
+  - The compass needle replaced an earlier waypoint-dot marker that used to sit
+    in roughly the same spot and visually collided with it ("the white circle
+    sitting behind the nav icon") -- removed rather than repositioned, since
+    the road glyph alone reads as "roads" fine on its own.
 - ✅ **"Overview" button**: centered in the bottom bar of both the route list and
   Student Profiles screens (between the Profiles/Routes toggle and the "+" FAB) —
   returns to the live map via `popBackStack(LIVE_MAP, inclusive = false)`, reusing
   the existing instance rather than restarting its continuous GPS tracking.
-- ✅ **Purple/yellow theme** (`#71286F` purple, `#F3E10E` yellow — Corey's brand
-  colors): see `Color.kt`/`Theme.kt`. Also turned dynamic (Material You) color
-  **off by default** — it was silently overriding any custom palette with
-  wallpaper-derived colors on Android 12+, which would have made this invisible on
-  most phones. Route line + waypoint dots in `RouteMapView.kt` were recolored to
-  match (they already tracked the theme color per their own old comment); Phase 2
-  overlay colors (hazards, traffic volume, quiet roads) were deliberately left
-  alone since they carry semantic meaning, not branding.
+- ✅ **Black/white theme** (was purple `#71286F`/yellow `#F3E10E` originally,
+  Corey later asked for stark black-and-white instead): see `Color.kt`/`Theme.kt`.
+  `primary` is "whichever is the opposite extreme from the background" (black
+  in light mode, white in dark mode), `secondary` is mid-gray (a literal
+  white-on-white secondary, e.g. a filled FAB in light mode, would have no
+  visible edge with no border). Dynamic (Material You) color stays **off by
+  default** (unrelated to this swap, already off from the original purple/
+  yellow work) — it silently overrides any custom palette with wallpaper-derived
+  colors on Android 12+. Route line + waypoint dots in `RouteMapView.kt` were
+  recolored to match (black line, white dots -- the waypoint layer's *stroke*
+  color also had to switch from white to black, or a white-on-white dot would
+  be invisible against light map tiles); Phase 2 overlay colors (hazards,
+  traffic volume, quiet roads) were deliberately left alone since they carry
+  semantic meaning, not branding.
 - ✅ **Tap-created routes are now road-snapped for display**: `OsrmApi.kt` calls
   OSRM's free public routing server (no key) to turn a tap route's sparse points
   into a path that follows real roads, both live while tapping

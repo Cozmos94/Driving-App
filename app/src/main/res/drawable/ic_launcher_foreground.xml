@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Brand glyph: a white winding route (road) with a waypoint dot, plus a yellow
-  navigation arrow in the top right. Both the route and the nav arrow sit within
+  Brand glyph: a white winding route (road) on a grass-green background, plus a
+  classic half-red/half-white compass-needle icon in the top right (no
+  background circle behind it -- previously a waypoint dot sat there and
+  visually collided with it). Both the route and the compass needle sit within
   the adaptive icon's ~66dp-diameter safe circle (centered at 54,54, radius 33)
   so neither gets clipped by a circular/squircle launcher mask.
 -->
@@ -10,19 +12,25 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Road: a winding line with a waypoint dot at its end. -->
+    <!-- Road: a winding line, no end marker. -->
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="6"
         android:strokeLineCap="round"
         android:fillColor="#00000000"
         android:pathData="M30,78 C30,60 48,66 54,54 C60,42 42,36 42,30" />
+    <!-- Compass needle, top right, centered around (72,36): the classic
+         half-red (north-pointing)/half-white (south-pointing) diamond, each
+         half with a thin dark outline for crisp definition against the green
+         background. -->
+    <path
+        android:fillColor="#D32F2F"
+        android:strokeColor="#1A1A1A"
+        android:strokeWidth="1"
+        android:pathData="M72,24 L80,36 L64,36 Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M78,30 m-8,0 a8,8 0,1,1 16,0 a8,8 0,1,1 -16,0" />
-    <!-- Navigation arrow, top right: a compass-needle/paper-plane shape pointing
-         north, centered around (72,36). -->
-    <path
-        android:fillColor="#F3E10E"
-        android:pathData="M72,24 L64,46 L72,40 L80,46 Z" />
+        android:strokeColor="#1A1A1A"
+        android:strokeWidth="1"
+        android:pathData="M72,48 L64,36 L80,36 Z" />
 </vector>

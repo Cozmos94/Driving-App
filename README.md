@@ -405,35 +405,43 @@ there's room there.
 
 The launcher icon ([ic_launcher_background.xml](app/src/main/res/drawable/ic_launcher_background.xml),
 [ic_launcher_foreground.xml](app/src/main/res/drawable/ic_launcher_foreground.xml))
-is hand-built as vector drawables (no raster PNGs) — purple `#71286F` background,
-a white winding-road-plus-waypoint-dot glyph (already there, recolor aside), and a
-new yellow `#F3E10E` navigation-arrow glyph in the top right. Both foreground
-shapes are positioned to stay inside the adaptive icon's ~66dp-diameter safe circle
-(centered at 54,54 of the 108×108 viewport) so a circular/squircle launcher mask
-doesn't clip them.
+is hand-built as vector drawables (no raster PNGs) — grass-green `#7CB342`
+background, a white winding-road glyph, and a classic half-red (`#D32F2F`)/
+half-white compass-needle icon in the top right (no background circle behind
+it — an earlier waypoint-dot marker used to sit right there and visually
+collide with it; removed rather than repositioned, since the road glyph alone
+is enough to read as "roads"). Both foreground shapes are positioned to stay
+inside the adaptive icon's ~66dp-diameter safe circle (centered at 54,54 of the
+108×108 viewport) so a circular/squircle launcher mask doesn't clip them. Note
+this icon palette is intentionally separate from the app's own black/white UI
+theme below — Corey specified both independently.
 
-## Color theme (purple + yellow)
+## Color theme (black + white)
 
-Brand colors per Corey: purple `#71286F` and yellow `#F3E10E` — see
+Brand colors per Corey: a stark black-and-white theme — see
 [Color.kt](app/src/main/java/com/instructor/lessonroutes/ui/theme/Color.kt) and
 [Theme.kt](app/src/main/java/com/instructor/lessonroutes/ui/theme/Theme.kt).
-Purple is `primary` (white text/icons on it), yellow is `secondary` (dark text on
-it — yellow is too light for white-on-yellow to read well), each with a soft
-tinted "container" variant for filled surfaces like the FAB.
+`primary` is "whichever is the opposite extreme from the background" — near-black
+`#1A1A1A` in light mode (white text/icons on it), near-white in dark mode (dark
+text/icons on it) — with mid-gray tones for `secondary`, since a literal
+white-on-white secondary (e.g. a filled FAB in light mode) would have no visible
+edge against a white page with no border. Container tones are soft tints for
+filled surfaces like the FAB.
 
-**Dynamic color (Material You) is now off by default** (`dynamicColor = false` in
-`LessonRoutesTheme`) — it was on before, and on Android 12+ it derives the app's
-colors from the device wallpaper, silently overriding any custom palette. Leaving
-it on would have made this purple/yellow theme invisible on most modern phones.
+**Dynamic color (Material You) is off by default** (`dynamicColor = false` in
+`LessonRoutesTheme`) — Android 12+ would otherwise derive the app's colors from
+the device wallpaper, silently overriding any custom palette.
 
 The route polyline and waypoint-marker colors in
 [RouteMapView.kt](app/src/main/java/com/instructor/lessonroutes/ui/map/RouteMapView.kt)
-(`ROUTE_LINE_COLOR`, `WAYPOINT_COLOR`) were updated to match (purple line, yellow
-waypoint dots) — these were already meant to track the app's theme color per their
-own old comment. The Phase 2 overlay colors (hazards, high-traffic-volume, quiet
-roads, live-location dot) were deliberately **left alone**: those carry semantic
-meaning (e.g. red = hazard) that's unrelated to app branding, and recoloring them
-to purple/yellow would make the overlays harder to tell apart at a glance.
+(`ROUTE_LINE_COLOR`, `WAYPOINT_COLOR`) were updated to match (black line, white
+waypoint dots with a black outline — a white fill needs a dark stroke to read
+against light map tiles, so the waypoint layer's stroke color was switched from
+white to black at the same time). The Phase 2 overlay colors (hazards,
+high-traffic-volume, quiet roads, live-location dot) were deliberately **left
+alone**: those carry semantic meaning (e.g. red = hazard) that's unrelated to
+app branding, and recoloring them to black/white would make the overlays harder
+to tell apart at a glance.
 
 ## Overpass gotchas (worth knowing if this breaks again)
 

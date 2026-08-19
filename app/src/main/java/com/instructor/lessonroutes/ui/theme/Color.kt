@@ -2,33 +2,37 @@ package com.instructor.lessonroutes.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand colors (Corey's choice): a deep purple paired with a bright yellow accent.
-val BrandPurple = Color(0xFF71286F)
-val BrandYellow = Color(0xFFF3E10E)
+// Brand colors (Corey's choice): a stark black-and-white theme. Primary is
+// "the opposite extreme from the background" -- black on the light background,
+// white on the dark one -- with mid-gray tones for secondary accents, since a
+// literal white-on-white secondary (e.g. a filled FAB) would have no visible
+// edge against a white page with no border.
+val BrandBlack = Color(0xFF1A1A1A)
+val BrandWhite = Color(0xFFF5F5F5)
 
-// Light theme: purple as primary (white text/icons on it), yellow as secondary (dark
-// text/icons on it, since yellow is too light for white-on-yellow to read well).
-// Container tones are soft tints of each so filled surfaces (FAB, chips, etc.) read
-// as "brand-colored" without being full-strength purple/yellow everywhere.
-val PurplePrimaryLight = BrandPurple
-val OnPurplePrimaryLight = Color(0xFFFFFFFF)
-val PurpleContainerLight = Color(0xFFF3D9F2)
-val OnPurpleContainerLight = Color(0xFF2E0E2D)
-val YellowSecondaryLight = BrandYellow
-val OnYellowSecondaryLight = Color(0xFF1C1B00)
-val YellowContainerLight = Color(0xFFFFF9C4)
-val OnYellowContainerLight = Color(0xFF3D3800)
+// Light theme: near-black primary (white text/icons on it), mid-gray secondary
+// (dark text/icons on it). Container tones are soft tints so filled surfaces
+// (FAB, chips, etc.) read as tonally related without being full-strength
+// black/gray everywhere.
+val PrimaryLight = BrandBlack
+val OnPrimaryLight = Color(0xFFFFFFFF)
+val PrimaryContainerLight = Color(0xFFE0E0E0)
+val OnPrimaryContainerLight = BrandBlack
+val SecondaryLight = Color(0xFF616161)
+val OnSecondaryLight = Color(0xFFFFFFFF)
+val SecondaryContainerLight = Color(0xFFEEEEEE)
+val OnSecondaryContainerLight = BrandBlack
 
-// Dark theme: primary/secondary are lightened so they still read against a dark
-// background; containers become deep tones with light "on" text.
-val PurplePrimaryDark = Color(0xFFE3A6E0)
-val OnPurplePrimaryDark = Color(0xFF3D123B)
-val PurpleContainerDark = Color(0xFF522153)
-val OnPurpleContainerDark = Color(0xFFF3D9F2)
-val YellowSecondaryDark = BrandYellow
-val OnYellowSecondaryDark = Color(0xFF3D3800)
-val YellowContainerDark = Color(0xFF4A4400)
-val OnYellowContainerDark = Color(0xFFFFF9C4)
+// Dark theme: near-white primary (dark text/icons on it), lighter-gray
+// secondary; containers become deep tones with light "on" text.
+val PrimaryDark = BrandWhite
+val OnPrimaryDark = BrandBlack
+val PrimaryContainerDark = Color(0xFF333333)
+val OnPrimaryContainerDark = BrandWhite
+val SecondaryDark = Color(0xFFBDBDBD)
+val OnSecondaryDark = BrandBlack
+val SecondaryContainerDark = Color(0xFF424242)
+val OnSecondaryContainerDark = BrandWhite
 
 val Neutral95 = Color(0xFFF5F5F5)
 val Neutral10 = Color(0xFF1A1A1A)
