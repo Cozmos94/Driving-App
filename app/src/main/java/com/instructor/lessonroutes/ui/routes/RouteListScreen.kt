@@ -2,6 +2,7 @@ package com.instructor.lessonroutes.ui.routes
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,10 +80,14 @@ fun RouteListScreen(
                 actions = { TextButton(onClick = onSettingsClick) { Text("Settings") } },
             )
         },
-        floatingActionButton = { FloatingActionButton(onClick = onCreateClick) { Text("+") } },
         bottomBar = {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 OutlinedButton(onClick = onProfilesClick) { Text("Profiles") }
+                FloatingActionButton(onClick = onCreateClick) { Text("+") }
             }
         },
     ) { padding ->

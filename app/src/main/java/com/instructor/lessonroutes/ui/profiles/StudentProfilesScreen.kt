@@ -1,6 +1,7 @@
 package com.instructor.lessonroutes.ui.profiles
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,10 +60,14 @@ fun StudentProfilesScreen(
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Student profiles") }) },
-        floatingActionButton = { FloatingActionButton(onClick = { showCreateDialog = true }) { Text("+") } },
         bottomBar = {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 OutlinedButton(onClick = onAllRoutesClick) { Text("Routes") }
+                FloatingActionButton(onClick = { showCreateDialog = true }) { Text("+") }
             }
         },
     ) { padding ->
