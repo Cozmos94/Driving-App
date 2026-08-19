@@ -148,6 +148,30 @@ profiles). Specifically:
     silently falling back to straight lines, it points to OSRM connectivity
     being broken from that device/network entirely, not a trip-generator-
     specific bug.
+  - **Fourth-round, root cause confirmed**: generation worked with hazards/
+    construction/school-zones/cameras filters (TfNSW + Room, no Overpass, no
+    OSRM params), but consistently failed with Highways and/or Roundabouts/
+    Merging lanes. Tested directly against the live APIs (not guessed):
+    OSRM's public demo server rejects the `exclude` parameter *outright, for
+    every value* (`{"code":"InvalidValue","message":"Exclude flag
+    combination is not supported."}`) -- so Highways->Avoid, which used
+    `exclude=motorway` as a real hard constraint, failed 100% of the time by
+    design. Removed `exclude` support from `OsrmApi.fetchRoutedPaths()`
+    entirely; Highways is now soft proximity scoring like every other
+    category (`fetchMajorRoads` data, scored both directions) -- **no filter
+    in this app is a hard routing constraint anymore**, all of them are
+    best-effort. Also split `RouteGenerator`'s combined
+    generate-then-score into `generateCandidateRoutes()` +
+    `pickBestRoute()`, run *concurrently* from `GenerateRouteScreen` (via
+    `async`) instead of sequentially, since Overpass scoring-data fetches and
+    OSRM candidate generation are fully independent and were needlessly
+    adding their wait times together. Also moved the "Generated: ...
+    / Regenerate / Open in nav app / Save" block to the top of the
+    scrollable content (right after the map) instead of the bottom, below
+    the Filters section -- it was easy to miss entirely without scrolling
+    past everything else first, which is likely why "no option to navigate"
+    was reported even after generation apparently succeeded (the map at top
+    did show the route).
 - 🔲 **NEW, UNTESTED: Trip generator ("Plan a trip")** — a second, separate way to
   get a route: generates one to actually go drive (destination + start/end time +
   avoid/prefer filters), rather than recording/tapping one by hand. This is the
@@ -158,16 +182,19 @@ profiles). Specifically:
     generation runs immediately, it doesn't wait for or schedule around the clock.
   - Destination can be "loop back to start", a map tap, or an address search
     (new: free/keyless Nominatim geocoding, `NominatimApi.kt`).
-  - Generation is a heuristic (`RouteGenerator.kt`): try a detour point at 8
+  - Generation is a heuristic (`RouteGenerator.kt`): try a detour point at 4
     bearings around the start/destination midpoint, ask OSRM for the actual drive
     time, iteratively adjust the detour distance to converge on the target
     duration, then pick whichever converged candidate best matches the chosen
-    filters.
-  - Filters are honest about real-vs-soft: only Highways→Avoid is a real OSRM
-    routing constraint (`exclude=motorway`); everything else (hazards,
-    construction, school zones, cameras, roundabouts, merging lanes, and
-    Highways→Prefer) is proximity-scored best-of-8-candidates, since no free
-    routing API supports true avoid/prefer-zone routing.
+    filters. `generateCandidateRoutes()` (OSRM) and scoring-data fetching
+    (`buildScoringData()` in `GenerateRouteScreen.kt`, Overpass/TfNSW/Room) run
+    concurrently, combined via `pickBestRoute()`.
+  - **No filter is a hard routing constraint** -- all of them, Highways
+    included, are proximity-scored best-of-4-candidates. Highways->Avoid was
+    originally OSRM's `exclude=motorway` (a real constraint), but OSRM's
+    public demo server rejects `exclude` outright for every value (confirmed
+    directly against the live API) -- removed entirely, see `OsrmApi.kt`'s
+    doc comment.
   - New Overpass queries: `fetchRoundabouts` (solid — real OSM tags) and
     `fetchMergeLaneProxies`/`fetchMajorRoads` (the former is a known
     approximation — see its doc comment).

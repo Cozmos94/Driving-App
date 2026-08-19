@@ -67,13 +67,15 @@ TfNSW key needed).
 - **Trip generator ("Plan a trip")**: a second, separate way to get a route —
   generates one to actually go drive (destination + start/end time + avoid/prefer
   filters) rather than recording/tapping one by hand. See "Trip generator" below
-  for the full writeup. A first real-device pass found and fixed several bugs
-  (map not centering/not visible, mandatory start time, search needing an
-  explicit button tap, and a possible indefinite hang on Generate — now hard
-  capped at 90s) — still worth confirming whether generated routes actually
-  land close to the target duration in practice, and whether the OSRM call
-  volume (up to ~32 calls per generation, 8 bearings × up to 4 refinement
-  rounds each, run concurrently) is acceptably fast.
+  for the full writeup. Several real-device bug-fix rounds so far: map not
+  centering/not visible, mandatory start time, search needing an explicit
+  button tap, destination controls hidden behind an unchecked-by-default
+  checkbox, a possible hang on Generate (now hard capped at 45s, down from an
+  earlier 90s, with call volume cut ~3x), and — the confirmed root cause of
+  Highways/Roundabouts/Merging-lanes failing outright — OSRM's public demo
+  server rejecting the `exclude` routing parameter entirely, removed in favor
+  of scoring Highways the same soft way as every other filter. Still worth
+  confirming generated routes land close to the target duration in practice.
 - **Student profiles**: a route can be saved against zero, one, or several student
   profiles (many-to-many — see `StudentProfile`/`RouteStudentProfileCrossRef` in
   `data/`). Pick profiles (or create a new one inline) in the save dialog when
@@ -246,28 +248,35 @@ plans a real drive away and back, sized to the target duration.
 
 No free routing API can plan "a route of duration X" directly, so
 [RouteGenerator.kt](app/src/main/java/com/instructor/lessonroutes/data/routegen/RouteGenerator.kt)
-does it as a heuristic: try a detour point at each of 8 compass bearings around the
+does it as a heuristic: try a detour point at each of 4 compass bearings around the
 start/destination midpoint, ask OSRM for the *actual* drive time via
 [OsrmApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/OsrmApi.kt)'s
-`fetchRoutedPaths()`, and adjust the detour distance iteratively (damped, up to 4
-rounds) until it converges near the target. Whichever of the 8 converged candidates
-best matches the chosen filters wins.
+`fetchRoutedPaths()`, and adjust the detour distance iteratively (damped, up to 3
+rounds) until it converges near the target. `generateCandidateRoutes()` (the OSRM
+part) and scoring-data fetching (`buildScoringData()` in `GenerateRouteScreen.kt`)
+run concurrently rather than one after the other, since they're fully independent;
+whichever converged candidate best matches the chosen filters wins, via
+`pickBestRoute()`.
 
-**Filters are honest about what's a real constraint versus best-effort**, per
-`FilterPreference`'s doc comment:
+**No filter is a real hard routing constraint — all of them are best-effort**,
+per `FilterPreference`'s doc comment. Highways→Avoid was originally implemented
+as OSRM's own `exclude=motorway` (a genuine hard constraint), but this was
+confirmed directly against the live public API to be rejected outright for
+*every* value (`{"code":"InvalidValue","message":"Exclude flag combination is
+not supported."}`) — this public demo server simply doesn't support `exclude`
+at all, so that path failed 100% of the time it was used. Removed; Highways is
+now scored the same way as everything else:
 
-- **Highways → Avoid** is the one real hard routing constraint (OSRM's own
-  `exclude=motorway`).
-- **Everything else — hazards, construction zones, school zones, speed cameras,
-  roundabouts, merging lanes, and Highways → Prefer** — has no free "avoid/prefer
-  this zone" routing API available anywhere. These are soft proximity scoring: the
-  8 candidate routes are each scored by how many chosen-category points/roads they
-  pass within ~40m of, and the best-scoring candidate is picked. This is a genuine
-  best-of-a-few-alternates selection, not a guarantee any given hazard/camera/
-  roundabout is actually avoided or included.
+- **Hazards, construction zones, school zones, speed cameras, highways,
+  roundabouts, merging lanes — all of them, both Avoid and Prefer** — are soft
+  proximity scoring: the 4 candidate routes are each scored by how many
+  chosen-category points/roads they pass within ~40m of, and the best-scoring
+  candidate is picked. This is a genuine best-of-a-few-alternates selection,
+  not a guarantee any given hazard/camera/roundabout/highway is actually
+  avoided or included.
 - **Roundabouts** (`OverpassApi.fetchRoundabouts` — `junction=roundabout` ways +
-  `highway=mini_roundabout` nodes) and **major roads** (`fetchMajorRoads`, only
-  needed for Highways→Prefer scoring) are solid free OSM data via Overpass.
+  `highway=mini_roundabout` nodes) and **major roads** (`fetchMajorRoads`, for
+  Highways scoring, both directions) are solid free OSM data via Overpass.
 - **Merging lanes** (`OverpassApi.fetchMergeLaneProxies` — `motorway_link`/
   `trunk_link` ways) are an approximation, not real merge-lane data: OSM has no
   dedicated merge-lane tag, doesn't distinguish an on-ramp from an off-ramp in one

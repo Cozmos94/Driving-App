@@ -125,12 +125,12 @@ suspend fun fetchMergeLaneProxies(center: LatLng, radiusDegrees: Double = QUIET_
     fetchWaysByHighwayTag(center, radiusDegrees, "motorway_link|trunk_link", "merge-lane-proxy")
 
 /**
- * Motorway/trunk roads near [center] -- used only for the route generator's soft
- * "prefer highways" scoring bonus (RouteGenerator.kt). The real hard "avoid
- * highways" constraint uses OSRM's own `exclude=motorway` parameter instead (see
- * OsrmApi.kt), which doesn't need this data at all -- there's no equivalent
- * "prefer motorway" bias parameter on OSRM's public server, so preferring
- * highways can only ever be soft scoring.
+ * Motorway/trunk roads near [center] -- used for the route generator's Highways
+ * avoid/prefer scoring (RouteGenerator.kt), both directions. An OSRM
+ * `exclude=motorway` hard constraint was tried for the Avoid case, but OSRM's
+ * public demo server rejects that parameter outright for every value (confirmed
+ * directly against the live API) -- so Highways is soft proximity scoring like
+ * every other filter category, not a real routing constraint either way.
  */
 suspend fun fetchMajorRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> =
     fetchWaysByHighwayTag(center, radiusDegrees, "motorway|trunk", "major-roads")

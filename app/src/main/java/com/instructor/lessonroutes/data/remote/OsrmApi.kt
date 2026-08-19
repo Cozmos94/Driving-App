@@ -32,10 +32,16 @@ data class RoutedPath(
  * the Overpass API used elsewhere in this app (see OverpassApi.kt). Returns one
  * result normally, or a few alternatives if [alternatives] is true and OSRM finds
  * more than one reasonable path (not guaranteed -- falls back to just the one best
- * route if it doesn't). [excludeHighways] maps to OSRM's own `exclude=motorway`
- * class, a real hard routing constraint (unlike the school-zone/hazard/etc.
- * filters elsewhere in this app, which are soft scoring since no free routing API
- * supports true avoid-zone routing).
+ * route if it doesn't).
+ *
+ * No `exclude=` param support -- this was tried for a real hard "avoid highways"
+ * routing constraint, but confirmed directly against the live API that this
+ * public demo server rejects the `exclude` parameter outright for every value
+ * (`{"code":"InvalidValue","message":"Exclude flag combination is not
+ * supported."}`), so every request using it failed 100% of the time. Highways
+ * avoidance is soft proximity scoring now, same as everything else in
+ * RouteGenerator.kt -- no free routing API this app uses supports a real
+ * avoid-zone/avoid-class constraint.
  *
  * https://router.project-osrm.org is a public demo instance meant for light,
  * non-commercial use -- not a guaranteed-uptime production service, but more than
@@ -45,7 +51,6 @@ data class RoutedPath(
  */
 suspend fun fetchRoutedPaths(
     waypoints: List<LatLng>,
-    excludeHighways: Boolean = false,
     alternatives: Boolean = false,
 ): List<RoutedPath> {
     require(waypoints.size >= 2) { "Need at least 2 waypoints to route between" }
@@ -55,7 +60,6 @@ suspend fun fetchRoutedPaths(
         val params = buildString {
             append("?overview=full&geometries=geojson")
             if (alternatives) append("&alternatives=true")
-            if (excludeHighways) append("&exclude=motorway")
         }
         val request = Request.Builder().url("$OSRM_URL/$coords$params").build()
 

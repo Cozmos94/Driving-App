@@ -68,8 +68,9 @@ import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.instructor.lessonroutes.data.routegen.RouteGenerationFilters
 import com.instructor.lessonroutes.data.routegen.ScoringData
 import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
-import com.instructor.lessonroutes.data.routegen.generateRoute
+import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
+import com.instructor.lessonroutes.data.routegen.pickBestRoute
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.routes.openInNavApp
@@ -230,8 +231,15 @@ fun GenerateRouteScreen(
                 val result = withTimeoutOrNull(45_000) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
-                    val scoringData = buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
-                    generateRoute(start, end, minutes, filters, scoringData)
+                    // Genuinely independent of each other -- run concurrently
+                    // rather than one after the other, so a slow Overpass
+                    // response (a heavily loaded shared community server) isn't
+                    // just added on top of however long OSRM's candidates take.
+                    val scoringDataDeferred = async {
+                        buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
+                    }
+                    val candidatesDeferred = async { generateCandidateRoutes(start, end, minutes) }
+                    pickBestRoute(candidatesDeferred.await(), filters, scoringDataDeferred.await())
                 }
                 if (result == null) {
                     generationError = "Couldn't generate a route right now (timed out or no route found) — " +
@@ -297,6 +305,32 @@ fun GenerateRouteScreen(
             }
 
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
+                // Shown first, right below the map -- was previously at the very
+                // bottom of this scrollable column, below Destination/Time/
+                // Filters, which meant "Open in nav app" was easy to miss
+                // entirely without scrolling past everything else first.
+                generatedRoute?.let { route ->
+                    Text("Generated: ${formatDuration(route.durationSeconds)}, ${formatDistance(route.distanceMeters)}")
+                    if (saveComplete) {
+                        Text("Saved.")
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { onGenerateClick() }, modifier = Modifier.weight(1f), enabled = !isGenerating) {
+                            Text("Regenerate")
+                        }
+                        OutlinedButton(
+                            onClick = { openInNavApp(context, route.points) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Open in nav app")
+                        }
+                        Button(onClick = { showSaveDialog = true }, modifier = Modifier.weight(1f)) {
+                            Text("Save")
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                }
+
                 Text("Destination")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Checkbox(checked = loopBackToStart, onCheckedChange = { loopBackToStart = it })
@@ -371,9 +405,9 @@ fun GenerateRouteScreen(
                 FilterRow("Roundabouts", filters.roundabouts) { filters = filters.copy(roundabouts = it) }
                 FilterRow("Merging lanes", filters.mergingLanes) { filters = filters.copy(mergingLanes = it) }
                 Text(
-                    "\"Avoid\" is a hard routing constraint only for Highways — everything else (and every " +
-                        "\"Prefer\") is best-effort: a few candidate routes are generated and the one that " +
-                        "best matches your filters is picked, not a guarantee.",
+                    "These are best-effort, not guarantees: a few candidate routes are generated and " +
+                        "whichever one best matches your filters is picked — none of them can be steered " +
+                        "around a specific hazard/zone while being generated.",
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -397,28 +431,6 @@ fun GenerateRouteScreen(
                     )
                 }
                 generationError?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
-
-                generatedRoute?.let { route ->
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Generated: ${formatDuration(route.durationSeconds)}, ${formatDistance(route.distanceMeters)}")
-                    if (saveComplete) {
-                        Text("Saved.")
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { onGenerateClick() }, modifier = Modifier.weight(1f), enabled = !isGenerating) {
-                            Text("Regenerate")
-                        }
-                        OutlinedButton(
-                            onClick = { openInNavApp(context, route.points) },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Open in nav app")
-                        }
-                        Button(onClick = { showSaveDialog = true }, modifier = Modifier.weight(1f)) {
-                            Text("Save")
-                        }
-                    }
-                }
             }
         }
     }
@@ -615,7 +627,7 @@ private suspend fun buildScoringData(
     } else {
         null
     }
-    val majorRoads: Deferred<List<LatLng>>? = if (filters.highways == FilterPreference.PREFER) {
+    val majorRoads: Deferred<List<LatLng>>? = if (filters.highways != FilterPreference.NONE) {
         async { runCatching { fetchMajorRoads(center, radiusDegrees).flatten() }.getOrDefault(emptyList()) }
     } else {
         null
