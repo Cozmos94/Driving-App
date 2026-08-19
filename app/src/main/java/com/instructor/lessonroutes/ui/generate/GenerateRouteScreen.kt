@@ -224,6 +224,26 @@ fun GenerateRouteScreen(
         generatedRoute = null
         generationError = null
         isGenerating = true
+        // fetchAlternatives adds one extra sequential OSRM call per bearing
+        // (after that bearing's own refinement converges), so it's only turned
+        // on for the filters that actually need a meaningfully different path
+        // shape per bearing to be worth scoring against -- Highways/Roundabouts/
+        // Merging lanes, none of which OSRM can be told to route around
+        // directly (unlike a real exclude constraint, which doesn't exist here
+        // -- see RouteGenerator's doc comments). Also read outside the
+        // withTimeoutOrNull block below so it's available for the timeout
+        // diagnostic message even if the block itself gets cancelled.
+        val needsAlternatives = filters.highways != FilterPreference.NONE ||
+            filters.roundabouts != FilterPreference.NONE ||
+            filters.mergingLanes != FilterPreference.NONE
+        // Populated *during* the withTimeoutOrNull block below, not read from its
+        // return value -- if the 20s ceiling fires, the block's own result is
+        // discarded entirely, but these plain vars keep whatever they were last
+        // set to, which is exactly the partial state needed to tell the
+        // instructor what actually went wrong (a specific slow filter's data
+        // fetch, vs. routing itself never responding at all).
+        var slowScoringCategories: List<String> = emptyList()
+        var candidateCount = 0
         scope.launch {
             try {
                 // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
@@ -245,18 +265,6 @@ fun GenerateRouteScreen(
                     val scoringDataDeferred = async {
                         buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
                     }
-                    // fetchAlternatives adds one extra sequential OSRM call per
-                    // bearing (after that bearing's own refinement converges), so
-                    // it's only turned on for the filters that actually need a
-                    // meaningfully different path shape per bearing to be worth
-                    // scoring against -- Highways/Roundabouts/Merging lanes, none
-                    // of which OSRM can be told to route around directly (unlike
-                    // a real exclude constraint, which doesn't exist here -- see
-                    // RouteGenerator's doc comments). Hazards/school-zones/etc.
-                    // don't get this, keeping that path just as fast as before.
-                    val needsAlternatives = filters.highways != FilterPreference.NONE ||
-                        filters.roundabouts != FilterPreference.NONE ||
-                        filters.mergingLanes != FilterPreference.NONE
                     val candidatesDeferred = async {
                         generateCandidateRoutes(
                             start,
@@ -267,7 +275,9 @@ fun GenerateRouteScreen(
                         )
                     }
                     val candidates = candidatesDeferred.await()
-                    val scoringData = scoringDataDeferred.await()
+                    candidateCount = candidates.size
+                    val scoringResult = scoringDataDeferred.await()
+                    slowScoringCategories = scoringResult.slowCategories
                     // pickBestRoute does a nested proximity-comparison loop over
                     // every scoring point x every route point -- for Highways/
                     // Roundabouts/Merging lanes, whose Overpass data is every
@@ -277,11 +287,25 @@ fun GenerateRouteScreen(
                     // default), so without this it was blocking the UI thread
                     // outright -- the reported "hangs and becomes unresponsive",
                     // not just a slow network wait.
-                    withContext(Dispatchers.Default) { pickBestRoute(candidates, filters, scoringData) }
+                    withContext(Dispatchers.Default) { pickBestRoute(candidates, filters, scoringResult.data) }
                 }
                 if (result == null) {
-                    generationError = "Couldn't generate a route right now (timed out or no route found) — " +
-                        "check your connection and try again."
+                    // Diagnose *why*, using whatever partial state was captured
+                    // above before the ceiling fired, instead of one generic
+                    // message for every cause.
+                    generationError = when {
+                        slowScoringCategories.isNotEmpty() ->
+                            "Couldn't generate a route — timed out waiting on data for: " +
+                                "${slowScoringCategories.joinToString(", ")}. Their server can be slow or " +
+                                "overloaded; try again, or turn those filters off."
+                        candidateCount == 0 ->
+                            "Couldn't generate a route — the routing service (OSRM) didn't return a route " +
+                                "in time. This isn't caused by your filters; check your connection and try again."
+                        needsAlternatives ->
+                            "Couldn't generate a route in time — try again, or turn off Highways/Roundabouts/" +
+                                "Merging lanes (they add extra route-checking time per candidate)."
+                        else -> "Couldn't generate a route in time — check your connection and try again."
+                    }
                 } else {
                     generatedRoute = result
                 }
@@ -546,22 +570,29 @@ fun GenerateRouteScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FilterRow(label: String, preference: FilterPreference, onChange: (FilterPreference) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, modifier = Modifier.weight(1f))
-        FilterChip(
-            selected = preference == FilterPreference.AVOID,
-            onClick = { onChange(if (preference == FilterPreference.AVOID) FilterPreference.NONE else FilterPreference.AVOID) },
-            label = { Text("Avoid") },
-            modifier = Modifier.padding(end = 4.dp),
-        )
-        FilterChip(
-            selected = preference == FilterPreference.PREFER,
-            onClick = { onChange(if (preference == FilterPreference.PREFER) FilterPreference.NONE else FilterPreference.PREFER) },
-            label = { Text("Prefer") },
-        )
+    // Three explicit, mutually-exclusive chips (including a visible "None") rather
+    // than two toggle-on-tap-again chips -- tapping any one of the three always
+    // sets that exact state directly, so there's no separate "deselect" gesture
+    // that could leave Avoid and Prefer both looking selected.
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(label)
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
+            FilterChip(
+                selected = preference == FilterPreference.NONE,
+                onClick = { onChange(FilterPreference.NONE) },
+                label = { Text("None") },
+            )
+            FilterChip(
+                selected = preference == FilterPreference.AVOID,
+                onClick = { onChange(FilterPreference.AVOID) },
+                label = { Text("Avoid") },
+            )
+            FilterChip(
+                selected = preference == FilterPreference.PREFER,
+                onClick = { onChange(FilterPreference.PREFER) },
+                label = { Text("Prefer") },
+            )
+        }
     }
 }
 
@@ -624,79 +655,104 @@ private fun SaveGeneratedRouteDialog(
     )
 }
 
+/** [ScoringData] plus the display name of any requested category whose fetch
+ * didn't finish within [SCORING_FETCH_TIMEOUT_MS] and was skipped as a result --
+ * surfaced to the instructor when generation fails, so a slow filter's data
+ * fetch (usually Overpass, a shared community server whose own client timeout
+ * is actually *longer* than the overall 20s generation deadline) can be named
+ * specifically instead of just producing a generic timeout. */
+private data class ScoringFetchResult(val data: ScoringData, val slowCategories: List<String>)
+
+private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
+
 /** Fetches point-of-interest data only for the categories actually set to
- * AVOID/PREFER in [filters] -- fetching the rest would be wasted network calls. */
+ * AVOID/PREFER in [filters] -- fetching the rest would be wasted network calls.
+ * Each category's fetch is bounded independently (see [SCORING_FETCH_TIMEOUT_MS])
+ * so one stalled response can't silently consume the whole generation deadline by
+ * itself -- it just falls back to "no data for this category", same as any other
+ * fetch failure, and gets named in [ScoringFetchResult.slowCategories]. */
 private suspend fun buildScoringData(
     filters: RouteGenerationFilters,
     center: LatLng,
     radiusDegrees: Double,
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
-): ScoringData = coroutineScope {
-    // Explicit Deferred<List<LatLng>>? type on every val below -- Kotlin's type
-    // inference can't reliably unify `if (cond) async { ... } else null` into
-    // Deferred<T>? on its own (a real compiler limitation, not a style choice).
-    val incidents: Deferred<List<LatLng>>? = if (filters.incidents != FilterPreference.NONE) {
-        async {
-            runCatching { fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
-                .getOrDefault(emptyList())
-        }
+): ScoringFetchResult = coroutineScope {
+    // Explicit Deferred<Pair<List<LatLng>, String?>>? type on every val below --
+    // Kotlin's type inference can't reliably unify `if (cond) async { ... } else
+    // null` on its own (a real compiler limitation, not a style choice). The
+    // paired String is this category's display name if its fetch timed out, null
+    // otherwise.
+    fun fetchBounded(name: String, fetch: suspend () -> List<LatLng>): Deferred<Pair<List<LatLng>, String?>> = async {
+        val value = withTimeoutOrNull(SCORING_FETCH_TIMEOUT_MS) { runCatching { fetch() }.getOrDefault(emptyList()) }
+        if (value != null) value to null else emptyList<LatLng>() to name
+    }
+
+    val incidents: Deferred<Pair<List<LatLng>, String?>>? = if (filters.incidents != FilterPreference.NONE) {
+        fetchBounded("Hazards") { fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
     } else {
         null
     }
-    val construction: Deferred<List<LatLng>>? = if (filters.constructionZones != FilterPreference.NONE) {
-        async {
-            runCatching { fetchOpenRoadworks(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
-                .getOrDefault(emptyList())
-        }
+    val construction: Deferred<Pair<List<LatLng>, String?>>? = if (filters.constructionZones != FilterPreference.NONE) {
+        fetchBounded("Construction zones") { fetchOpenRoadworks(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
     } else {
         null
     }
-    val schoolZones: Deferred<List<LatLng>>? = if (filters.schoolZones != FilterPreference.NONE) {
-        async { runCatching { schoolZoneDao.getAll().map { LatLng(it.latitude, it.longitude) } }.getOrDefault(emptyList()) }
+    val schoolZones: Deferred<Pair<List<LatLng>, String?>>? = if (filters.schoolZones != FilterPreference.NONE) {
+        fetchBounded("School zones") { schoolZoneDao.getAll().map { LatLng(it.latitude, it.longitude) } }
     } else {
         null
     }
-    val speedCameras: Deferred<List<LatLng>>? = if (filters.speedCameras != FilterPreference.NONE) {
-        async { runCatching { speedCameraDao.getAll().map { LatLng(it.latitude, it.longitude) } }.getOrDefault(emptyList()) }
+    val speedCameras: Deferred<Pair<List<LatLng>, String?>>? = if (filters.speedCameras != FilterPreference.NONE) {
+        fetchBounded("Speed cameras") { speedCameraDao.getAll().map { LatLng(it.latitude, it.longitude) } }
     } else {
         null
     }
-    val roundabouts: Deferred<List<LatLng>>? = if (filters.roundabouts != FilterPreference.NONE) {
-        async {
-            runCatching { fetchRoundabouts(center, radiusDegrees).mapNotNull { it.firstOrNull() } }.getOrDefault(emptyList())
-        }
+    val roundabouts: Deferred<Pair<List<LatLng>, String?>>? = if (filters.roundabouts != FilterPreference.NONE) {
+        fetchBounded("Roundabouts") { fetchRoundabouts(center, radiusDegrees).mapNotNull { it.firstOrNull() } }
     } else {
         null
     }
-    val mergeLanes: Deferred<List<LatLng>>? = if (filters.mergingLanes != FilterPreference.NONE) {
-        async { runCatching { fetchMergeLaneProxies(center, radiusDegrees).sampleForScoring() }.getOrDefault(emptyList()) }
+    val mergeLanes: Deferred<Pair<List<LatLng>, String?>>? = if (filters.mergingLanes != FilterPreference.NONE) {
+        fetchBounded("Merging lanes") { fetchMergeLaneProxies(center, radiusDegrees).sampleForScoring() }
     } else {
         null
     }
-    val majorRoads: Deferred<List<LatLng>>? = if (filters.highways != FilterPreference.NONE) {
-        async { runCatching { fetchMajorRoads(center, radiusDegrees).sampleForScoring() }.getOrDefault(emptyList()) }
+    val majorRoads: Deferred<Pair<List<LatLng>, String?>>? = if (filters.highways != FilterPreference.NONE) {
+        fetchBounded("Highways") { fetchMajorRoads(center, radiusDegrees).sampleForScoring() }
     } else {
         null
     }
-    val highTraffic: Deferred<List<LatLng>>? = if (filters.highTraffic != FilterPreference.NONE) {
-        async {
-            runCatching { fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
-                .getOrDefault(emptyList())
-        }
+    val highTraffic: Deferred<Pair<List<LatLng>, String?>>? = if (filters.highTraffic != FilterPreference.NONE) {
+        fetchBounded("High traffic roads") { fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
     } else {
         null
     }
 
-    ScoringData(
-        incidents = incidents?.await() ?: emptyList(),
-        constructionZones = construction?.await() ?: emptyList(),
-        schoolZones = schoolZones?.await() ?: emptyList(),
-        speedCameras = speedCameras?.await() ?: emptyList(),
-        roundabouts = roundabouts?.await() ?: emptyList(),
-        highTraffic = highTraffic?.await() ?: emptyList(),
-        mergeLaneProxies = mergeLanes?.await() ?: emptyList(),
-        majorRoads = majorRoads?.await() ?: emptyList(),
+    val incidentsResult = incidents?.await()
+    val constructionResult = construction?.await()
+    val schoolZonesResult = schoolZones?.await()
+    val speedCamerasResult = speedCameras?.await()
+    val roundaboutsResult = roundabouts?.await()
+    val mergeLanesResult = mergeLanes?.await()
+    val majorRoadsResult = majorRoads?.await()
+    val highTrafficResult = highTraffic?.await()
+
+    ScoringFetchResult(
+        data = ScoringData(
+            incidents = incidentsResult?.first ?: emptyList(),
+            constructionZones = constructionResult?.first ?: emptyList(),
+            schoolZones = schoolZonesResult?.first ?: emptyList(),
+            speedCameras = speedCamerasResult?.first ?: emptyList(),
+            roundabouts = roundaboutsResult?.first ?: emptyList(),
+            highTraffic = highTrafficResult?.first ?: emptyList(),
+            mergeLaneProxies = mergeLanesResult?.first ?: emptyList(),
+            majorRoads = majorRoadsResult?.first ?: emptyList(),
+        ),
+        slowCategories = listOfNotNull(
+            incidentsResult?.second, constructionResult?.second, schoolZonesResult?.second, speedCamerasResult?.second,
+            roundaboutsResult?.second, mergeLanesResult?.second, majorRoadsResult?.second, highTrafficResult?.second,
+        ),
     )
 }
 
