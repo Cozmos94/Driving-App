@@ -77,6 +77,7 @@ import com.instructor.lessonroutes.ui.routes.openInNavApp
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -511,7 +512,10 @@ private suspend fun buildScoringData(
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
 ): ScoringData = coroutineScope {
-    val incidents = if (filters.incidents != FilterPreference.NONE) {
+    // Explicit Deferred<List<LatLng>>? type on every val below -- Kotlin's type
+    // inference can't reliably unify `if (cond) async { ... } else null` into
+    // Deferred<T>? on its own (a real compiler limitation, not a style choice).
+    val incidents: Deferred<List<LatLng>>? = if (filters.incidents != FilterPreference.NONE) {
         async {
             runCatching { fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
                 .getOrDefault(emptyList())
@@ -519,7 +523,7 @@ private suspend fun buildScoringData(
     } else {
         null
     }
-    val construction = if (filters.constructionZones != FilterPreference.NONE) {
+    val construction: Deferred<List<LatLng>>? = if (filters.constructionZones != FilterPreference.NONE) {
         async {
             runCatching { fetchOpenRoadworks(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
                 .getOrDefault(emptyList())
@@ -527,29 +531,29 @@ private suspend fun buildScoringData(
     } else {
         null
     }
-    val schoolZones = if (filters.schoolZones != FilterPreference.NONE) {
+    val schoolZones: Deferred<List<LatLng>>? = if (filters.schoolZones != FilterPreference.NONE) {
         async { runCatching { schoolZoneDao.getAll().map { LatLng(it.latitude, it.longitude) } }.getOrDefault(emptyList()) }
     } else {
         null
     }
-    val speedCameras = if (filters.speedCameras != FilterPreference.NONE) {
+    val speedCameras: Deferred<List<LatLng>>? = if (filters.speedCameras != FilterPreference.NONE) {
         async { runCatching { speedCameraDao.getAll().map { LatLng(it.latitude, it.longitude) } }.getOrDefault(emptyList()) }
     } else {
         null
     }
-    val roundabouts = if (filters.roundabouts != FilterPreference.NONE) {
+    val roundabouts: Deferred<List<LatLng>>? = if (filters.roundabouts != FilterPreference.NONE) {
         async {
             runCatching { fetchRoundabouts(center, radiusDegrees).mapNotNull { it.firstOrNull() } }.getOrDefault(emptyList())
         }
     } else {
         null
     }
-    val mergeLanes = if (filters.mergingLanes != FilterPreference.NONE) {
+    val mergeLanes: Deferred<List<LatLng>>? = if (filters.mergingLanes != FilterPreference.NONE) {
         async { runCatching { fetchMergeLaneProxies(center, radiusDegrees).flatten() }.getOrDefault(emptyList()) }
     } else {
         null
     }
-    val majorRoads = if (filters.highways == FilterPreference.PREFER) {
+    val majorRoads: Deferred<List<LatLng>>? = if (filters.highways == FilterPreference.PREFER) {
         async { runCatching { fetchMajorRoads(center, radiusDegrees).flatten() }.getOrDefault(emptyList()) }
     } else {
         null
