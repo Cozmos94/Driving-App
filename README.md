@@ -5,17 +5,24 @@ routes with students, **scoped to NSW, Australia only**. Zero running cost: no
 Google Maps SDK, no billing account, no routing API. See `spec.md` (in this repo's
 parent context) for the full design.
 
-## Status: core build (steps 1–8) implemented, pending full test pass
+## Status: full spec build complete, steps 5–8 + step 10 pending a test pass
 
-Steps 1–4 (map rendering, Room layer, polyline drawing, route list → detail
-navigation) are built and confirmed working. Steps 5–8 were implemented in one
-larger pass and are **not yet confirmed** — see "What's implemented, untested" below
-for exactly what to check. Phase 2 (NSW open-data map overlays, see `spec.md`'s
-"Map overlays (Phase 2)" section) is underway: live hazards (step 9) are confirmed
-working; school zones + speed cameras (step 10) are implemented as static
-bundled-asset overlays and need testing; crash data + the OSM low-traffic proxy
-(step 11) aren't started. Phase 2 needs a Transport for NSW API key kept out of
-source control (`local.properties` → `BuildConfig`, never hardcoded or committed).
+Steps 1–4 and 9 are built and confirmed working (map, Room, polyline, route
+list/detail, live hazards). Steps 5–8 (create/record/follow/edit/delete) and the
+static overlays in step 10 (school zones, speed cameras) were implemented but not
+yet re-confirmed after later changes — see "What's implemented, untested" below.
+Step 11 (high-risk roads + OSM low-traffic proxy) is done, with one substitution
+from the original spec: **"high-risk roads" was built as a high-traffic-volume
+overlay instead of crash/black-spot data** — Corey redirected this mid-build once
+we found NSW's actual crash-data open-data situation unclear, in favor of a
+Traffic Volume Counts API that was confirmed to work end-to-end. See "High traffic
+volume overlay" below if a real crash-data version is wanted later. Settings
+(spec: optional/last) is built, minimally — see "Settings screen" below.
+
+Phase 2 needs a Transport for NSW API key kept out of source control
+(`local.properties` → `BuildConfig`, never hardcoded or committed) for everything
+except school zones/speed cameras (bundled assets) and quiet roads (OSM only, no
+TfNSW key needed).
 
 ### What's implemented, untested
 
@@ -30,7 +37,11 @@ source control (`local.properties` → `BuildConfig`, never hardcoded or committ
   delete confirmation.
 - **Open in nav app**: a `geo:` intent on the route detail screen, targeting the
   route's first point — no SDK, no cost.
-- **Not built**: Settings (spec marks this optional/last) and anything from Phase 2.
+- **Settings** ([SettingsScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/settings/SettingsScreen.kt),
+  reached via a "Settings" button on the route list's top bar): app info, data-source
+  attribution, and a "clear all saved routes" action. Deliberately minimal — there's
+  no genuine map-style or units toggle to offer (one tile style, Australia is
+  metric-only), so this doesn't pad in fake options; see spec's "optional/last" note.
 
 Test order suggestion: create a route in Tap mode → save → confirm it shows in the
 list and its detail view → try Record mode somewhere you can actually move (or set a
@@ -156,6 +167,64 @@ update to this version** (uninstall/reinstall has the same effect, if you want t
 force it deliberately). Worth writing a real migration before this app has real
 users' data to protect.
 
+## High traffic volume overlay (step 11, substituted for crash/black-spot data)
+
+Built against TfNSW's **Traffic Volume Counts API** — a queryable SQL-over-HTTP API
+(`/v1/traffic_volume?format=json&q=<SQL>`, CARTO-style), not a fixed REST endpoint.
+See [TrafficVolumeApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/TrafficVolumeApi.kt).
+The query joins `road_traffic_counts_yearly_summary` to
+`road_traffic_counts_station_reference`, filtered to
+`classification_type='UNCLASSIFIED'` (all vehicles), `cardinal_direction_name='BOTH'`
+(both directions combined), `period='ALL DAYS'`, and `traffic_count > 20000`/day (a
+common real-world "busy arterial road" threshold — tune `HIGH_VOLUME_THRESHOLD` if
+needed). Confirmed against real data before building (Western Distributor, Sydney
+Harbour Tunnel, Hume Highway, etc. all showed up correctly).
+
+Each matched station is then snapped to its actual OpenStreetMap road via the free
+Overpass API and rendered as a real painted line (not a marker) — see
+[OverpassApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/OverpassApi.kt)
+and "Overpass gotchas" below. Stations Overpass can't match fall back to a red
+strip-icon marker. Tap either to see "High Traffic Volume" in the non-modal top
+banner.
+
+**If real crash/black-spot data is wanted later instead/as well**: the spec's
+original assessment was that NSW crash data is point-based (individual crash
+locations), not pre-aggregated road segments — same rendering approach as here
+(snap points to OSM roads via Overpass) would apply once the actual current dataset
+on the Open Data Hub / data.nsw.gov.au is identified and provided.
+
+## Quiet roads overlay (step 11, OSM low-traffic proxy)
+
+Per spec: no free source of actual measured street-level traffic exists, so this is
+a heuristic — OSM roads tagged `residential`/`living_street` render as a thin teal
+line, standing in for "quiet roads suitable for beginners." **Not measured
+traffic** — the tap banner ("Quiet road (estimate)") says so explicitly, per spec's
+instruction to label it as such.
+
+Simplification worth knowing about: it fetches once, in a ~1.5km box around
+whatever center is available at that moment (usually the Sydney fallback, since a
+real GPS fix is rarely in yet that early) — it does **not** re-query as you pan the
+map to a different area. Doing that properly would mean hooking into the map's
+camera-idle events and debouncing re-fetches; a reasonable next step if this
+overlay needs to follow you around rather than stay anchored near the start
+location.
+
+## Overpass gotchas (worth knowing if this breaks again)
+
+- **A plain `[highway]` filter matches footways/cycleways/paths**, not just roads —
+  confirmed this the hard way (it matched a pedestrian bridge path before the actual
+  road). Both `matchRoadGeometry` and `fetchQuietRoads` restrict to real
+  vehicle-carrying `highway` values.
+- **Client timeout must exceed the query's own `[timeout:N]`** — a real bug hit here:
+  the OkHttp client was set to 30s while the query declared `[timeout:60]`, so every
+  request failed with a `SocketTimeoutException` regardless of how simple the query
+  was, because the client gave up before the server's own allowance ran out. Both are
+  now generously matched (client 150s, query up to 120s) since a large combined query
+  covering every high-volume station can legitimately take a while.
+- Uses the `overpass.kumi.systems` mirror, not `overpass-api.de` — the latter
+  504'd during testing. Public Overpass mirrors do go up and down; worth trying an
+  alternate mirror if this stops working.
+
 ## Build order status
 
 1. ✅ Project + map on screen.
@@ -166,12 +235,21 @@ users' data to protect.
 6. 🔲 Record-the-drive — implemented, needs testing.
 7. 🔲 Follow view — implemented, needs testing.
 8. 🔲 Polish — notes/tags/waypoints/edit/delete/nav-intent implemented and need
-   testing; Settings not built (spec marks it optional/last).
+   testing; Settings ✅ done (minimal, see above; spec marked it optional/last).
 9. ✅ Overlay foundation + live hazards — confirmed working (incidents + roadworks,
    tap for details).
 10. 🔲 School zones + speed cameras — implemented as static bundled-asset overlays
-    (see above), needs testing. Not yet a "download on a schedule" live fetch per
-    the spec's original architecture note — that'd need a confirmed download
-    endpoint, which we don't have (this data was manually exported).
-11. Remaining overlays — crash/high-risk overlay, OSM low-traffic proxy layer. Not
-    started.
+    (see above), needs re-confirmation after later map changes. Not yet a "download
+    on a schedule" live fetch per the spec's original architecture note — that'd
+    need a confirmed download endpoint, which we don't have (this data was manually
+    exported).
+11. ✅ Remaining overlays — done, with a substitution: high-traffic-volume overlay
+    instead of crash/black-spot data (see above for why + how to swap in real crash
+    data later), plus the OSM quiet-roads low-traffic proxy (see above for its
+    "fetches once, doesn't follow pans" simplification).
+
+**Everything from the spec is now built in some form.** What's left is mostly
+testing/confirmation (steps 5–8, step 10) and the two known simplifications flagged
+above (quiet roads not following map pans; high-volume overlay using traffic volume
+rather than literal crash data) — neither is a bug, both are documented tradeoffs
+made to ship a working version rather than keep iterating.

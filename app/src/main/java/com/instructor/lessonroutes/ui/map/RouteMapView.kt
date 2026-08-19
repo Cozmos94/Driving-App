@@ -117,6 +117,13 @@ private const val HIGH_VOLUME_LINE_SOURCE_ID = "high-volume-line-source"
 private const val HIGH_VOLUME_LINE_LAYER_ID = "high-volume-line-layer"
 private const val HIGH_VOLUME_LINE_COLOR = "#B71C1C"
 
+// Step 11: OSM residential/living_street roads as a "quiet road" heuristic proxy
+// (spec: no free measured-traffic source exists at street level, so this stands in
+// for it -- a road-classification guess, not measured data).
+private const val QUIET_ROADS_SOURCE_ID = "quiet-roads-source"
+private const val QUIET_ROADS_LAYER_ID = "quiet-roads-layer"
+private const val QUIET_ROADS_COLOR = "#00897B"
+
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
@@ -153,6 +160,9 @@ fun RouteMapView(
     cameras: List<SpeedCamera> = emptyList(),
     /** Phase 2: roads over the high-volume threshold — tappable, like hazards. */
     highVolumeRoads: List<HighVolumeRoad> = emptyList(),
+    /** Step 11: OSM residential/living_street roads as a "quiet road" heuristic --
+     * a road-classification guess, not measured traffic. Tappable, like hazards. */
+    quietRoads: List<List<LatLng>> = emptyList(),
     /** When true, moves the camera to fit [routePoints] instead of the device location. */
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
@@ -160,6 +170,7 @@ fun RouteMapView(
     onMapClick: ((LatLng) -> Unit)? = null,
     onHazardClick: ((Hazard) -> Unit)? = null,
     onHighVolumeClick: ((HighVolumeRoad) -> Unit)? = null,
+    onQuietRoadClick: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -168,8 +179,10 @@ fun RouteMapView(
     val onMapClickState = rememberUpdatedState(onMapClick)
     val onHazardClickState = rememberUpdatedState(onHazardClick)
     val onHighVolumeClickState = rememberUpdatedState(onHighVolumeClick)
+    val onQuietRoadClickState = rememberUpdatedState(onQuietRoadClick)
     val hazardsState = rememberUpdatedState(hazards)
     val highVolumeRoadsState = rememberUpdatedState(highVolumeRoads)
+    val quietRoadsState = rememberUpdatedState(quietRoads)
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -210,13 +223,28 @@ fun RouteMapView(
                             .minByOrNull { (_, distance) -> distance }
                             ?.takeIf { (_, distance) -> distance <= TAP_HIT_RADIUS_PX }
 
+                        val quietRoadDistance = quietRoadsState.value
+                            .map { screenDistanceToPolyline(map, it, tapScreen) }
+                            .minOrNull()
+                            ?.takeIf { it <= TAP_HIT_RADIUS_PX }
+
+                        val bestDistance = minOf(
+                            hazardHit?.second ?: Double.MAX_VALUE,
+                            volumeHit?.second ?: Double.MAX_VALUE,
+                            quietRoadDistance ?: Double.MAX_VALUE,
+                        )
+
                         when {
-                            hazardHit != null && (volumeHit == null || hazardHit.second <= volumeHit.second) -> {
+                            hazardHit != null && hazardHit.second == bestDistance -> {
                                 onHazardClickState.value?.invoke(hazardHit.first)
                                 true
                             }
-                            volumeHit != null -> {
+                            volumeHit != null && volumeHit.second == bestDistance -> {
                                 onHighVolumeClickState.value?.invoke(volumeHit.first)
+                                true
+                            }
+                            quietRoadDistance != null && quietRoadDistance == bestDistance -> {
+                                onQuietRoadClickState.value?.invoke()
                                 true
                             }
                             else -> {
@@ -319,6 +347,11 @@ fun RouteMapView(
         val markerPoints = withoutGeometry.map { LatLng(it.latitude, it.longitude) }
         (style.getSource(HIGH_VOLUME_LINE_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(multiLineGeoJson(lines))
         (style.getSource(HIGH_VOLUME_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(markerPoints))
+    }
+
+    LaunchedEffect(quietRoads, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        (style.getSource(QUIET_ROADS_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(multiLineGeoJson(quietRoads))
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -469,6 +502,18 @@ private fun addSourcesAndLayers(style: Style) {
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconSize(0.6f),
         ),
+    )
+
+    // Added below the route line so a real created/followed route always draws on
+    // top of the quiet-road heuristic layer, not under it.
+    style.addSource(GeoJsonSource(QUIET_ROADS_SOURCE_ID))
+    style.addLayerBelow(
+        LineLayer(QUIET_ROADS_LAYER_ID, QUIET_ROADS_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(QUIET_ROADS_COLOR)),
+            PropertyFactory.lineWidth(2f),
+            PropertyFactory.lineOpacity(0.7f),
+        ),
+        ROUTE_LAYER_ID,
     )
 }
 

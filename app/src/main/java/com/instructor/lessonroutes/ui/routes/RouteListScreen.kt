@@ -40,7 +40,12 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RouteListScreen(dao: RouteDao, onRouteClick: (Long) -> Unit, onCreateClick: () -> Unit) {
+fun RouteListScreen(
+    dao: RouteDao,
+    onRouteClick: (Long) -> Unit,
+    onCreateClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
     val routes by dao.getAllRoutes().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
@@ -49,7 +54,12 @@ fun RouteListScreen(dao: RouteDao, onRouteClick: (Long) -> Unit, onCreateClick: 
     var deleteTarget by remember { mutableStateOf<Route?>(null) }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("My routes") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("My routes") },
+                actions = { TextButton(onClick = onSettingsClick) { Text("Settings") } },
+            )
+        },
         floatingActionButton = { FloatingActionButton(onClick = onCreateClick) { Text("+") } },
     ) { padding ->
         if (routes.isEmpty()) {

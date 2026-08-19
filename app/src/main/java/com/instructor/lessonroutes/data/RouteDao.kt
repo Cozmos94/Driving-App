@@ -28,4 +28,8 @@ interface RouteDao {
 
     @Insert
     suspend fun insertPoints(points: List<RoutePoint>)
+
+    /** RoutePoint rows cascade-delete via their FK, per the entity's onDelete. */
+    @Query("DELETE FROM routes")
+    suspend fun deleteAllRoutes()
 }

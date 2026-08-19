@@ -35,6 +35,7 @@ import com.instructor.lessonroutes.data.remote.HighVolumeRoad
 import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
+import com.instructor.lessonroutes.data.remote.fetchQuietRoads
 import com.instructor.lessonroutes.data.remote.matchRoadGeometry
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -62,6 +63,7 @@ fun LiveMapScreen(
     var networkError by remember { mutableStateOf<String?>(null) }
     var schoolZones by remember { mutableStateOf<List<SchoolZone>>(emptyList()) }
     var cameras by remember { mutableStateOf<List<SpeedCamera>>(emptyList()) }
+    var quietRoads by remember { mutableStateOf<List<List<LatLng>>>(emptyList()) }
 
     // One shared top-of-map banner slot for whatever the user last tapped (a hazard,
     // a high-volume road) or a fetch error -- never more than one shown at once.
@@ -134,6 +136,20 @@ fun LiveMapScreen(
         }
     }
 
+    // Step 11: OSM quiet-road heuristic (no free measured-traffic source exists at
+    // street level, per spec). Fetches once around whatever center is available at
+    // that moment (a real fix is rarely in yet this early, so this is usually
+    // Sydney) rather than waiting for a location fix that might never arrive --
+    // a known simplification, not a bug.
+    LaunchedEffect(Unit) {
+        val center = liveLocation ?: LatLng(-33.8688, 151.2093)
+        try {
+            quietRoads = fetchQuietRoads(center)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Failed to fetch quiet roads", e)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         RouteMapView(
             modifier = Modifier.fillMaxSize(),
@@ -141,10 +157,15 @@ fun LiveMapScreen(
             schoolZones = schoolZones,
             cameras = cameras,
             highVolumeRoads = highVolumeRoads,
+            quietRoads = quietRoads,
             liveLocation = liveLocation,
             followLiveLocation = true,
             onHazardClick = { bannerTitle = it.title; bannerSubtitle = it.advice },
             onHighVolumeClick = { bannerTitle = "High Traffic Volume"; bannerSubtitle = null },
+            onQuietRoadClick = {
+                bannerTitle = "Quiet road (estimate)"
+                bannerSubtitle = "Based on road classification, not measured traffic."
+            },
             // This screen manages its own continuous location tracking above --
             // RouteMapView's one-shot device-location centering would be redundant
             // and could race with this screen's own permission request.

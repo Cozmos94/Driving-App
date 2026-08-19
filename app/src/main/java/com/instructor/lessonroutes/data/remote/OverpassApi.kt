@@ -81,6 +81,46 @@ suspend fun matchRoadGeometry(points: List<LatLng>): Map<Int, List<LatLng>> {
     }
 }
 
+/** ~1.5km box around the center point, in degrees -- a fixed area around the
+ * device's location rather than the actual visible map bounds, since following
+ * camera pans with live re-queries would need hooking into map-idle events; a
+ * reasonable simplification for now. */
+private const val QUIET_ROADS_RADIUS_DEGREES = 0.015
+
+/**
+ * OSM `residential`/`living_street` roads near [center] -- the spec's own proxy for
+ * "quiet roads suitable for beginners" (no free source of actual measured traffic
+ * volume at street level exists, per the spec's own assessment). This is a
+ * heuristic based on road classification, not measured traffic -- label it as such
+ * wherever it's shown in the UI, per spec.
+ */
+suspend fun fetchQuietRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> {
+    return withContext(Dispatchers.IO) {
+        val south = center.latitude - radiusDegrees
+        val north = center.latitude + radiusDegrees
+        val west = center.longitude - radiusDegrees
+        val east = center.longitude + radiusDegrees
+        val query = """
+            [out:json][timeout:60];
+            way["highway"~"^(residential|living_street)${'$'}"]($south,$west,$north,$east);
+            out geom;
+        """.trimIndent()
+
+        val request = Request.Builder()
+            .url(OVERPASS_URL)
+            .post(FormBody.Builder().add("data", query).build())
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Overpass quiet-roads request failed: HTTP ${response.code}")
+            }
+            val body = response.body?.string() ?: return@use emptyList()
+            parseWays(body)
+        }
+    }
+}
+
 private fun parseWays(json: String): List<List<LatLng>> {
     val elements = JSONObject(json).optJSONArray("elements") ?: return emptyList()
     val ways = mutableListOf<List<LatLng>>()

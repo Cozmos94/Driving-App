@@ -24,12 +24,14 @@ import com.instructor.lessonroutes.ui.routes.CreateRouteScreen
 import com.instructor.lessonroutes.ui.routes.FollowScreen
 import com.instructor.lessonroutes.ui.routes.RouteDetailScreen
 import com.instructor.lessonroutes.ui.routes.RouteListScreen
+import com.instructor.lessonroutes.ui.settings.SettingsScreen
 
 private const val LIVE_MAP = "liveMap"
 private const val ROUTE_LIST = "routeList"
 private const val ROUTE_DETAIL = "routeDetail/{routeId}"
 private const val ROUTE_CREATE = "createRoute"
 private const val ROUTE_FOLLOW = "follow/{routeId}"
+private const val SETTINGS = "settings"
 
 @Composable
 fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
@@ -71,7 +73,11 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 dao = dao,
                 onRouteClick = { routeId -> navController.navigate("routeDetail/$routeId") },
                 onCreateClick = { navController.navigate(ROUTE_CREATE) },
+                onSettingsClick = { navController.navigate(SETTINGS) },
             )
+        }
+        composable(SETTINGS) {
+            SettingsScreen(routeDao = dao, onBack = { navController.popBackStack() })
         }
         composable(
             route = ROUTE_DETAIL,
