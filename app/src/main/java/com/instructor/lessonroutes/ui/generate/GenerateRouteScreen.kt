@@ -421,6 +421,7 @@ fun GenerateRouteScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FilterRow(label: String, preference: FilterPreference, onChange: (FilterPreference) -> Unit) {
     Row(
@@ -442,6 +443,7 @@ private fun FilterRow(label: String, preference: FilterPreference, onChange: (Fi
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onConfirm: (LocalTime) -> Unit) {
     val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = false)
