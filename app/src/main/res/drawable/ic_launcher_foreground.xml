@@ -9,7 +9,7 @@
   and a rotated yellow "L-plate" badge with a black L glyph lower-right, on a
   mint-green background (see colors.xml's ic_launcher_background). The
   source SVG's rx=16 corner rounding on the L-plate square is dropped here
-  (sharp corners instead) -- at this drawable's scale (the square's side ends
+  (sharp corners instead): at this drawable's scale (the square's side ends
   up ~28 units in a 108-wide viewport) the rounding is under 1.5 units and not
   worth a set of arc commands to preserve.
 -->
