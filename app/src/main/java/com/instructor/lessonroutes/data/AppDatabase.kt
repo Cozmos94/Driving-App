@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StudentProfile::class,
         RouteStudentProfileCrossRef::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -65,6 +65,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 -> v4: adds `routes.generationFilters`, a nullable summary of the
+         * Avoid/Prefer filters used to generate a route (see [Route]'s doc
+         * comment) -- purely additive, same low-risk shape as [MIGRATION_2_3]. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `routes` ADD COLUMN `generationFilters` TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -72,7 +81,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "lessonroutes.db",
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }

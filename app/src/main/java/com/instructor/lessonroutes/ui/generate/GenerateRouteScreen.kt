@@ -79,6 +79,7 @@ import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
 import com.instructor.lessonroutes.data.routegen.pickBestRoute
+import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.routes.openInNavApp
@@ -576,7 +577,12 @@ fun GenerateRouteScreen(
                 val route = generatedRoute ?: return@SaveGeneratedRouteDialog
                 scope.launch {
                     val id = dao.insertRoute(
-                        Route(name = name, notes = notes.ifBlank { null }, dateCreated = System.currentTimeMillis()),
+                        Route(
+                            name = name,
+                            notes = notes.ifBlank { null },
+                            dateCreated = System.currentTimeMillis(),
+                            generationFilters = filters.summarize(),
+                        ),
                     )
                     dao.insertPoints(
                         route.points.mapIndexed { index, point ->

@@ -7,16 +7,29 @@ import org.maplibre.android.geometry.LatLng
 import kotlin.math.cos
 import kotlin.math.hypot
 
-/** Google Maps caps the "Get Directions" URL API at a handful of waypoints --
- * comfortably under any documented limit, and more than enough to shape the
- * computed route. */
-private const val MAX_NAV_WAYPOINTS = 8
+/** Google's consumer Maps app itself caps a trip at 9 stops total (origin +
+ * up to 9 intermediate + destination isn't quite right either -- Google's own
+ * help docs say "up to 9 stops" for the whole trip), which is the real ceiling
+ * here, not anything this app's URL construction controls. This is a genuine,
+ * structural limit on how closely Maps' hand-off can track a long/complex
+ * generated route: Maps always computes its *own* turn-by-turn path between
+ * whatever waypoints it's given (there is no free "replay this exact polyline"
+ * mode -- that needs a paid turn-by-turn SDK), so a long route sampled down to
+ * only ~9 points can leave Maps free to find a substantially shorter path
+ * between two of them, especially for a there-and-back/loop route where the
+ * same small waypoint budget has to constrain both legs. A generated route's
+ * *own* stated duration (shown in this app, computed by OSRM for the actual
+ * polyline) can therefore end up noticeably longer than what Maps recomputes
+ * once handed off -- that gap is a known, unavoidable trade-off of this
+ * free/keyless approach, not evidence the generated duration itself is wrong. */
+private const val MAX_NAV_WAYPOINTS = 9
 
 /**
  * No SDK, no cost. Opens Google Maps' "Get Directions" URL
  * (https://developers.google.com/maps/documentation/urls/get-started -- free, no
- * key) with [routePoints]'s last point as the destination and up to 8 points
- * along the route -- evenly spaced by *distance*, not by index, see
+ * key) with [routePoints]'s last point as the destination and up to
+ * [MAX_NAV_WAYPOINTS] points along the route -- evenly spaced by *distance*, not
+ * by index, see
  * [sampleWaypoints] -- as waypoints, so Maps' own computed driving directions
  * track the given route much more closely than handing it a single destination
  * pin would (a single pin gives Maps nothing to shape its path around -- real

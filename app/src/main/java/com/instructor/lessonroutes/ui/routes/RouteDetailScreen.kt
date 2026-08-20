@@ -107,6 +107,16 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
+                // Only set for routes saved from the trip generator (see
+                // Route.generationFilters's doc comment) -- null, and hidden, for
+                // tap/recorded routes and for a generated route saved with every
+                // filter left at NONE.
+                current.route.generationFilters?.let { filtersSummary ->
+                    Text(
+                        text = filtersSummary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,

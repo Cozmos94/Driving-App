@@ -36,6 +36,31 @@ data class RouteGenerationFilters(
     val highTraffic: FilterPreference = FilterPreference.NONE,
 )
 
+/** Human-readable summary of which categories are Avoid/Prefer, e.g.
+ * "Avoid: Highways, Hazards. Prefer: School zones." -- null if every category
+ * is NONE. Stored on [com.instructor.lessonroutes.data.Route.generationFilters]
+ * when a generated route is saved, so the saved-route detail screen can show
+ * what was selected without needing to persist all 8 categories individually. */
+fun RouteGenerationFilters.summarize(): String? {
+    val labeled = listOf(
+        "Hazards" to incidents,
+        "Construction zones" to constructionZones,
+        "School zones" to schoolZones,
+        "Speed cameras" to speedCameras,
+        "High traffic roads" to highTraffic,
+        "Highways" to highways,
+        "Roundabouts" to roundabouts,
+        "Merging lanes" to mergingLanes,
+    )
+    val avoid = labeled.filter { it.second == FilterPreference.AVOID }.map { it.first }
+    val prefer = labeled.filter { it.second == FilterPreference.PREFER }.map { it.first }
+    if (avoid.isEmpty() && prefer.isEmpty()) return null
+    return listOfNotNull(
+        "Avoid: ${avoid.joinToString(", ")}.".takeIf { avoid.isNotEmpty() },
+        "Prefer: ${prefer.joinToString(", ")}.".takeIf { prefer.isNotEmpty() },
+    ).joinToString(" ")
+}
+
 /** Every point-of-interest list the generator scores candidate routes against --
  * callers only need to populate the categories that are actually AVOID/PREFER in
  * [RouteGenerationFilters] (fetching the rest is wasted work), everything else can
