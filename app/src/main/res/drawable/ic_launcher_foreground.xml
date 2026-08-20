@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Brand glyph: converted directly from Corey's supplied logo2.svg (828x825
-  canvas, road group under translate(41,60) scale(1.7)) rather than traced by
-  eye, every coordinate below is that file's path data run through the same
-  transform, then scaled into this drawable's 108x108 viewport. A two-tone
-  gold/yellow winding road (a thicker E3A72F stroke under a thinner FBD34D
-  stroke, same path data both times, giving a road-with-painted-centerline
-  look) plus a white/red nav dart top-right, on a mint-green background (see
-  colors.xml's ic_launcher_background).
+  Brand glyph: converted directly from Corey's supplied logo-l-plate.svg
+  (828x825 canvas) rather than traced by eye, every coordinate below is that
+  file's path data run through the same transforms, then scaled into this
+  drawable's 108x108 viewport. A two-tone gold/yellow winding road (a thicker
+  E3A72F stroke under a thinner FBD34D stroke, same path data both times,
+  giving a road-with-painted-centerline look), a white/red nav dart top-right,
+  and a rotated yellow "L-plate" badge with a black L glyph lower-right, on a
+  mint-green background (see colors.xml's ic_launcher_background). The
+  source SVG's rx=16 corner rounding on the L-plate square is dropped here
+  (sharp corners instead) -- at this drawable's scale (the square's side ends
+  up ~28 units in a 108-wide viewport) the rounding is under 1.5 units and not
+  worth a set of arc commands to preserve.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -82,4 +86,15 @@
     <path
         android:fillColor="#DB0032"
         android:pathData="M73.3,24.5 L82.4,47.1 L73.3,40.7 Z" />
+    <!-- L-plate badge, lower right: rotated yellow square (corners left
+         sharp, see the top comment) plus a black L glyph, matching
+         logo-l-plate.svg's rotate(-20 156 156) badge run through the same
+         translate(410,407) scale(0.7) group transform and then into this
+         viewport. -->
+    <path
+        android:fillColor="#F5C518"
+        android:pathData="M49.5,59.0 L76.2,49.2 L86.0,76.1 L59.2,85.9 Z" />
+    <path
+        android:fillColor="#111111"
+        android:pathData="M59.1,60.4 L63.0,58.9 L68.2,73.2 L77.3,69.9 L78.8,73.9 L65.7,78.6 Z" />
 </vector>
