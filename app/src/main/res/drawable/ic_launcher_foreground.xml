@@ -2,7 +2,7 @@
 <!--
   Brand glyph: converted directly from Corey's supplied logo2.svg (828x825
   canvas, road group under translate(41,60) scale(1.7)) rather than traced by
-  eye -- every coordinate below is that file's path data run through the same
+  eye, every coordinate below is that file's path data run through the same
   transform, then scaled into this drawable's 108x108 viewport. A two-tone
   gold/yellow winding road (a thicker E3A72F stroke under a thinner FBD34D
   stroke, same path data both times, giving a road-with-painted-centerline
@@ -74,7 +74,7 @@
             C41.5,81.1 41.3,81.6 40.1,84.3
             C39.0,87.0 38.7,87.4 37.7,89.4
             C36.8,91.5 36.7,91.7 36.4,92.5" />
-    <!-- Nav dart, top right: white left half, red right half -- same shape
+    <!-- Nav dart, top right: white left half, red right half, same shape
          and position as logo2.svg's two triangle paths. -->
     <path
         android:fillColor="#FFFFFF"
