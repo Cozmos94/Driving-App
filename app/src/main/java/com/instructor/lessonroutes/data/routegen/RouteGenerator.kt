@@ -75,6 +75,24 @@ fun RouteGenerationFilters.summarize(): FilterSummary {
 fun String?.toFilterList(): List<String> =
     this?.split(", ")?.filter { it.isNotBlank() } ?: emptyList()
 
+/** Effective Avoid/Prefer lists for a saved [com.instructor.lessonroutes.data.
+ * Route] -- reads the structured avoidFilters/preferFilters columns when
+ * present, but falls back to parsing the deprecated generationFilters
+ * paragraph ("Avoid: X, Y. Prefer: Z.") for routes saved before the schema
+ * v4->v5 split introduced those columns. Without this fallback, any route
+ * saved during that earlier window would show (and count toward student
+ * coverage) as if it had no filters at all -- its filter data isn't lost, just
+ * stuck in the old field, so this recovers it instead of stranding it. */
+fun com.instructor.lessonroutes.data.Route.effectiveFilterSummary(): FilterSummary {
+    if (avoidFilters != null || preferFilters != null) {
+        return FilterSummary(avoidFilters.toFilterList(), preferFilters.toFilterList())
+    }
+    val legacy = generationFilters ?: return FilterSummary(emptyList(), emptyList())
+    fun extract(sectionLabel: String): List<String> =
+        Regex("$sectionLabel: ([^.]+)\\.").find(legacy)?.groupValues?.get(1)?.split(", ") ?: emptyList()
+    return FilterSummary(avoid = extract("Avoid"), prefer = extract("Prefer"))
+}
+
 /** Every point-of-interest list the generator scores candidate routes against --
  * callers only need to populate the categories that are actually AVOID/PREFER in
  * [RouteGenerationFilters] (fetching the rest is wasted work), everything else can

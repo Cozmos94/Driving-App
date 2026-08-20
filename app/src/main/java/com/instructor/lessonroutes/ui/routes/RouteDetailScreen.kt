@@ -36,7 +36,7 @@ import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
-import com.instructor.lessonroutes.data.routegen.toFilterList
+import com.instructor.lessonroutes.data.routegen.effectiveFilterSummary
 import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
@@ -116,8 +116,9 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                 // Only set for routes saved from the trip generator -- empty,
                 // and hidden, for tap/recorded routes and for a generated route
                 // saved with nothing set to Avoid/Prefer.
-                FilterBadgeSection("Avoid", current.route.avoidFilters.toFilterList())
-                FilterBadgeSection("Prefer", current.route.preferFilters.toFilterList())
+                val filterSummary = current.route.effectiveFilterSummary()
+                FilterBadgeSection("Avoid", filterSummary.avoid)
+                FilterBadgeSection("Prefer", filterSummary.prefer)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,

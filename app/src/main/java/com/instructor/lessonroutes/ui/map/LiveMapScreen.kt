@@ -187,7 +187,7 @@ fun LiveMapScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(onClick = onPlanRouteClick, modifier = Modifier.weight(1f)) {
-                Text("My routes")
+                Text("Student Profiles")
             }
             Button(onClick = onGenerateTripClick, modifier = Modifier.weight(1f)) {
                 Text("Plan a trip")

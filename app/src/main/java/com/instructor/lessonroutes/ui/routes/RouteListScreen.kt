@@ -41,7 +41,7 @@ import com.instructor.lessonroutes.data.RouteWithProfiles
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.data.routegen.ALL_FILTER_LABELS
-import com.instructor.lessonroutes.data.routegen.toFilterList
+import com.instructor.lessonroutes.data.routegen.effectiveFilterSummary
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -81,9 +81,9 @@ fun RouteListScreen(
     // routes at all (nothing to compute from) -- only shown scoped to one
     // profile, not on the unfiltered "All" list.
     val filterCoverage = if (filterProfileId != null && filterProfileName != null) {
-        val generatedRoutes = visibleRoutes.filter { it.route.avoidFilters != null || it.route.preferFilters != null }
-        if (generatedRoutes.isNotEmpty()) {
-            val covered = generatedRoutes.flatMap { it.route.preferFilters.toFilterList() }.toSet()
+        val summaries = visibleRoutes.map { it.route.effectiveFilterSummary() }.filterNot { it.isEmpty }
+        if (summaries.isNotEmpty()) {
+            val covered = summaries.flatMap { it.prefer }.toSet()
             FilterCoverage(
                 studentName = filterProfileName,
                 covered = ALL_FILTER_LABELS.filter { it in covered },
