@@ -7,6 +7,6 @@
          app -- most stock/Pixel launchers do, but this can't be guaranteed
          universally. The full name lives in app_name_full, shown inside the app
          itself (Settings) where there's room for it. -->
-    <string name="app_name">Lesson\nRoute Planner</string>
+    <string name="app_name">Lesson Route\nPlanner</string>
     <string name="app_name_full">NSW Driving Instructor Route Planner</string>
 </resources>
