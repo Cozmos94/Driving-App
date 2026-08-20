@@ -22,7 +22,6 @@ import com.instructor.lessonroutes.data.seedStaticDataIfNeeded
 import com.instructor.lessonroutes.ui.generate.GenerateRouteScreen
 import com.instructor.lessonroutes.ui.map.LiveMapScreen
 import com.instructor.lessonroutes.ui.profiles.StudentProfilesScreen
-import com.instructor.lessonroutes.ui.routes.CreateRouteScreen
 import com.instructor.lessonroutes.ui.routes.FollowScreen
 import com.instructor.lessonroutes.ui.routes.RouteDetailScreen
 import com.instructor.lessonroutes.ui.routes.RouteListScreen
@@ -32,7 +31,6 @@ private const val LIVE_MAP = "liveMap"
 private const val STUDENT_PROFILES = "studentProfiles"
 private const val ROUTE_LIST = "routeList"
 private const val ROUTE_DETAIL = "routeDetail/{routeId}"
-private const val ROUTE_CREATE = "createRoute"
 private const val ROUTE_GENERATE = "generateRoute"
 private const val ROUTE_FOLLOW = "follow/{routeId}"
 private const val SETTINGS = "settings"
@@ -103,7 +101,10 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 profileDao = profileDao,
                 filterProfileId = routeListFilter,
                 onRouteClick = { routeId -> navController.navigate("routeDetail/$routeId") },
-                onCreateClick = { navController.navigate(ROUTE_CREATE) },
+                // "+" leads to the trip generator (destination/filters/radius),
+                // not the older tap-to-draw/GPS-record screen -- that flow no
+                // longer matches how routes actually get created day to day.
+                onCreateClick = { navController.navigate(ROUTE_GENERATE) },
                 onSettingsClick = { navController.navigate(SETTINGS) },
                 onProfilesClick = { navController.navigate(STUDENT_PROFILES) },
                 onOverviewClick = { navController.popBackStack(LIVE_MAP, inclusive = false) },
@@ -123,15 +124,6 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 onFollowClick = { navController.navigate("follow/$it") },
             )
         }
-        composable(ROUTE_CREATE) {
-            CreateRouteScreen(
-                dao = dao,
-                profileDao = profileDao,
-                preselectedProfileId = routeListFilter,
-                onSaved = { navController.popBackStack() },
-                onCancel = { navController.popBackStack() },
-            )
-        }
         composable(
             route = ROUTE_FOLLOW,
             arguments = listOf(navArgument("routeId") { type = NavType.LongType }),
@@ -145,7 +137,12 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 profileDao = profileDao,
                 schoolZoneDao = schoolZoneDao,
                 speedCameraDao = speedCameraDao,
-                preselectedProfileId = null,
+                // Pre-selects whichever student profile the route list (if
+                // any) was scoped to when "+" was tapped -- same pattern
+                // CreateRouteScreen already used. Also reachable from the live
+                // map's own "Plan a trip" button with no profile in context,
+                // where this is correctly null.
+                preselectedProfileId = routeListFilter,
                 onBack = { navController.popBackStack() },
                 // Deliberately doesn't navigate away -- after saving, the
                 // instructor might still want to Regenerate or Open in nav app
