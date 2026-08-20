@@ -74,7 +74,7 @@ private val DarkColors = darkColorScheme(
 fun LessonRoutesTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Off by default: Android 12+'s dynamic (Material You) color would otherwise
-    // override this custom black/white brand palette with tones derived from the
+    // override this custom grass-green brand palette with tones derived from the
     // device wallpaper, defeating the point of picking specific brand colors.
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
