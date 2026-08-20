@@ -348,7 +348,12 @@ fun GenerateRouteScreen(
                     // filter just "didn't work" (e.g. Highways->Avoid picking a
                     // motorway could mean every candidate genuinely needed it,
                     // or it could mean this).
-                    val radiusExceeded = selectedRadiusKm != null && routeExceedsRadius(result, start, selectedRadiusKm)
+                    // Captured into a local val -- selectedRadiusKm is a `by
+                    // remember` delegated property, which Kotlin can't smart-cast
+                    // to non-null across the `radiusKm != null` check below (it
+                    // can't prove a delegated var won't change in between).
+                    val radiusKm = selectedRadiusKm
+                    val radiusExceeded = radiusKm != null && routeExceedsRadius(result, start, radiusKm)
                     dataWarning = when {
                         emptyScoringCategories.isNotEmpty() ->
                             "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
@@ -360,7 +365,7 @@ fun GenerateRouteScreen(
                         // possible route between them could have stayed inside
                         // it either way.
                         radiusExceeded ->
-                            "This route goes beyond your ${selectedRadiusKm.toInt()}km radius — no route to this " +
+                            "This route goes beyond your ${radiusKm?.toInt()}km radius — no route to this " +
                                 "destination could stay within it. Try a larger radius or a closer destination."
                         else -> null
                     }
