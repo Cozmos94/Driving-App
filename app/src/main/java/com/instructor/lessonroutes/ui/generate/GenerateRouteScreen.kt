@@ -211,6 +211,14 @@ fun GenerateRouteScreen(
     var isGenerating by remember { mutableStateOf(false) }
     var generatedRoute by remember { mutableStateOf<GeneratedRoute?>(null) }
     var generationError by remember { mutableStateOf<String?>(null) }
+    // Set even on a *successful* generation -- a filter can silently have zero
+    // effect if its own scoring data failed to load (Overpass/TfNSW down, rate
+    // limited, or just slow), which previously had no visible signal at all
+    // unless the whole generation also timed out. Real example: Highways->Avoid
+    // still picking the M1 could mean every candidate genuinely needed it, OR it
+    // could mean fetchMajorRoads quietly came back empty that run -- this makes
+    // that second case visible instead of looking identical to the first.
+    var dataWarning by remember { mutableStateOf<String?>(null) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var saveComplete by remember { mutableStateOf(false) }
 
@@ -229,6 +237,7 @@ fun GenerateRouteScreen(
         } ?: return
         generatedRoute = null
         generationError = null
+        dataWarning = null
         isGenerating = true
         // fetchAlternatives adds one extra sequential OSRM call per bearing
         // (after that bearing's own refinement converges), so it's only turned
@@ -246,9 +255,11 @@ fun GenerateRouteScreen(
         // return value -- if the 45s ceiling fires, the block's own result is
         // discarded entirely, but these plain vars keep whatever they were last
         // set to, which is exactly the partial state needed to tell the
-        // instructor what actually went wrong (a specific slow filter's data
-        // fetch, vs. routing itself never responding at all).
-        var slowScoringCategories: List<String> = emptyList()
+        // instructor what actually went wrong (a specific filter's data fetch
+        // failing/timing out, vs. routing itself never responding at all) --
+        // and, on a *successful* generation, which active filters (if any) had
+        // no scoring data to work with at all.
+        var emptyScoringCategories: List<String> = emptyList()
         var candidateCount = 0
         scope.launch {
             try {
@@ -281,7 +292,7 @@ fun GenerateRouteScreen(
                     val candidates = candidatesDeferred.await()
                     candidateCount = candidates.size
                     val scoringResult = scoringDataDeferred.await()
-                    slowScoringCategories = scoringResult.slowCategories
+                    emptyScoringCategories = scoringResult.emptyCategories
                     // pickBestRoute does a nested proximity-comparison loop over
                     // every scoring point x every route point -- for Highways/
                     // Roundabouts/Merging lanes, whose Overpass data is every
@@ -298,10 +309,10 @@ fun GenerateRouteScreen(
                     // above before the ceiling fired, instead of one generic
                     // message for every cause.
                     generationError = when {
-                        slowScoringCategories.isNotEmpty() ->
-                            "Couldn't generate a route — timed out waiting on data for: " +
-                                "${slowScoringCategories.joinToString(", ")}. Their server can be slow or " +
-                                "overloaded; try again, or turn those filters off."
+                        emptyScoringCategories.isNotEmpty() ->
+                            "Couldn't generate a route — couldn't load data for: " +
+                                "${emptyScoringCategories.joinToString(", ")}. Their server can be slow, " +
+                                "overloaded, or briefly down; try again, or turn those filters off."
                         candidateCount == 0 ->
                             "Couldn't generate a route — the routing service (OSRM) didn't return a route " +
                                 "in time. This isn't caused by your filters; check your connection and try again."
@@ -312,6 +323,19 @@ fun GenerateRouteScreen(
                     }
                 } else {
                     generatedRoute = result
+                    // A route was found, but if an active filter's own scoring
+                    // data never loaded, it had literally nothing to score
+                    // against and so no effect on which candidate got picked --
+                    // surface that instead of it silently looking like the
+                    // filter just "didn't work" (e.g. Highways->Avoid picking a
+                    // motorway could mean every candidate genuinely needed it,
+                    // or it could mean this).
+                    dataWarning = if (emptyScoringCategories.isNotEmpty()) {
+                        "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
+                            "those filters had no effect on this route. Try regenerating."
+                    } else {
+                        null
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Route generation failed", e)
@@ -382,6 +406,7 @@ fun GenerateRouteScreen(
                     if (saveComplete) {
                         Text("Saved.")
                     }
+                    dataWarning?.let { Text(it, modifier = Modifier.padding(top = 4.dp)) }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -687,13 +712,17 @@ private fun SaveGeneratedRouteDialog(
     )
 }
 
-/** [ScoringData] plus the display name of any requested category whose fetch
- * didn't finish within [SCORING_FETCH_TIMEOUT_MS] and was skipped as a result --
- * surfaced to the instructor when generation fails, so a slow filter's data
- * fetch (usually Overpass, a shared community server whose own client timeout
- * is actually longer than each category's own 8s bound below) can be named
- * specifically instead of just producing a generic timeout. */
-private data class ScoringFetchResult(val data: ScoringData, val slowCategories: List<String>)
+/** [ScoringData] plus the display name of any requested category that ended up
+ * with zero usable data -- whether because its fetch didn't finish within
+ * [SCORING_FETCH_TIMEOUT_MS], or because it threw (network/HTTP/parse failure,
+ * already caught below), or because the source genuinely returned nothing.
+ * Surfaced to the instructor both when generation fails outright and, just as
+ * importantly, when it *succeeds*: a filter with no scoring data to work with
+ * had no effect on which candidate got picked, silently, unless this is shown --
+ * e.g. Highways->Avoid still picking a motorway could mean every candidate
+ * genuinely needed one, or it could mean fetchMajorRoads quietly came back
+ * empty that run. Those look identical to the instructor without this. */
+private data class ScoringFetchResult(val data: ScoringData, val emptyCategories: List<String>)
 
 private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 
@@ -702,7 +731,7 @@ private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
  * Each category's fetch is bounded independently (see [SCORING_FETCH_TIMEOUT_MS])
  * so one stalled response can't silently consume the whole generation deadline by
  * itself -- it just falls back to "no data for this category", same as any other
- * fetch failure, and gets named in [ScoringFetchResult.slowCategories]. */
+ * fetch failure, and gets named in [ScoringFetchResult.emptyCategories]. */
 private suspend fun buildScoringData(
     filters: RouteGenerationFilters,
     center: LatLng,
@@ -713,11 +742,13 @@ private suspend fun buildScoringData(
     // Explicit Deferred<Pair<List<LatLng>, String?>>? type on every val below --
     // Kotlin's type inference can't reliably unify `if (cond) async { ... } else
     // null` on its own (a real compiler limitation, not a style choice). The
-    // paired String is this category's display name if its fetch timed out, null
+    // paired String is this category's display name if it ended up with zero
+    // data (timeout OR a caught exception OR a genuinely empty result), null
     // otherwise.
     fun fetchBounded(name: String, fetch: suspend () -> List<LatLng>): Deferred<Pair<List<LatLng>, String?>> = async {
-        val value = withTimeoutOrNull(SCORING_FETCH_TIMEOUT_MS) { runCatching { fetch() }.getOrDefault(emptyList()) }
-        if (value != null) value to null else emptyList<LatLng>() to name
+        val list = withTimeoutOrNull(SCORING_FETCH_TIMEOUT_MS) { runCatching { fetch() }.getOrDefault(emptyList()) }
+            ?: emptyList()
+        list to (if (list.isEmpty()) name else null)
     }
 
     val incidents: Deferred<Pair<List<LatLng>, String?>>? = if (filters.incidents != FilterPreference.NONE) {
@@ -781,7 +812,7 @@ private suspend fun buildScoringData(
             mergeLaneProxies = mergeLanesResult?.first ?: emptyList(),
             majorRoads = majorRoadsResult?.first ?: emptyList(),
         ),
-        slowCategories = listOfNotNull(
+        emptyCategories = listOfNotNull(
             incidentsResult?.second, constructionResult?.second, schoolZonesResult?.second, speedCamerasResult?.second,
             roundaboutsResult?.second, mergeLanesResult?.second, majorRoadsResult?.second, highTrafficResult?.second,
         ),
