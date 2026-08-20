@@ -256,6 +256,23 @@ suspend fun generateCandidateRoutes(
  * equally and the pick was effectively arbitrary -- whichever bearing happened
  * to come first). Confirmed as a real cause of "generated route's duration
  * doesn't match what I asked for," not just normal convergence tolerance.
+ *
+ * @param start Anchor for [maxRadiusKm] -- "radius" means distance from where
+ * the trip actually starts, not from generateCandidateRoutes' internal
+ * start/destination midpoint (that midpoint is just where the detour-bearing
+ * search is centered; the actual route's furthest point from the *start* can
+ * be well beyond it, especially once [destination] itself is far from
+ * [start]). If [maxRadiusKm] is set, candidates that ever travel farther than
+ * it from [start] ([routeExceedsRadius]) are excluded when at least one
+ * candidate *does* conform -- if literally none do (e.g. the chosen
+ * destination itself is farther than the radius allows, so no route between
+ * them can possibly stay within it), falls back to every candidate rather
+ * than returning null outright; callers should check [routeExceedsRadius] on
+ * the result themselves to warn the instructor when that happened. Duration/
+ * filter clamping in [generateCandidateRoutes] already biases candidates
+ * toward the radius during generation -- this is the hard backstop for when
+ * that bias alone wasn't enough.
+ *
  * Pure/non-suspending: all the (potentially slow) network fetching already
  * happened to produce both arguments. */
 fun pickBestRoute(
@@ -263,8 +280,23 @@ fun pickBestRoute(
     filters: RouteGenerationFilters,
     scoringData: ScoringData,
     targetSeconds: Double,
-): GeneratedRoute? =
-    candidates.maxByOrNull { scoreRoute(it, filters, scoringData, targetSeconds) }
+    start: LatLng? = null,
+    maxRadiusKm: Double? = null,
+): GeneratedRoute? {
+    val pool = if (start != null && maxRadiusKm != null) {
+        candidates.filterNot { routeExceedsRadius(it, start, maxRadiusKm) }.ifEmpty { candidates }
+    } else {
+        candidates
+    }
+    return pool.maxByOrNull { scoreRoute(it, filters, scoringData, targetSeconds) }
+}
+
+/** True if any point along [route] is farther than [maxRadiusKm] from
+ * [anchor] -- see [pickBestRoute]'s doc comment for how this is used both to
+ * filter candidates and, by the caller, to warn when even the best available
+ * one couldn't stay within the radius. */
+fun routeExceedsRadius(route: GeneratedRoute, anchor: LatLng, maxRadiusKm: Double): Boolean =
+    route.points.any { approxDistanceMeters(anchor, it) / 1000.0 > maxRadiusKm }
 
 /** Returns the primary (converged, or best-effort) route for this bearing, plus
  * any alternates OSRM offers at that same final detour point if

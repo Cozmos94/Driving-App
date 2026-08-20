@@ -81,6 +81,7 @@ import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
 import com.instructor.lessonroutes.data.routegen.pickBestRoute
+import com.instructor.lessonroutes.data.routegen.routeExceedsRadius
 import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
@@ -311,7 +312,14 @@ fun GenerateRouteScreen(
                     // outright -- the reported "hangs and becomes unresponsive",
                     // not just a slow network wait.
                     withContext(Dispatchers.Default) {
-                        pickBestRoute(candidates, filters, scoringResult.data, targetSeconds = minutes * 60.0)
+                        pickBestRoute(
+                            candidates,
+                            filters,
+                            scoringResult.data,
+                            targetSeconds = minutes * 60.0,
+                            start = start,
+                            maxRadiusKm = selectedRadiusKm,
+                        )
                     }
                 }
                 if (result == null) {
@@ -340,11 +348,21 @@ fun GenerateRouteScreen(
                     // filter just "didn't work" (e.g. Highways->Avoid picking a
                     // motorway could mean every candidate genuinely needed it,
                     // or it could mean this).
-                    dataWarning = if (emptyScoringCategories.isNotEmpty()) {
-                        "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
-                            "those filters had no effect on this route. Try regenerating."
-                    } else {
-                        null
+                    val radiusExceeded = selectedRadiusKm != null && routeExceedsRadius(result, start, selectedRadiusKm)
+                    dataWarning = when {
+                        emptyScoringCategories.isNotEmpty() ->
+                            "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
+                                "those filters had no effect on this route. Try regenerating."
+                        // pickBestRoute only ever falls back to an over-radius
+                        // candidate when literally none of them stayed within
+                        // it -- almost always because the destination itself is
+                        // farther from the start than the chosen radius, so no
+                        // possible route between them could have stayed inside
+                        // it either way.
+                        radiusExceeded ->
+                            "This route goes beyond your ${selectedRadiusKm.toInt()}km radius — no route to this " +
+                                "destination could stay within it. Try a larger radius or a closer destination."
+                        else -> null
                     }
                 }
             } catch (e: Exception) {
@@ -390,16 +408,13 @@ fun GenerateRouteScreen(
                     // fallback instead of the device's real location.
                     centerOnDeviceLocation = false,
                     focusPoint = currentLocation,
-                    // Shows the optional radius cap as a circle, centered on the
-                    // same start/destination midpoint the generator itself
-                    // searches around (see generateCandidateRoutes' `base`) --
-                    // both null while no radius is set, or before a start
-                    // location/destination exist yet.
-                    radiusCircleCenter = if (selectedRadiusKm != null && currentLocation != null && effectiveDestination != null) {
-                        midpoint(currentLocation!!, effectiveDestination!!)
-                    } else {
-                        null
-                    },
+                    // Shows the optional radius cap as a circle centered on the
+                    // *start* location -- "radius" means how far from where the
+                    // trip actually begins, matching how pickBestRoute now
+                    // enforces it (distance from start, not from
+                    // generateCandidateRoutes' internal search midpoint). Null
+                    // while no radius is set or before a location fix exists.
+                    radiusCircleCenter = currentLocation,
                     radiusCircleKm = selectedRadiusKm,
                     // Always active now (was conditionally null while "loop back
                     // to start" was checked) -- tapping a destination is itself a

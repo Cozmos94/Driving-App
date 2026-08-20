@@ -345,6 +345,23 @@ fun RouteMapView(
         map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, BOUNDS_PADDING_PX))
     }
 
+    // Zooms out to fit the radius circle as soon as it's set -- otherwise it's
+    // drawn correctly right away but can easily sit entirely outside the
+    // current zoomed-in view (the default zoom shows maybe a ~10-20km span,
+    // nowhere near enough for e.g. a 100km radius), reading as "it doesn't
+    // appear until I generate a route" when generating just happens to also
+    // zoom out afterward (via fitBoundsToRoute above). Skipped once a route
+    // exists (fitBoundsToRoute takes over) so this doesn't fight that.
+    LaunchedEffect(mapLibreMap, radiusCircleCenter, radiusCircleKm, fitBoundsToRoute, routePoints) {
+        val map = mapLibreMap ?: return@LaunchedEffect
+        if (fitBoundsToRoute && routePoints.size >= 2) return@LaunchedEffect
+        val center = radiusCircleCenter ?: return@LaunchedEffect
+        val km = radiusCircleKm ?: return@LaunchedEffect
+        if (km <= 0) return@LaunchedEffect
+        val bounds = LatLngBounds.Builder().apply { circlePolygonRing(center, km).forEach { include(it) } }.build()
+        map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, BOUNDS_PADDING_PX))
+    }
+
     LaunchedEffect(routePoints, mapLibreMap) {
         val style = mapLibreMap?.style ?: return@LaunchedEffect
         (style.getSource(ROUTE_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(lineGeoJson(routePoints))
