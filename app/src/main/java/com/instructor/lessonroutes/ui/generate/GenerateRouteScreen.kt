@@ -21,6 +21,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -153,6 +155,10 @@ fun GenerateRouteScreen(
     // -- Destination --
     var loopBackToStart by remember { mutableStateOf(true) }
     var destination by remember { mutableStateOf<LatLng?>(null) }
+    // Optional ceiling on how far the generated route can detour from the
+    // start/destination midpoint (see generateCandidateRoutes' maxRadiusKm) --
+    // null means no extra limit beyond whatever the target duration implies.
+    var selectedRadiusKm by remember { mutableStateOf<Double?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
@@ -288,6 +294,7 @@ fun GenerateRouteScreen(
                             minutes,
                             avoidHighways = filters.highways == FilterPreference.AVOID,
                             fetchAlternatives = needsAlternatives,
+                            maxRadiusKm = selectedRadiusKm,
                         )
                     }
                     val candidates = candidatesDeferred.await()
@@ -435,6 +442,7 @@ fun GenerateRouteScreen(
                     Checkbox(checked = loopBackToStart, onCheckedChange = { loopBackToStart = it })
                     Text("Loop back to where I start")
                 }
+                RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
                 // Always visible now -- these used to be hidden while "loop back to
                 // start" was checked, which looked like the address box had
                 // disappeared and tapping the map did nothing (both were
@@ -575,13 +583,15 @@ fun GenerateRouteScreen(
             onDismiss = { showSaveDialog = false },
             onConfirm = { name, notes ->
                 val route = generatedRoute ?: return@SaveGeneratedRouteDialog
+                val filterSummary = filters.summarize()
                 scope.launch {
                     val id = dao.insertRoute(
                         Route(
                             name = name,
                             notes = notes.ifBlank { null },
                             dateCreated = System.currentTimeMillis(),
-                            generationFilters = filters.summarize(),
+                            avoidFilters = filterSummary.avoidCsv,
+                            preferFilters = filterSummary.preferCsv,
                         ),
                     )
                     dao.insertPoints(
@@ -605,6 +615,28 @@ fun GenerateRouteScreen(
                 }
             },
         )
+    }
+}
+
+/** Optional ceiling on the generated route's detour distance (see
+ * generateCandidateRoutes' maxRadiusKm doc comment) -- 5km increments up to
+ * 200km, plus "No limit". Uses a plain Box + DropdownMenu rather than
+ * ExposedDropdownMenuBox, which needs a version-sensitive `menuAnchor()` API
+ * that's changed shape across recent Material3 releases -- this is simpler and
+ * has been stable for longer. */
+@Composable
+private fun RadiusPicker(selectedRadiusKm: Double?, onSelect: (Double?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = Modifier.padding(top = 4.dp)) {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(selectedRadiusKm?.let { "Radius: ${it.toInt()} km" } ?: "Set radius (optional)")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("No limit") }, onClick = { onSelect(null); expanded = false })
+            for (km in 5..200 step 5) {
+                DropdownMenuItem(text = { Text("$km km") }, onClick = { onSelect(km.toDouble()); expanded = false })
+            }
+        }
     }
 }
 

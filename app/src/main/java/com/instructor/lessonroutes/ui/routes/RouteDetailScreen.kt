@@ -4,14 +4,18 @@ import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -31,6 +35,7 @@ import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
+import com.instructor.lessonroutes.data.routegen.toFilterList
 import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
@@ -107,16 +112,11 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
-                // Only set for routes saved from the trip generator (see
-                // Route.generationFilters's doc comment) -- null, and hidden, for
-                // tap/recorded routes and for a generated route saved with every
-                // filter left at NONE.
-                current.route.generationFilters?.let { filtersSummary ->
-                    Text(
-                        text = filtersSummary,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
-                }
+                // Only set for routes saved from the trip generator -- empty,
+                // and hidden, for tap/recorded routes and for a generated route
+                // saved with nothing set to Avoid/Prefer.
+                FilterBadgeSection("Avoid", current.route.avoidFilters.toFilterList())
+                FilterBadgeSection("Prefer", current.route.preferFilters.toFilterList())
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -154,6 +154,35 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                     ) {
                         Text("Open in nav app")
                     }
+                }
+            }
+        }
+    }
+}
+
+/** A labeled row of small pill badges (e.g. "Avoid" / Highways, Hazards) --
+ * replaces what used to be one plain paragraph sentence. Hidden entirely if
+ * [items] is empty, so a route with nothing set to Avoid (or nothing set to
+ * Prefer) doesn't leave a blank labeled section behind. */
+@Composable
+private fun FilterBadgeSection(label: String, items: List<String>) {
+    if (items.isEmpty()) return
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
+            items.forEach { item ->
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Text(
+                        text = item,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
                 }
             }
         }

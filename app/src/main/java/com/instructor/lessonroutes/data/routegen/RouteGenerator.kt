@@ -36,30 +36,44 @@ data class RouteGenerationFilters(
     val highTraffic: FilterPreference = FilterPreference.NONE,
 )
 
-/** Human-readable summary of which categories are Avoid/Prefer, e.g.
- * "Avoid: Highways, Hazards. Prefer: School zones." -- null if every category
- * is NONE. Stored on [com.instructor.lessonroutes.data.Route.generationFilters]
- * when a generated route is saved, so the saved-route detail screen can show
- * what was selected without needing to persist all 8 categories individually. */
-fun RouteGenerationFilters.summarize(): String? {
-    val labeled = listOf(
-        "Hazards" to incidents,
-        "Construction zones" to constructionZones,
-        "School zones" to schoolZones,
-        "Speed cameras" to speedCameras,
-        "High traffic roads" to highTraffic,
-        "Highways" to highways,
-        "Roundabouts" to roundabouts,
-        "Merging lanes" to mergingLanes,
-    )
-    val avoid = labeled.filter { it.second == FilterPreference.AVOID }.map { it.first }
-    val prefer = labeled.filter { it.second == FilterPreference.PREFER }.map { it.first }
-    if (avoid.isEmpty() && prefer.isEmpty()) return null
-    return listOfNotNull(
-        "Avoid: ${avoid.joinToString(", ")}.".takeIf { avoid.isNotEmpty() },
-        "Prefer: ${prefer.joinToString(", ")}.".takeIf { prefer.isNotEmpty() },
-    ).joinToString(" ")
+/** Every filter category's display name, in the same fixed order used
+ * everywhere a full set of categories is shown or reasoned about (the filter
+ * list UI, [RouteGenerationFilters.summarize], and student-profile lifetime
+ * coverage on the route list screen). */
+val ALL_FILTER_LABELS = listOf(
+    "Hazards", "Construction zones", "School zones", "Speed cameras",
+    "High traffic roads", "Highways", "Roundabouts", "Merging lanes",
+)
+
+/** Which categories were set to Avoid vs Prefer, as display-name lists (see
+ * [ALL_FILTER_LABELS] for the fixed category order) -- both empty if every
+ * category was left at NONE. [avoidCsv]/[preferCsv] are the comma-joined form
+ * stored on [com.instructor.lessonroutes.data.Route.avoidFilters]/
+ * [com.instructor.lessonroutes.data.Route.preferFilters] when a generated
+ * route is saved, so the detail screen and student-profile coverage summary
+ * can render a structured list without needing to persist all 8 categories'
+ * raw enum values. */
+data class FilterSummary(val avoid: List<String>, val prefer: List<String>) {
+    val isEmpty: Boolean get() = avoid.isEmpty() && prefer.isEmpty()
+    val avoidCsv: String? get() = avoid.joinToString(", ").ifBlank { null }
+    val preferCsv: String? get() = prefer.joinToString(", ").ifBlank { null }
 }
+
+fun RouteGenerationFilters.summarize(): FilterSummary {
+    val labeled = ALL_FILTER_LABELS.zip(
+        listOf(incidents, constructionZones, schoolZones, speedCameras, highTraffic, highways, roundabouts, mergingLanes),
+    )
+    return FilterSummary(
+        avoid = labeled.filter { it.second == FilterPreference.AVOID }.map { it.first },
+        prefer = labeled.filter { it.second == FilterPreference.PREFER }.map { it.first },
+    )
+}
+
+/** Splits a comma-joined [avoidCsv]/[preferCsv]-style string (as stored on
+ * [com.instructor.lessonroutes.data.Route]) back into a display list -- empty
+ * (not a list with one blank entry) for a null/blank input. */
+fun String?.toFilterList(): List<String> =
+    this?.split(", ")?.filter { it.isNotBlank() } ?: emptyList()
 
 /** Every point-of-interest list the generator scores candidate routes against --
  * callers only need to populate the categories that are actually AVOID/PREFER in
@@ -171,6 +185,13 @@ private fun initialRadiusKm(targetDurationMinutes: Int, avoidHighways: Boolean):
  * directly (Highways, Roundabouts, Merging lanes): without this, scoring can
  * only rank bearings against each other, never find a meaningfully different
  * path for the *same* bearing.
+ * @param maxRadiusKm Caps how far from [base] the detour point can be, if set --
+ * an instructor-chosen ceiling (e.g. "don't take my student more than 20km from
+ * home"), independent of and taking priority over [targetDurationMinutes]'s own
+ * detour-distance guess: duration convergence can undershoot its target if
+ * hitting it would need a wider detour than this allows, which is the intended
+ * trade-off (the radius is a hard-ish ceiling, duration is still just a
+ * best-effort target either way -- see this whole function's doc comment).
  *
  * Returns every candidate that converged; empty if every attempt failed outright
  * (e.g. no network).
@@ -181,20 +202,24 @@ suspend fun generateCandidateRoutes(
     targetDurationMinutes: Int,
     avoidHighways: Boolean = false,
     fetchAlternatives: Boolean = false,
+    maxRadiusKm: Double? = null,
 ): List<GeneratedRoute> = coroutineScope {
     val base = midpoint(start, destination)
     val targetSeconds = targetDurationMinutes * 60.0
     val initialRadiusKm = initialRadiusKm(targetDurationMinutes, avoidHighways)
+        .let { if (maxRadiusKm != null) minOf(it, maxRadiusKm) else it }
     Log.d(
         LOG_TAG,
         "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
             "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
-            "avoidHighways=$avoidHighways, fetchAlternatives=$fetchAlternatives",
+            "avoidHighways=$avoidHighways, fetchAlternatives=$fetchAlternatives, maxRadiusKm=$maxRadiusKm",
     )
 
     val candidates = CANDIDATE_BEARINGS_DEGREES
         .map { bearing ->
-            async { refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, fetchAlternatives) }
+            async {
+                refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, fetchAlternatives, maxRadiusKm)
+            }
         }
         .awaitAll()
         .flatten()
@@ -222,6 +247,7 @@ private suspend fun refineCandidate(
     initialRadiusKm: Double,
     targetSeconds: Double,
     fetchAlternatives: Boolean,
+    maxRadiusKm: Double?,
 ): List<GeneratedRoute> {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
@@ -256,6 +282,10 @@ private suspend fun refineCandidate(
             // guess doesn't overshoot into an even-worse radius next round.
             radiusKm *= ratio.coerceIn(0.4, 2.5)
         }
+        // Re-clamped every round, not just on the initial guess -- duration
+        // convergence above can otherwise push radiusKm back out past the
+        // instructor's chosen ceiling on a later iteration.
+        if (maxRadiusKm != null) radiusKm = minOf(radiusKm, maxRadiusKm)
     }
 
     val primary = best ?: return emptyList()

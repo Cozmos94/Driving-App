@@ -14,11 +14,20 @@ data class Route(
     val dateCreated: Long,
     /** Optional, e.g. student level or skill focus. */
     val tag: String? = null,
-    /** Human-readable summary of the Avoid/Prefer filters used to generate this
-     * route (e.g. "Avoid: Highways, Hazards. Prefer: School zones."), set only
-     * for routes saved from the trip generator -- see
-     * [com.instructor.lessonroutes.data.routegen.summarize]. Null for tap/
-     * recorded routes, which have no filters, and for any generated route
-     * saved with every filter left at NONE. */
+    /** @deprecated Superseded by [avoidFilters]/[preferFilters] (added one
+     * schema version later) for a structured display instead of one paragraph.
+     * Left in place, unused, rather than dropped -- SQLite's ALTER TABLE DROP
+     * COLUMN support depends on the device's bundled SQLite version, so a
+     * recreate-and-copy migration would be needed to remove it safely; not
+     * worth that risk for one dead nullable column. */
     val generationFilters: String? = null,
+    /** Comma-separated filter category display names set to Avoid when this
+     * route was generated (e.g. "Highways, Hazards"), in [
+     * com.instructor.lessonroutes.data.routegen.ALL_FILTER_LABELS]'s fixed
+     * order -- see [com.instructor.lessonroutes.data.routegen.FilterSummary].
+     * Null for tap/recorded routes (no filters) and for a generated route with
+     * nothing set to Avoid. */
+    val avoidFilters: String? = null,
+    /** Same as [avoidFilters] but for Prefer. */
+    val preferFilters: String? = null,
 )

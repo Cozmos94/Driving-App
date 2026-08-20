@@ -40,6 +40,8 @@ import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.RouteWithProfiles
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
+import com.instructor.lessonroutes.data.routegen.ALL_FILTER_LABELS
+import com.instructor.lessonroutes.data.routegen.toFilterList
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,6 +71,30 @@ fun RouteListScreen(
     } else {
         routesWithProfiles.filter { rwp -> rwp.profiles.any { it.id == filterProfileId } }
     }
+    // Lifetime coverage across every generated route ever saved for this
+    // student: "covered" a filter category means it was set to Prefer (an
+    // active request to include more of it) in at least one of their routes --
+    // a category that was only ever left at NONE or set to Avoid counts as
+    // "yet to navigate", since Avoid is a deliberate choice to keep the
+    // student away from it, and NONE gives no positive evidence they actually
+    // drove through it. Hidden entirely if this student has no generated
+    // routes at all (nothing to compute from) -- only shown scoped to one
+    // profile, not on the unfiltered "All" list.
+    val filterCoverage = if (filterProfileId != null && filterProfileName != null) {
+        val generatedRoutes = visibleRoutes.filter { it.route.avoidFilters != null || it.route.preferFilters != null }
+        if (generatedRoutes.isNotEmpty()) {
+            val covered = generatedRoutes.flatMap { it.route.preferFilters.toFilterList() }.toSet()
+            FilterCoverage(
+                studentName = filterProfileName,
+                covered = ALL_FILTER_LABELS.filter { it in covered },
+                notYetNavigated = ALL_FILTER_LABELS.filterNot { it in covered },
+            )
+        } else {
+            null
+        }
+    } else {
+        null
+    }
 
     var actionTarget by remember { mutableStateOf<RouteWithProfiles?>(null) }
     var editTarget by remember { mutableStateOf<RouteWithProfiles?>(null) }
@@ -94,6 +120,12 @@ fun RouteListScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            filterCoverage?.let {
+                Text(
+                    text = it.summaryText(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             if (visibleRoutes.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -248,3 +280,19 @@ private fun EditRouteDialog(
 
 private fun formatDate(epochMillis: Long): String =
     SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMillis))
+
+/** Lifetime Prefer-filter coverage for one student across every generated
+ * route ever saved for them -- see the "covered" definition where this is
+ * computed, in [RouteListScreen] above. */
+private data class FilterCoverage(
+    val studentName: String,
+    val covered: List<String>,
+    val notYetNavigated: List<String>,
+) {
+    fun summaryText(): String = when {
+        notYetNavigated.isEmpty() -> "$studentName has covered every tracked filter: ${covered.joinToString(", ")}."
+        covered.isEmpty() -> "$studentName has yet to navigate: ${notYetNavigated.joinToString(", ")}."
+        else -> "$studentName has covered ${covered.joinToString(", ")}, and has yet to navigate " +
+            "${notYetNavigated.joinToString(", ")}."
+    }
+}
