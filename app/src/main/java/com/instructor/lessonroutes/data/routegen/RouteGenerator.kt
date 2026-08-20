@@ -246,12 +246,25 @@ suspend fun generateCandidateRoutes(
     candidates
 }
 
-/** Picks whichever of [candidates] best matches [filters], proximity-scored
- * against [scoringData] -- null if [candidates] is empty. Pure/non-suspending:
- * all the (potentially slow) network fetching already happened to produce both
- * arguments. */
-fun pickBestRoute(candidates: List<GeneratedRoute>, filters: RouteGenerationFilters, scoringData: ScoringData): GeneratedRoute? =
-    candidates.maxByOrNull { scoreRoute(it.points, filters, scoringData) }
+/** Picks whichever of [candidates] best matches [filters] (proximity-scored
+ * against [scoringData]) *and* how close its own actual duration is to
+ * [targetSeconds] -- null if [candidates] is empty. Duration-closeness was
+ * previously not part of this decision at all: each bearing's own refinement
+ * loop tries to converge on the target, but the final pick across bearings was
+ * scored purely on filters, so a candidate miles off the target duration could
+ * still win outright (or, with no filters set at all, every candidate scores
+ * equally and the pick was effectively arbitrary -- whichever bearing happened
+ * to come first). Confirmed as a real cause of "generated route's duration
+ * doesn't match what I asked for," not just normal convergence tolerance.
+ * Pure/non-suspending: all the (potentially slow) network fetching already
+ * happened to produce both arguments. */
+fun pickBestRoute(
+    candidates: List<GeneratedRoute>,
+    filters: RouteGenerationFilters,
+    scoringData: ScoringData,
+    targetSeconds: Double,
+): GeneratedRoute? =
+    candidates.maxByOrNull { scoreRoute(it, filters, scoringData, targetSeconds) }
 
 /** Returns the primary (converged, or best-effort) route for this bearing, plus
  * any alternates OSRM offers at that same final detour point if
@@ -331,12 +344,19 @@ private suspend fun refineCandidate(
     return listOf(primary) + alternates
 }
 
-private fun scoreRoute(route: List<LatLng>, filters: RouteGenerationFilters, data: ScoringData): Int {
-    var score = 0
+/** Duration-closeness is weighted heavily enough to dominate typical filter
+ * hit counts (usually single/low-double-digit proximity hits), so it's the
+ * primary driver of which candidate wins -- filters remain a real tie-breaker
+ * among candidates that converged similarly well, rather than the only thing
+ * that mattered. */
+private const val DURATION_ERROR_WEIGHT_PER_MINUTE = 10.0
+
+private fun scoreRoute(route: GeneratedRoute, filters: RouteGenerationFilters, data: ScoringData, targetSeconds: Double): Double {
+    var filterScore = 0
     fun apply(preference: FilterPreference, pointsOfInterest: List<LatLng>) {
         if (preference == FilterPreference.NONE || pointsOfInterest.isEmpty()) return
-        val hits = countNearby(pointsOfInterest, route)
-        score += if (preference == FilterPreference.AVOID) -hits else hits
+        val hits = countNearby(pointsOfInterest, route.points)
+        filterScore += if (preference == FilterPreference.AVOID) -hits else hits
     }
     apply(filters.incidents, data.incidents)
     apply(filters.constructionZones, data.constructionZones)
@@ -346,7 +366,9 @@ private fun scoreRoute(route: List<LatLng>, filters: RouteGenerationFilters, dat
     apply(filters.mergingLanes, data.mergeLaneProxies)
     apply(filters.highways, data.majorRoads)
     apply(filters.highTraffic, data.highTraffic)
-    return score
+
+    val durationErrorMinutes = abs(route.durationSeconds - targetSeconds) / 60.0
+    return filterScore - durationErrorMinutes * DURATION_ERROR_WEIGHT_PER_MINUTE
 }
 
 private fun countNearby(pointsOfInterest: List<LatLng>, route: List<LatLng>): Int =

@@ -33,7 +33,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.data.Route
 import com.instructor.lessonroutes.data.RouteDao
@@ -121,8 +125,19 @@ fun RouteListScreen(
             filterCoverage?.let {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                     if (it.hasAnyData) {
-                        Text("Obstacles covered: ${it.covered.ifEmpty { listOf("none yet") }.joinToString(", ")}")
-                        Text("Obstacles yet to cover: ${it.notYetCovered.joinToString(", ")}")
+                        Text(
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Obstacles covered: ") }
+                                append(it.covered.ifEmpty { listOf("none yet") }.joinToString(", "))
+                            },
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Obstacles yet to cover: ") }
+                                append(it.notYetCovered.joinToString(", "))
+                            },
+                        )
                     } else {
                         Text("No generated-trip routes saved for ${it.studentName} yet, so nothing to show here.")
                     }

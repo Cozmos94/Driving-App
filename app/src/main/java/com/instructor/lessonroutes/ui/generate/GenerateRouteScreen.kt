@@ -310,7 +310,9 @@ fun GenerateRouteScreen(
                     // default), so without this it was blocking the UI thread
                     // outright -- the reported "hangs and becomes unresponsive",
                     // not just a slow network wait.
-                    withContext(Dispatchers.Default) { pickBestRoute(candidates, filters, scoringResult.data) }
+                    withContext(Dispatchers.Default) {
+                        pickBestRoute(candidates, filters, scoringResult.data, targetSeconds = minutes * 60.0)
+                    }
                 }
                 if (result == null) {
                     // Diagnose *why*, using whatever partial state was captured
@@ -388,6 +390,17 @@ fun GenerateRouteScreen(
                     // fallback instead of the device's real location.
                     centerOnDeviceLocation = false,
                     focusPoint = currentLocation,
+                    // Shows the optional radius cap as a circle, centered on the
+                    // same start/destination midpoint the generator itself
+                    // searches around (see generateCandidateRoutes' `base`) --
+                    // both null while no radius is set, or before a start
+                    // location/destination exist yet.
+                    radiusCircleCenter = if (selectedRadiusKm != null && currentLocation != null && effectiveDestination != null) {
+                        midpoint(currentLocation!!, effectiveDestination!!)
+                    } else {
+                        null
+                    },
+                    radiusCircleKm = selectedRadiusKm,
                     // Always active now (was conditionally null while "loop back
                     // to start" was checked) -- tapping a destination is itself a
                     // clear enough signal to switch out of loop mode automatically,

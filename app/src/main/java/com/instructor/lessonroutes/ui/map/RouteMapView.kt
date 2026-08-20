@@ -48,12 +48,16 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import kotlin.coroutines.resume
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.sin
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 /** Free, keyless vector tile style. Liberty is OpenFreeMap's general-purpose style. */
@@ -125,6 +129,17 @@ private const val QUIET_ROADS_SOURCE_ID = "quiet-roads-source"
 private const val QUIET_ROADS_LAYER_ID = "quiet-roads-layer"
 private const val QUIET_ROADS_COLOR = "#00897B"
 
+// The trip generator's optional "how far this trip might range" radius cap --
+// see RadiusPicker in GenerateRouteScreen.kt. A translucent fill plus a more
+// visible outline (FillLayer's own outline is a hairline that can't be
+// widened, hence the separate LineLayer sharing the same source/geometry).
+private const val RADIUS_CIRCLE_SOURCE_ID = "radius-circle-source"
+private const val RADIUS_CIRCLE_FILL_LAYER_ID = "radius-circle-fill-layer"
+private const val RADIUS_CIRCLE_OUTLINE_LAYER_ID = "radius-circle-outline-layer"
+private const val RADIUS_CIRCLE_COLOR = "#558B2F" // the app's grass-green brand primary
+private const val RADIUS_CIRCLE_SEGMENTS = 64
+private const val EMPTY_FEATURE_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
+
 /**
  * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
@@ -164,6 +179,10 @@ fun RouteMapView(
     /** Step 11: OSM residential/living_street roads as a "quiet road" heuristic --
      * a road-classification guess, not measured traffic. Tappable, like hazards. */
     quietRoads: List<List<LatLng>> = emptyList(),
+    /** Trip generator's optional radius cap, shown as a circle overlay -- both
+     * must be non-null (and [radiusCircleKm] > 0) for it to draw. */
+    radiusCircleCenter: LatLng? = null,
+    radiusCircleKm: Double? = null,
     /** When true, moves the camera to fit [routePoints] instead of the device location. */
     fitBoundsToRoute: Boolean = false,
     /** Ignored when [fitBoundsToRoute] is true. */
@@ -387,6 +406,16 @@ fun RouteMapView(
         (style.getSource(HIGH_VOLUME_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(pointsGeoJson(markerPoints))
     }
 
+    LaunchedEffect(radiusCircleCenter, radiusCircleKm, mapLibreMap) {
+        val style = mapLibreMap?.style ?: return@LaunchedEffect
+        val geoJson = if (radiusCircleCenter != null && radiusCircleKm != null && radiusCircleKm > 0) {
+            polygonGeoJson(circlePolygonRing(radiusCircleCenter, radiusCircleKm))
+        } else {
+            EMPTY_FEATURE_COLLECTION
+        }
+        (style.getSource(RADIUS_CIRCLE_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(geoJson)
+    }
+
     LaunchedEffect(quietRoads, mapLibreMap) {
         val style = mapLibreMap?.style ?: return@LaunchedEffect
         (style.getSource(QUIET_ROADS_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(multiLineGeoJson(quietRoads))
@@ -556,6 +585,25 @@ private fun addSourcesAndLayers(style: Style) {
         ),
         ROUTE_LAYER_ID,
     )
+
+    // Below the route line too, for the same reason -- a generated route
+    // preview should never be obscured by its own radius-cap boundary.
+    style.addSource(GeoJsonSource(RADIUS_CIRCLE_SOURCE_ID))
+    style.addLayerBelow(
+        FillLayer(RADIUS_CIRCLE_FILL_LAYER_ID, RADIUS_CIRCLE_SOURCE_ID).withProperties(
+            PropertyFactory.fillColor(Color.parseColor(RADIUS_CIRCLE_COLOR)),
+            PropertyFactory.fillOpacity(0.12f),
+        ),
+        ROUTE_LAYER_ID,
+    )
+    style.addLayerBelow(
+        LineLayer(RADIUS_CIRCLE_OUTLINE_LAYER_ID, RADIUS_CIRCLE_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(RADIUS_CIRCLE_COLOR)),
+            PropertyFactory.lineWidth(2f),
+            PropertyFactory.lineOpacity(0.8f),
+        ),
+        ROUTE_LAYER_ID,
+    )
 }
 
 /** Renders an emoji glyph to a bitmap so it can be used as a MapLibre icon image. */
@@ -677,4 +725,27 @@ private fun pointsGeoJson(points: List<LatLng>): String {
         """{"type":"Feature","geometry":{"type":"Point","coordinates":[${it.longitude},${it.latitude}]},"properties":{}}"""
     }
     return """{"type":"FeatureCollection","features":[$features]}"""
+}
+
+/** A single Polygon feature from a closed ring (first point == last point --
+ * see [circlePolygonRing]). */
+private fun polygonGeoJson(ring: List<LatLng>): String {
+    if (ring.size < 4) return EMPTY_FEATURE_COLLECTION
+    val coordinates = ring.joinToString(",") { "[${it.longitude},${it.latitude}]" }
+    return """{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[$coordinates]]},"properties":{}}"""
+}
+
+/** Approximates a real geographic circle of [radiusKm] around [center] as a
+ * closed [RADIUS_CIRCLE_SEGMENTS]-sided polygon ring -- an equirectangular
+ * approximation, same approach used elsewhere in this app (RouteGenerator.kt's
+ * own `offset()`) and fine at the scale a trip-planning radius operates at. */
+private fun circlePolygonRing(center: LatLng, radiusKm: Double, segments: Int = RADIUS_CIRCLE_SEGMENTS): List<LatLng> {
+    val kmPerDegreeLat = 111.32
+    val kmPerDegreeLon = kmPerDegreeLat * cos(Math.toRadians(center.latitude))
+    return (0..segments).map { i ->
+        val angle = 2.0 * PI * i / segments
+        val dLat = (radiusKm * cos(angle)) / kmPerDegreeLat
+        val dLon = (radiusKm * sin(angle)) / kmPerDegreeLon
+        LatLng(center.latitude + dLat, center.longitude + dLon)
+    }
 }
