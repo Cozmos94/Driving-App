@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Shown under the launcher icon, kept short since launchers truncate long
-         labels. The full name lives in app_name_full, shown inside the app itself
-         (Settings) where there's room for it. -->
-    <string name="app_name">Lesson Route Planner</string>
+    <!-- Shown under the launcher icon. The embedded \n is a real line break
+         (Android resource strings interpret it as one, not literal backslash-n),
+         asked for so this renders as two lines: "Lesson" / "Route Planner".
+         Whether a launcher actually honors it is up to that launcher, not this
+         app -- most stock/Pixel launchers do, but this can't be guaranteed
+         universally. The full name lives in app_name_full, shown inside the app
+         itself (Settings) where there's room for it. -->
+    <string name="app_name">Lesson\nRoute Planner</string>
     <string name="app_name_full">NSW Driving Instructor Route Planner</string>
 </resources>
