@@ -78,8 +78,8 @@
          and position as logo2.svg's two triangle paths. -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M73.3,21.7 L73.3,41.9 L62.1,49.9 Z" />
+        android:pathData="M73.3,24.5 L73.3,40.7 L64.4,47.1 Z" />
     <path
         android:fillColor="#DB0032"
-        android:pathData="M73.3,21.7 L84.7,49.9 L73.3,41.9 Z" />
+        android:pathData="M73.3,24.5 L82.4,47.1 L73.3,40.7 Z" />
 </vector>
