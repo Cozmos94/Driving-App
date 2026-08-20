@@ -178,7 +178,10 @@ fun GenerateRouteScreen(
     // now, and picking a result unchecks "loop back to start" itself, so search
     // should always respond to typing regardless of the checkbox's state.
     LaunchedEffect(searchQuery) {
-        if (searchQuery.isBlank() || searchQuery == lastAppliedResultLabel) {
+        // Captured once, at the start of this specific search -- see the guard
+        // below for why.
+        val queryForThisSearch = searchQuery
+        if (queryForThisSearch.isBlank() || queryForThisSearch == lastAppliedResultLabel) {
             searchResults = emptyList()
             searchError = null
             isSearching = false
@@ -188,13 +191,29 @@ fun GenerateRouteScreen(
         delay(500)
         searchError = null
         try {
-            searchResults = searchAddress(searchQuery)
-            if (searchResults.isEmpty()) searchError = "No matches found"
+            val results = searchAddress(queryForThisSearch)
+            // Guards against a real, confirmed race: LaunchedEffect cancels the
+            // *coroutine* when searchQuery changes, but searchAddress()'s
+            // underlying OkHttp call is a synchronous, non-cancellation-aware
+            // blocking call -- it isn't actually interrupted by that
+            // cancellation, and can still complete (successfully) after a
+            // newer search has already finished and shown its result. On a
+            // fast/uniform emulator network this rarely reorders; on a real
+            // mobile connection's much more variable latency, an earlier,
+            // less-specific query (e.g. "Mcdonell St", fired during a brief
+            // typing pause) can finish *after* a fuller one already displayed
+            // the correct numbered match, silently overwriting it -- exactly
+            // the "shows up on the emulator but not my phone" symptom. Only
+            // apply this result if searchQuery hasn't moved on since.
+            if (searchQuery == queryForThisSearch) {
+                searchResults = results
+                if (results.isEmpty()) searchError = "No matches found"
+            }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Address search failed", e)
-            searchError = "Couldn't search right now"
+            if (searchQuery == queryForThisSearch) searchError = "Couldn't search right now"
         } finally {
-            isSearching = false
+            if (searchQuery == queryForThisSearch) isSearching = false
         }
     }
 
