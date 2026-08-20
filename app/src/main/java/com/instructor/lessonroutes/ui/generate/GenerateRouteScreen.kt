@@ -463,7 +463,12 @@ fun GenerateRouteScreen(
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Filters")
+                Text("Optional Filters")
+                Text(
+                    "Neither selected: no preference either way. Avoid: try not to include it in the " +
+                        "generated route at all. Prefer: try to include more of it (e.g. more school " +
+                        "zones, or more roundabouts).",
+                )
                 if (BuildConfig.TFNSW_API_KEY.isBlank()) {
                     Text(
                         "Hazards/construction/high traffic filters need a Transport for NSW API key " +
