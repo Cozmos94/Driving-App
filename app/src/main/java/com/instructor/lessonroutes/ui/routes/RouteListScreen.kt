@@ -75,23 +75,21 @@ fun RouteListScreen(
     // student: "covered" a filter category means it was set to Prefer (an
     // active request to include more of it) in at least one of their routes --
     // a category that was only ever left at NONE or set to Avoid counts as
-    // "yet to navigate", since Avoid is a deliberate choice to keep the
-    // student away from it, and NONE gives no positive evidence they actually
-    // drove through it. Hidden entirely if this student has no generated
-    // routes at all (nothing to compute from) -- only shown scoped to one
-    // profile, not on the unfiltered "All" list.
+    // "yet to cover", since Avoid is a deliberate choice to keep the student
+    // away from it, and NONE gives no positive evidence they actually drove
+    // through it. Only computed scoped to one profile, not on the unfiltered
+    // "All" list -- but always shown once scoped, even with zero generated
+    // routes (a clear "nothing saved yet" line instead of silently showing
+    // nothing at all, which read as broken rather than "no data yet").
     val filterCoverage = if (filterProfileId != null && filterProfileName != null) {
         val summaries = visibleRoutes.map { it.route.effectiveFilterSummary() }.filterNot { it.isEmpty }
-        if (summaries.isNotEmpty()) {
-            val covered = summaries.flatMap { it.prefer }.toSet()
-            FilterCoverage(
-                studentName = filterProfileName,
-                covered = ALL_FILTER_LABELS.filter { it in covered },
-                notYetNavigated = ALL_FILTER_LABELS.filterNot { it in covered },
-            )
-        } else {
-            null
-        }
+        val covered = summaries.flatMap { it.prefer }.toSet()
+        FilterCoverage(
+            studentName = filterProfileName,
+            hasAnyData = summaries.isNotEmpty(),
+            covered = ALL_FILTER_LABELS.filter { it in covered },
+            notYetCovered = ALL_FILTER_LABELS.filterNot { it in covered },
+        )
     } else {
         null
     }
@@ -121,10 +119,14 @@ fun RouteListScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             filterCoverage?.let {
-                Text(
-                    text = it.summaryText(),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                )
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    if (it.hasAnyData) {
+                        Text("Obstacles covered: ${it.covered.ifEmpty { listOf("none yet") }.joinToString(", ")}")
+                        Text("Obstacles yet to cover: ${it.notYetCovered.joinToString(", ")}")
+                    } else {
+                        Text("No generated-trip routes saved for ${it.studentName} yet, so nothing to show here.")
+                    }
+                }
             }
             if (visibleRoutes.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -283,16 +285,13 @@ private fun formatDate(epochMillis: Long): String =
 
 /** Lifetime Prefer-filter coverage for one student across every generated
  * route ever saved for them -- see the "covered" definition where this is
- * computed, in [RouteListScreen] above. */
+ * computed, in [RouteListScreen] above. [hasAnyData] is false when this
+ * student has no generated-trip routes at all yet (covered/notYetCovered are
+ * still populated in that case -- covered empty, notYetCovered every category
+ * -- but the UI shows a plain "nothing saved yet" line instead). */
 private data class FilterCoverage(
     val studentName: String,
+    val hasAnyData: Boolean,
     val covered: List<String>,
-    val notYetNavigated: List<String>,
-) {
-    fun summaryText(): String = when {
-        notYetNavigated.isEmpty() -> "$studentName has covered every tracked filter: ${covered.joinToString(", ")}."
-        covered.isEmpty() -> "$studentName has yet to navigate: ${notYetNavigated.joinToString(", ")}."
-        else -> "$studentName has covered ${covered.joinToString(", ")}, and has yet to navigate " +
-            "${notYetNavigated.joinToString(", ")}."
-    }
-}
+    val notYetCovered: List<String>,
+)
