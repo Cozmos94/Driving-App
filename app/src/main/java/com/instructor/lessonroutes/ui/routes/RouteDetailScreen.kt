@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -164,6 +165,7 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
  * replaces what used to be one plain paragraph sentence. Hidden entirely if
  * [items] is empty, so a route with nothing set to Avoid (or nothing set to
  * Prefer) doesn't leave a blank labeled section behind. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FilterBadgeSection(label: String, items: List<String>) {
     if (items.isEmpty()) return
