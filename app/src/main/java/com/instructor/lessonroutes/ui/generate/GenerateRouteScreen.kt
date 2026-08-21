@@ -123,6 +123,11 @@ import java.time.format.FormatStyle
 
 private const val LOG_TAG = "GenerateRouteScreen"
 
+// Close, driving-style zoom for the "Navigate" live-tracking view -- much
+// closer than RouteMapView's own DEFAULT_ZOOM (11, a city-wide view meant for
+// browsing/planning, not actually driving).
+private const val NAVIGATE_ZOOM = 16.0
+
 /**
  * Plans a route to actually go drive, rather than record/tap one by hand: pick a
  * destination (tap the map or search an address), a
@@ -449,10 +454,12 @@ fun GenerateRouteScreen(
     // inside the normal content below -- same early-return pattern
     // RouteMapView.kt itself uses for its own "no API key" fallback. Reuses
     // currentLocation (already tracked continuously by this screen, above)
-    // rather than starting a second, redundant location listener -- and
-    // deliberately doesn't chase it with the camera, matching FollowScreen's
-    // existing behaviour for saved routes (a jumpy re-centering camera during
-    // an actual lesson would be worse than a fixed one).
+    // rather than starting a second, redundant location listener. Unlike
+    // FollowScreen's deliberately-static camera for a saved route (avoids a
+    // jumpy re-centering camera mid-lesson), this is meant to actually be
+    // driven by right now -- zoomed in close and panning to follow the live
+    // position as it updates, like a real driving view, not just a fixed
+    // fitted-to-bounds overview.
     if (isNavigating) {
         val route = generatedRoute
         BackHandler { isNavigating = false }
@@ -469,7 +476,10 @@ fun GenerateRouteScreen(
                 routePoints = route?.points ?: emptyList(),
                 waypoints = listOfNotNull(destination),
                 liveLocation = currentLocation,
-                fitBoundsToRoute = true,
+                centerOnDeviceLocation = false,
+                focusPoint = currentLocation,
+                focusZoom = NAVIGATE_ZOOM,
+                followLiveLocation = true,
             )
         }
         return

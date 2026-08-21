@@ -209,6 +209,13 @@ fun RouteMapView(
      * Ignored when [fitBoundsToRoute] is true. Set [centerOnDeviceLocation] to
      * false when using this, or the two centering attempts can race. */
     focusPoint: LatLng? = null,
+    /** Zoom level applied the one time [focusPoint] fires -- defaults to the
+     * same city-wide [DEFAULT_ZOOM] every other caller gets. Lets a caller
+     * that wants a close, driving-style initial view (e.g. GenerateRouteScreen's
+     * "Navigate" live-tracking overlay, combined with [followLiveLocation]) ask
+     * for that without changing the default for every other screen using
+     * [focusPoint]. */
+    focusZoom: Double = DEFAULT_ZOOM,
     onMapClick: ((LatLng) -> Unit)? = null,
     onHazardClick: ((Hazard) -> Unit)? = null,
     onHighVolumeClick: ((HighVolumeRoad) -> Unit)? = null,
@@ -361,7 +368,7 @@ fun RouteMapView(
         if (fitBoundsToRoute || hasAppliedFocusPoint) return@LaunchedEffect
         val point = focusPoint ?: return@LaunchedEffect
         val map = mapLibreMap ?: return@LaunchedEffect
-        map.cameraPosition = CameraPosition.Builder().target(point).zoom(DEFAULT_ZOOM).build()
+        map.cameraPosition = CameraPosition.Builder().target(point).zoom(focusZoom).build()
         hasAppliedFocusPoint = true
     }
 
