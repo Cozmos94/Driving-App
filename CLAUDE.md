@@ -4,23 +4,174 @@ Orientation for a fresh Claude Code session picking this project up. Read
 `spec.md` (original design) and `README.md` (build status, data sources, known
 gotchas) for full detail — this file is the short version plus pointers.
 
-**This file's "Current status"/"Trip generator" sections below are stale in one
-important way**: map tiles, address geocoding, and trip-generator routing were
-switched from the free/keyless stack described there (OpenFreeMap, Nominatim,
-OSRM) to **Geoapify** (needs `GEOAPIFY_API_KEY` in `local.properties` — see
-README's "Required setup" section, now first). This was a real, deliberate
-upgrade, not just a swap: Geoapify's routing API supports `avoid=highways` as a
-genuine hard constraint (confirmed live), fixing what used to be Highways→Avoid's
-long-standing soft-scoring-only limitation, and its geocoding blends in the
-OpenAddresses dataset, giving better AU house-number coverage than Nominatim
-alone (also confirmed live). See
-[GeoapifyRoutingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyRoutingApi.kt)/
-[GeoapifyGeocodingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyGeocodingApi.kt)
-(replacing the deleted OsrmApi.kt/NominatimApi.kt) and
-[RouteMapView.kt](app/src/main/java/com/instructor/lessonroutes/ui/map/RouteMapView.kt)'s
-`GEOAPIFY_STYLE_URL`. **Not yet tested on-device** — the live API calls
-themselves were verified directly (routing, geocoding, tile style.json), but the
-actual app hasn't been rebuilt/run with this change yet as of this handoff.
+## Latest session recap (read this first)
+
+Everything below this point up to "What this is" happened in one long session
+after the "Current status"/"Trip generator" narrative further down was last
+written -- that narrative is still worth reading for the trip generator's core
+design and its round-by-round bug history, but treat anything in it about
+OpenFreeMap/Nominatim/OSRM specifically as **superseded**, not current.
+
+### The big architectural change: Geoapify replaces OpenFreeMap + Nominatim + OSRM
+
+Map tiles, address geocoding, and trip-generator routing all moved to
+**Geoapify** (needs `GEOAPIFY_API_KEY` in `local.properties` -- see README's
+"Required setup" section, now first in that file). A deliberate upgrade, not a
+lateral swap, confirmed live against the real APIs before any code was written:
+
+- **Routing** ([GeoapifyRoutingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyRoutingApi.kt),
+  replaces the deleted OsrmApi.kt): `avoid=highways`/`avoid=tolls` are *real*
+  hard routing constraints -- confirmed live, a test route went from
+  26.6km/28min to 33.6km/37min with it set, a genuine detour around motorways.
+  Fixes Highways→Avoid, which used to be soft-scoring-only because OSRM's
+  public server rejected an equivalent `exclude=motorway` outright. No
+  alternatives support (confirmed live Geoapify has no equivalent to OSRM's
+  `alternatives=true`) -- removed from RouteGenerator.kt rather than guessed at.
+- **Geocoding** ([GeoapifyGeocodingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyGeocodingApi.kt),
+  replaces the deleted NominatimApi.kt): blends in the OpenAddresses dataset
+  alongside OSM -- confirmed live resolving real house numbers (e.g. "48 Queen
+  Street, Campbelltown") that Nominatim could only match to street level.
+- **Map tiles** ([RouteMapView.kt](app/src/main/java/com/instructor/lessonroutes/ui/map/RouteMapView.kt)'s
+  `GEOAPIFY_STYLE_URL`): Geoapify's `osm-liberty` vector style, visually
+  equivalent to OpenFreeMap's `liberty` style used before.
+
+**Real gotcha already hit once, will bite a fresh checkout too**:
+`local.properties` is git-ignored *by design* and never travels via git push/
+pull. Adding `GEOAPIFY_API_KEY` there in one checkout does not propagate to any
+other -- this caused "the map has disappeared from every screen" after Corey
+pulled the code change without also adding the key to his own build's
+`local.properties`. `RouteMapView.kt` now fails loud (a clear on-screen message)
+instead of silently blanking if the key's missing, which is how that got
+diagnosed -- but a *fresh* checkout will hit this every time until the key's
+added there too. Don't forget this yourself either.
+
+### Real bugs found via actual live-device testing/live-API verification this session
+
+- **Duration-scoring bug (real, now fixed)**: `pickBestRoute` used to pick
+  whichever candidate matched Avoid/Prefer filters best, *completely ignoring*
+  how close each candidate's own duration was to the target -- with filters
+  tied (or none set), the pick was effectively arbitrary regardless of
+  duration fit. Confirmed via a real report (target 1h43m, generated 1h15m --
+  37% off, outside the 25% convergence tolerance, meaning some other candidate
+  was almost certainly closer but lost for no reason). Fixed: `scoreRoute` now
+  subtracts a heavily-weighted duration-error term
+  (`DURATION_ERROR_WEIGHT_PER_MINUTE = 10.0`), making duration-closeness the
+  primary driver and filters a real but secondary tie-breaker.
+  **Not fully resolved as of this handoff**: after this fix shipped, Corey
+  reported *another* bad mismatch (target 82min, generated 37min) on a run
+  that also hit the Overpass timeout bug below -- unclear yet whether that was
+  a symptom of the Overpass failure or a separate issue. **Needs a clean
+  retest** (no filters timing out) before concluding the duration fix itself
+  is insuffient.
+- **Overpass endpoint broken + too-tight scoring timeout (real, now fixed)**:
+  the app's configured Overpass server (`overpass.kumi.systems`) was
+  confirmed live to be returning bare HTTP 500s for even a trivial query,
+  unrelated to this app's own queries. Switched to the main/official instance
+  (`overpass-api.de`), which needs an explicit `Accept` header or it 406s
+  (also confirmed live) -- see `overpassHeaders()` in
+  [OverpassApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/OverpassApi.kt).
+  Separately, even once pointed at a working server, Roundabouts/Merging
+  lanes/Highways scoring queries genuinely take 9-12+ seconds at this screen's
+  real search radius (confirmed live) -- longer than the 8s per-category
+  timeout added a few rounds earlier, so they were being marked "couldn't load
+  data" on every run. Fixed with a 20s timeout specifically for these three
+  (`OVERPASS_SCORING_FETCH_TIMEOUT_MS`) plus a capped ~17km search radius for
+  them (`OVERPASS_SCORING_RADIUS_CAP_DEGREES`), both in
+  [GenerateRouteScreen.kt](app/src/main/java/com/instructor/lessonroutes/ui/generate/GenerateRouteScreen.kt).
+  **Not yet re-tested on-device.**
+- **Address search race condition (real, now fixed)**: the live-search
+  `LaunchedEffect` cancels the *coroutine* on every keystroke, but
+  `searchAddress()`'s underlying OkHttp call is a synchronous, non-
+  cancellation-aware blocking call that isn't actually interrupted by that --
+  it can complete (successfully) *after* a newer search already displayed its
+  result, silently overwriting it with a less-specific match. This is why
+  house numbers appeared on an emulator (fast/uniform network, rarely
+  reorders) but not a real phone (variable mobile latency, reorders more
+  often) with the *same build and same data*. Fixed by tagging each search
+  with the exact query it was for and discarding a stale result if
+  `searchQuery` moved on before it returned.
+- **Radius circle re-zooming on every change (real, now fixed)**: the "fit
+  camera to the radius circle" effect in RouteMapView.kt re-ran (and re-
+  zoomed) on every radius dropdown change, not just when the circle first
+  appeared. Now guarded to fire once (`hasFitRadiusCircle`), matching the
+  existing `hasAppliedFocusPoint` pattern just above it -- later radius
+  changes just resize the circle in place. **Not yet re-tested on-device.**
+
+### Other changes this session (not bug fixes -- features/requests)
+
+- **Trip radius cap**: new "Set radius" dropdown (5km steps to 200km) in
+  GenerateRouteScreen.kt, shown as a real circle overlay on the map
+  (`radiusCircleCenter`/`radiusCircleKm` in RouteMapView.kt, a 64-point
+  polygon approximating a true geo-circle). `maxRadiusKm` is enforced two
+  ways in RouteGenerator.kt: biases candidate generation toward it, and
+  `routeExceedsRadius`/`pickBestRoute` hard-filter to conforming candidates
+  when at least one exists -- if literally none can (the destination itself
+  is farther than the radius allows), falls back to the least-bad candidate
+  and surfaces a warning rather than failing outright. The radius is anchored
+  to the trip's **start** location, not the generator's internal start/
+  destination midpoint (that midpoint is just where the detour-bearing search
+  is centered, not what "how far from me" should mean).
+- **Structured Avoid/Prefer storage + student coverage tracking**: `Route`
+  gained `avoidFilters`/`preferFilters` (Room v5, replacing an even-shorter-
+  lived single-paragraph `generationFilters` column from v4 -- see
+  `effectiveFilterSummary()` in RouteGenerator.kt for the fallback that
+  recovers data from routes saved during that brief v4 window). RouteDetailScreen
+  shows these as small pill badges instead of a paragraph. RouteListScreen,
+  when scoped to one student profile, shows **"Obstacles covered: ... /
+  Obstacles yet to cover: ..."** (bold labels, on separate lines) computed
+  from every generated route ever saved for that student -- "covered" means
+  Prefer was set for that category in at least one of their routes; Avoid or
+  never-set both count as "yet to cover". Always shows *something* once
+  scoped to a profile (even a plain "no generated routes saved yet" line) --
+  it used to just show nothing at all when there was no data, indistinguishable
+  from being broken.
+- **Nav flow**: the route list's "+" now opens the trip generator
+  (destination/filters/radius) instead of the old tap-to-draw/GPS-record
+  screen, which didn't match how routes actually get planned anymore.
+  `CreateRouteScreen.kt`'s code is left in place, just unwired from
+  `AppNavHost.kt` -- revive it there if that flow is ever wanted again. The
+  live map's button to reach the student-profile picker is now labeled
+  "Student Profiles" (was "My routes", which didn't match where it actually
+  led).
+- **Generation UX**: a non-dismissible modal "Generating your route... this
+  can take up to a minute" dialog replaces the old inline spinner (easy to
+  miss once scrolled past, and generation can take up to 45s). The overall
+  generation timeout is 45s (was 20s). A `dataWarning` now surfaces even on a
+  *successful* generation if an active filter's own scoring data never
+  loaded -- previously only shown when generation failed outright, so a
+  filter silently having zero effect (nothing to score against) looked
+  identical to it genuinely trying and failing to find a better route.
+- **Branding**: app icon rebuilt from Corey-supplied SVGs (a two-tone gold/
+  yellow road, a white/red nav dart, a rotated yellow L-plate badge, mint-
+  green background) -- see `ic_launcher_foreground.xml`'s own doc comment for
+  the coordinate-conversion approach. App renamed "Lesson Route Planner"
+  (`app_name` in `strings.xml`, with an embedded `\n` so it renders as two
+  lines under the launcher icon on launchers that honor it -- not guaranteed
+  universally). **UI theme switched from black/white to a light grass-green
+  Material3 palette** (`Color.kt`/`Theme.kt`) -- deliberately *not* applied to
+  RouteMapView's own route-line/waypoint colors, which stay black/white, since
+  a green route line would blend into a map's own grass/park-colored areas.
+- **Recurring own mistake, now with a saved memory about it**: literal `--`
+  inside XML comments (used as a prose em-dash out of habit) is invalid XML
+  and broke `parseDebugLocalresources`/`compileDebugKotlin` multiple times
+  across several files this session, including twice in the same file right
+  after being "fixed". Treat this as a hard rule while *writing* any XML
+  comment in this project, not a proofread-afterward step.
+
+### Not yet tested / open as of this handoff
+
+1. The Overpass endpoint + timeout fix (roundabouts/merging lanes/highways
+   scoring) -- pushed, not yet re-tested on-device.
+2. The radius-circle-only-fits-once fix -- pushed, not yet re-tested.
+3. The duration-scoring mismatch Corey reported *after* the duration-weighting
+   fix was already live (target 82min, generated 37min) -- needs a clean
+   retest once (1) above is confirmed working, since that run also hit the
+   Overpass timeout bug and it's unclear if the two are related.
+4. Geoapify routing/geocoding's real on-device behavior beyond what's been
+   directly confirmed so far (the missing-map-tiles bug is fixed and
+   confirmed; avoid=highways' real-world effect and geocoding's house-number
+   improvement were verified via direct API calls, not yet explicitly
+   confirmed through the app's own UI on-device).
 
 ## What this is
 
