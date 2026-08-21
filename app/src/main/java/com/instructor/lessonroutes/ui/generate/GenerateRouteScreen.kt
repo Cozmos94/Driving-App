@@ -1,5 +1,6 @@
 package com.instructor.lessonroutes.ui.generate
 
+import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -37,6 +39,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -93,6 +97,8 @@ import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.routes.openInNavApp
+import com.instructor.lessonroutes.ui.theme.BorderNavy
+import com.instructor.lessonroutes.ui.theme.ButtonAccentBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
@@ -590,6 +596,11 @@ fun GenerateRouteScreen(
                     onClick = { onGenerateClick() },
                     enabled = canGenerate && !isGenerating,
                     modifier = Modifier.fillMaxWidth(),
+                    // Same #00B4D8 as the live map's "Plan a trip"/"Student
+                    // Profiles" buttons -- Corey's explicit choice for this
+                    // button specifically, distinct from the app's general
+                    // primary/secondary button colors elsewhere.
+                    colors = ButtonDefaults.buttonColors(containerColor = ButtonAccentBlue, contentColor = BorderNavy),
                 ) {
                     Text(if (isGenerating) "Generating…" else "Generate route")
                 }
@@ -753,18 +764,35 @@ private fun GeneratingDialog() {
 @Composable
 private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onConfirm: (LocalTime) -> Unit) {
     val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = false)
+    val context = LocalContext.current
+    val isDark = isSystemInDarkTheme()
     AlertDialog(
         onDismissRequest = onDismiss,
         text = {
             // Deliberately opts back OUT of the app's own blue theme here --
-            // Corey asked for the clock to stay unstyled (plain Material3
-            // defaults), unlike everything else in this app which explicitly
-            // fills in every color role (see Color.kt/Theme.kt's own doc
-            // comments on why). A fresh, un-customized MaterialTheme -- still
-            // respecting the system's dark/light setting, just not
-            // LessonRoutesTheme's custom palette -- gets that without
-            // affecting any other composable's colors.
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            // Corey asked for the clock to stay unstyled. Plain Material3
+            // baseline (lightColorScheme()/darkColorScheme() with no seed) is
+            // NOT actually "default Android colours" -- it's a purple/pink-
+            // seeded demo palette baked into Compose Material3 itself (this
+            // app's own earlier bugs already confirmed that), and that's
+            // exactly what showed up here after the first attempt at this.
+            // What a real device actually looks like by default on Android
+            // 12+ is the dynamic/Material You palette derived from the
+            // device's own wallpaper -- use that when available (this app
+            // already uses dynamicLightColorScheme/dynamicDarkColorScheme
+            // elsewhere, just switched off by default for the *rest* of the
+            // app so it doesn't fight the custom blue brand palette; here we
+            // want the opposite). Pre-Android-12 has no such per-device
+            // palette to fall back to, so the purple/pink M3 baseline is the
+            // closest thing "default" can mean there.
+            val clockColorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            } else if (isDark) {
+                darkColorScheme()
+            } else {
+                lightColorScheme()
+            }
+            MaterialTheme(colorScheme = clockColorScheme) {
                 TimePicker(state = state)
             }
         },

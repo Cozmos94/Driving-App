@@ -21,7 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.location.LocationCallback
@@ -41,6 +40,7 @@ import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchQuietRoads
 import com.instructor.lessonroutes.ui.theme.BorderNavy
+import com.instructor.lessonroutes.ui.theme.ButtonAccentBlue
 import com.instructor.lessonroutes.data.remote.matchRoadGeometry
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -189,10 +189,12 @@ fun LiveMapScreen(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Corey's explicit choice: these two get their own #0096C7, distinct
-            // from the app's general primary/secondary button colors elsewhere.
+            // Corey's explicit choice: these two (plus Generate route on the
+            // trip-generator screen) get their own #00B4D8, distinct from the
+            // app's general primary/secondary button colors elsewhere. Was
+            // #0096C7 briefly before Corey settled on this shade instead.
             val liveMapButtonColors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF0096C7),
+                containerColor = ButtonAccentBlue,
                 contentColor = BorderNavy,
             )
             Button(onClick = onPlanRouteClick, modifier = Modifier.weight(1f), colors = liveMapButtonColors) {

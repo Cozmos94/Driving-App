@@ -2,26 +2,32 @@ package com.instructor.lessonroutes.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand colors (Corey's choice): a fixed blue palette, five exact hex values
-// used everywhere -- no other shade is introduced anywhere in this file.
-// Was a light grass-green theme before this.
+// Brand colors (Corey's choice): a fixed blue palette used everywhere -- no
+// other shade is introduced anywhere in this file. Was a light grass-green
+// theme before this.
 //   SelectedBlue   #023E8A -- selected buttons
 //   UnselectedBlue #0077B6 -- unselected buttons
-//   BackgroundCyan #CAF0F8 -- background/surface shade
+//   ButtonAccentBlue#00B4D8 -- Generate Route / Plan a Trip / Student
+//                             Profiles buttons specifically
+//   BackgroundWhite plain white -- background/surface shade (was #CAF0F8,
+//                             then #90E0EF, before Corey settled on plain
+//                             white instead of any of the blue-family shades)
 //   ClockAccentCyan#ADE8F4 -- fallback role used by a couple of "extra" M3
 //                             roles below (tertiary) that Corey hasn't given
 //                             a specific instruction for -- NOT the TimePicker
 //                             any more, see AppTimePickerDialog in
 //                             GenerateRouteScreen.kt, which now deliberately
-//                             opts back out to plain Material3 defaults.
+//                             opts back out to the device's own default
+//                             (dynamic/Material You) colours instead.
 //   BorderNavy     #03045E -- border colour and button font (on top of
 //                             SelectedBlue/UnselectedBlue/ClockAccentCyan)
-// Font in front of BackgroundCyan is plain black instead, per Corey's spec --
+// Font in front of BackgroundWhite is plain black instead, per Corey's spec --
 // everywhere else that needs a color but wasn't given one explicitly reuses
-// one of the five above rather than introducing a new shade.
+// one of the colors above rather than introducing a new shade.
 val SelectedBlue = Color(0xFF023E8A)
 val UnselectedBlue = Color(0xFF0077B6)
-val BackgroundCyan = Color(0xFFCAF0F8)
+val ButtonAccentBlue = Color(0xFF00B4D8)
+val BackgroundWhite = Color(0xFFFFFFFF)
 val ClockAccentCyan = Color(0xFFADE8F4)
 val BorderNavy = Color(0xFF03045E)
 val OnBackgroundBlack = Color(0xFF000000)
@@ -48,8 +54,8 @@ val OnSecondaryDark = BorderNavy
 val SecondaryContainerDark = UnselectedBlue
 val OnSecondaryContainerDark = BorderNavy
 
-val Neutral95 = BackgroundCyan
-val Neutral10 = BackgroundCyan
+val Neutral95 = BackgroundWhite
+val Neutral10 = BackgroundWhite
 
 // Every other M3 color role (tertiary, surface[Variant], outline, inverse*)
 // falls through to Compose Material3's baseline default scheme (purple/violet-
@@ -59,14 +65,14 @@ val Neutral10 = BackgroundCyan
 // reverts to purple. Tertiary carries the AM/PM + clock-face role Corey asked
 // for (ClockAccentCyan, text on it in BorderNavy); surface roles carry the
 // background shade with black text, per Corey's "black for all other font in
-// front of #90E0EF" instruction.
+// front of the background shade" instruction.
 val TertiaryLight = ClockAccentCyan
 val OnTertiaryLight = BorderNavy
 val TertiaryContainerLight = ClockAccentCyan
 val OnTertiaryContainerLight = BorderNavy
-val SurfaceLight = BackgroundCyan
+val SurfaceLight = BackgroundWhite
 val OnSurfaceLight = OnBackgroundBlack
-val SurfaceVariantLight = BackgroundCyan
+val SurfaceVariantLight = BackgroundWhite
 val OnSurfaceVariantLight = OnBackgroundBlack
 val OutlineLight = BorderNavy
 val OutlineVariantLight = BorderNavy
@@ -78,9 +84,9 @@ val TertiaryDark = ClockAccentCyan
 val OnTertiaryDark = BorderNavy
 val TertiaryContainerDark = ClockAccentCyan
 val OnTertiaryContainerDark = BorderNavy
-val SurfaceDark = BackgroundCyan
+val SurfaceDark = BackgroundWhite
 val OnSurfaceDark = OnBackgroundBlack
-val SurfaceVariantDark = BackgroundCyan
+val SurfaceVariantDark = BackgroundWhite
 val OnSurfaceVariantDark = OnBackgroundBlack
 val OutlineDark = BorderNavy
 val OutlineVariantDark = BorderNavy
