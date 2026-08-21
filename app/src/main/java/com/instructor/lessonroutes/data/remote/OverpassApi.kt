@@ -12,8 +12,22 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.cos
 import kotlin.math.hypot
 
-private const val OVERPASS_URL = "https://overpass.kumi.systems/api/interpreter"
+// Was https://overpass.kumi.systems/api/interpreter -- confirmed live that this
+// mirror is currently returning bare HTTP 500s for even a trivial sanity-check
+// query, unrelated to anything in this app's own queries (a second independent
+// mirror succeeded with the exact same query). Switched to the main/official
+// instance, which needs an explicit Accept header or it 406s (also confirmed
+// live) -- see [overpassHeaders].
+private const val OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 private const val SEARCH_RADIUS_METERS = 50
+
+/** Overpass's main instance 406s a request with no Accept header at all --
+ * confirmed live. A descriptive User-Agent is also just good etiquette for a
+ * free shared community service (same posture as OsrmApi.kt/NominatimApi.kt
+ * before they were replaced). */
+private fun Request.Builder.overpassHeaders(): Request.Builder = this
+    .header("Accept", "application/json")
+    .header("User-Agent", "LessonRoutes/1.0 (personal NSW driving-instructor app)")
 
 // Real vehicle-carrying road types only -- a plain [highway] filter also matches
 // footways/cycleways/paths/steps, which are common right next to a traffic-count
@@ -74,6 +88,7 @@ suspend fun matchRoadGeometry(points: List<LatLng>): Map<Int, List<LatLng>> {
         val request = Request.Builder()
             .url(OVERPASS_URL)
             .post(FormBody.Builder().add("data", query).build())
+            .overpassHeaders()
             .build()
 
         val ways = client.newCall(request).execute().use { response ->
@@ -156,6 +171,7 @@ private suspend fun fetchWaysByHighwayTag(
         val request = Request.Builder()
             .url(OVERPASS_URL)
             .post(FormBody.Builder().add("data", query).build())
+            .overpassHeaders()
             .build()
 
         fastClient.newCall(request).execute().use { response ->
@@ -194,6 +210,7 @@ suspend fun fetchRoundabouts(center: LatLng, radiusDegrees: Double = QUIET_ROADS
         val request = Request.Builder()
             .url(OVERPASS_URL)
             .post(FormBody.Builder().add("data", query).build())
+            .overpassHeaders()
             .build()
 
         fastClient.newCall(request).execute().use { response ->

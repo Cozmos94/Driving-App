@@ -787,9 +787,11 @@ private fun SaveGeneratedRouteDialog(
 }
 
 /** [ScoringData] plus the display name of any requested category that ended up
- * with zero usable data -- whether because its fetch didn't finish within
- * [SCORING_FETCH_TIMEOUT_MS], or because it threw (network/HTTP/parse failure,
- * already caught below), or because the source genuinely returned nothing.
+ * with zero usable data -- whether because its fetch didn't finish within its
+ * own bound ([SCORING_FETCH_TIMEOUT_MS], or the longer
+ * [OVERPASS_SCORING_FETCH_TIMEOUT_MS] for Overpass-backed categories), or
+ * because it threw (network/HTTP/parse failure, already caught below), or
+ * because the source genuinely returned nothing.
  * Surfaced to the instructor both when generation fails outright and, just as
  * importantly, when it *succeeds*: a filter with no scoring data to work with
  * had no effect on which candidate got picked, silently, unless this is shown --
@@ -799,6 +801,28 @@ private fun SaveGeneratedRouteDialog(
 private data class ScoringFetchResult(val data: ScoringData, val emptyCategories: List<String>)
 
 private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
+
+// Roundabouts/Merging lanes/Highways go through Overpass (OverpassApi.kt), which
+// is a real, confirmed step slower than the 8s bound above: tested live at this
+// screen's actual search radius for a ~80min trip (a ~65km-wide bbox), the
+// highways query alone took ~9s even against a healthy Overpass instance, and a
+// separate merge-lanes query took ~10s even at a much smaller bbox -- Overpass
+// is just inherently heavier for these broader tag queries than a TfNSW call or
+// a local Room read. 8s was marking these "couldn't load" on every run even when
+// Overpass would have answered a couple of seconds later. Also see
+// OVERPASS_SCORING_RADIUS_CAP_DEGREES below -- the radius fix and this timeout
+// fix are both real contributors, confirmed independently.
+private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 20_000L
+
+// Roundabouts/Merging lanes/Highways scoring doesn't meaningfully improve by
+// searching tens of km out -- candidate routes generated for even a long trip
+// stay much more localized than the naive duration-implied radius (which,
+// confirmed live, produced a ~65km-wide box for an 80min trip target and took
+// Overpass ~9s to answer for highways alone at that size). Capping this
+// specifically for the Overpass-backed categories cuts both query cost and the
+// amount of data to sample/process afterward, without capping the (much
+// smaller, already-fast) TfNSW/Room-backed categories' search area.
+private const val OVERPASS_SCORING_RADIUS_CAP_DEGREES = 0.15
 
 /** Fetches point-of-interest data only for the categories actually set to
  * AVOID/PREFER in [filters] -- fetching the rest would be wasted network calls.
@@ -819,11 +843,16 @@ private suspend fun buildScoringData(
     // paired String is this category's display name if it ended up with zero
     // data (timeout OR a caught exception OR a genuinely empty result), null
     // otherwise.
-    fun fetchBounded(name: String, fetch: suspend () -> List<LatLng>): Deferred<Pair<List<LatLng>, String?>> = async {
-        val list = withTimeoutOrNull(SCORING_FETCH_TIMEOUT_MS) { runCatching { fetch() }.getOrDefault(emptyList()) }
+    fun fetchBounded(
+        name: String,
+        timeoutMs: Long = SCORING_FETCH_TIMEOUT_MS,
+        fetch: suspend () -> List<LatLng>,
+    ): Deferred<Pair<List<LatLng>, String?>> = async {
+        val list = withTimeoutOrNull(timeoutMs) { runCatching { fetch() }.getOrDefault(emptyList()) }
             ?: emptyList()
         list to (if (list.isEmpty()) name else null)
     }
+    val overpassRadiusDegrees = minOf(radiusDegrees, OVERPASS_SCORING_RADIUS_CAP_DEGREES)
 
     val incidents: Deferred<Pair<List<LatLng>, String?>>? = if (filters.incidents != FilterPreference.NONE) {
         fetchBounded("Hazards") { fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
@@ -846,17 +875,23 @@ private suspend fun buildScoringData(
         null
     }
     val roundabouts: Deferred<Pair<List<LatLng>, String?>>? = if (filters.roundabouts != FilterPreference.NONE) {
-        fetchBounded("Roundabouts") { fetchRoundabouts(center, radiusDegrees).mapNotNull { it.firstOrNull() } }
+        fetchBounded("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+            fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
+        }
     } else {
         null
     }
     val mergeLanes: Deferred<Pair<List<LatLng>, String?>>? = if (filters.mergingLanes != FilterPreference.NONE) {
-        fetchBounded("Merging lanes") { fetchMergeLaneProxies(center, radiusDegrees).sampleForScoring() }
+        fetchBounded("Merging lanes", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+            fetchMergeLaneProxies(center, overpassRadiusDegrees).sampleForScoring()
+        }
     } else {
         null
     }
     val majorRoads: Deferred<Pair<List<LatLng>, String?>>? = if (filters.highways != FilterPreference.NONE) {
-        fetchBounded("Highways") { fetchMajorRoads(center, radiusDegrees).sampleForScoring() }
+        fetchBounded("Highways", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+            fetchMajorRoads(center, overpassRadiusDegrees).sampleForScoring()
+        }
     } else {
         null
     }
