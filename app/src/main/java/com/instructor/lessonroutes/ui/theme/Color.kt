@@ -2,76 +2,83 @@ package com.instructor.lessonroutes.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand colors (Corey's choice): a light grass-green theme -- the same soft
-// green used for parks/grass on most map styles, since this is a driving-route
-// map app. Was a stark black/white theme before this; primary here is a
-// consistent grass green across both light/dark modes (a stronger shade in
-// light mode, a lighter/brighter one in dark mode for contrast against a dark
-// background), rather than the old "opposite extreme from background" logic.
-val GrassGreenLight = Color(0xFF558B2F)
-val GrassGreenLighter = Color(0xFF7CB342)
-val GrassGreenPale = Color(0xFFF1F8E9)
+// Brand colors (Corey's choice): a fixed blue palette, five exact hex values
+// used everywhere -- no other shade is introduced anywhere in this file.
+// Was a light grass-green theme before this.
+//   SelectedBlue   #023E8A -- selected buttons, selected time on the TimePicker
+//   UnselectedBlue #0077B6 -- unselected buttons
+//   BackgroundCyan #90E0EF -- background/surface shade
+//   ClockAccentCyan#ADE8F4 -- AM/PM selector + other clock colours
+//   BorderNavy     #03045E -- border colour and button font (on top of
+//                             SelectedBlue/UnselectedBlue/ClockAccentCyan)
+// Font in front of BackgroundCyan is plain black instead, per Corey's spec --
+// everywhere else that needs a color but wasn't given one explicitly reuses
+// one of the five above rather than introducing a new shade.
+val SelectedBlue = Color(0xFF023E8A)
+val UnselectedBlue = Color(0xFF0077B6)
+val BackgroundCyan = Color(0xFF90E0EF)
+val ClockAccentCyan = Color(0xFFADE8F4)
+val BorderNavy = Color(0xFF03045E)
+val OnBackgroundBlack = Color(0xFF000000)
 
-// Light theme: primary is a solid, saturated grass green (enough contrast for
-// white text/icons on filled buttons); secondary is a brighter green tint for
-// a second, distinguishable accent. Container tones are soft green tints so
-// filled surfaces (FAB, chips, etc.) read as tonally related without being
-// full-strength green everywhere. Text/icon colors (onSurface etc., see below)
-// lean dark green rather than pure black/gray for a bit of brand cohesion,
-// while staying dark enough not to hurt legibility.
-val PrimaryLight = GrassGreenLight
-val OnPrimaryLight = Color(0xFFFFFFFF)
-val PrimaryContainerLight = Color(0xFFC5E1A5)
-val OnPrimaryContainerLight = Color(0xFF33691E)
-val SecondaryLight = GrassGreenLighter
-val OnSecondaryLight = Color(0xFFFFFFFF)
-val SecondaryContainerLight = Color(0xFFDCEDC8)
-val OnSecondaryContainerLight = Color(0xFF33691E)
+// Deliberately identical for light and dark: Corey specified one literal
+// five-color palette with no dark-mode alternates, so both schemes below use
+// exactly the same values rather than inventing brighter/darker variants that
+// aren't in that set.
+val PrimaryLight = SelectedBlue
+val OnPrimaryLight = BorderNavy
+val PrimaryContainerLight = SelectedBlue
+val OnPrimaryContainerLight = BorderNavy
+val SecondaryLight = UnselectedBlue
+val OnSecondaryLight = BorderNavy
+val SecondaryContainerLight = UnselectedBlue
+val OnSecondaryContainerLight = BorderNavy
 
-// Dark theme: brighter/lighter greens (need more luminance to read against a
-// dark background), deep green containers with light "on" text.
-val PrimaryDark = Color(0xFF9CCC65)
-val OnPrimaryDark = Color(0xFF1B2E0E)
-val PrimaryContainerDark = Color(0xFF33691E)
-val OnPrimaryContainerDark = Color(0xFFC5E1A5)
-val SecondaryDark = Color(0xFFAED581)
-val OnSecondaryDark = Color(0xFF1B2E0E)
-val SecondaryContainerDark = Color(0xFF2E4A1D)
-val OnSecondaryContainerDark = Color(0xFFDCEDC8)
+val PrimaryDark = SelectedBlue
+val OnPrimaryDark = BorderNavy
+val PrimaryContainerDark = SelectedBlue
+val OnPrimaryContainerDark = BorderNavy
+val SecondaryDark = UnselectedBlue
+val OnSecondaryDark = BorderNavy
+val SecondaryContainerDark = UnselectedBlue
+val OnSecondaryContainerDark = BorderNavy
 
-val Neutral95 = GrassGreenPale
-val Neutral10 = Color(0xFF10190C)
+val Neutral95 = BackgroundCyan
+val Neutral10 = BackgroundCyan
 
 // Every other M3 color role (tertiary, surface[Variant], outline, inverse*)
 // falls through to Compose Material3's baseline default scheme (purple/violet-
-// seeded) when left unset -- see Theme.kt's own comment on this, confirmed as
-// a real bug once already (ListItem backgrounds, TimePicker's AM/PM selector).
-// Every one of these is filled in here too, reusing the green family so
-// nothing outside primary/secondary reverts to purple.
-val TertiaryLight = SecondaryLight
-val OnTertiaryLight = OnSecondaryLight
-val TertiaryContainerLight = SecondaryContainerLight
-val OnTertiaryContainerLight = OnSecondaryContainerLight
-val SurfaceLight = Neutral95
-val OnSurfaceLight = Color(0xFF1D2B12)
-val SurfaceVariantLight = Color(0xFFDCEDC8)
-val OnSurfaceVariantLight = Color(0xFF33691E)
-val OutlineLight = Color(0xFF6B8E5A)
-val OutlineVariantLight = Color(0xFFC8D6BE)
-val InverseSurfaceLight = Color(0xFF1D2B12)
-val InverseOnSurfaceLight = GrassGreenPale
-val InversePrimaryLight = Color(0xFFAED581)
+// seeded) when left unset -- confirmed as a real bug once already (ListItem
+// backgrounds, TimePicker's AM/PM selector). Every one of these is filled in
+// here too, reusing the five colors above so nothing outside primary/secondary
+// reverts to purple. Tertiary carries the AM/PM + clock-face role Corey asked
+// for (ClockAccentCyan, text on it in BorderNavy); surface roles carry the
+// background shade with black text, per Corey's "black for all other font in
+// front of #90E0EF" instruction.
+val TertiaryLight = ClockAccentCyan
+val OnTertiaryLight = BorderNavy
+val TertiaryContainerLight = ClockAccentCyan
+val OnTertiaryContainerLight = BorderNavy
+val SurfaceLight = BackgroundCyan
+val OnSurfaceLight = OnBackgroundBlack
+val SurfaceVariantLight = BackgroundCyan
+val OnSurfaceVariantLight = OnBackgroundBlack
+val OutlineLight = BorderNavy
+val OutlineVariantLight = BorderNavy
+val InverseSurfaceLight = BorderNavy
+val InverseOnSurfaceLight = ClockAccentCyan
+val InversePrimaryLight = ClockAccentCyan
 
-val TertiaryDark = SecondaryDark
-val OnTertiaryDark = OnSecondaryDark
-val TertiaryContainerDark = SecondaryContainerDark
-val OnTertiaryContainerDark = OnSecondaryContainerDark
-val SurfaceDark = Neutral10
-val OnSurfaceDark = Color(0xFFE8F5E0)
-val SurfaceVariantDark = Color(0xFF2E4A1D)
-val OnSurfaceVariantDark = Color(0xFFC5E1A5)
-val OutlineDark = Color(0xFF8FA883)
-val OutlineVariantDark = Color(0xFF3E5A30)
-val InverseSurfaceDark = GrassGreenPale
-val InverseOnSurfaceDark = Color(0xFF1D2B12)
-val InversePrimaryDark = Color(0xFF558B2F)
+val TertiaryDark = ClockAccentCyan
+val OnTertiaryDark = BorderNavy
+val TertiaryContainerDark = ClockAccentCyan
+val OnTertiaryContainerDark = BorderNavy
+val SurfaceDark = BackgroundCyan
+val OnSurfaceDark = OnBackgroundBlack
+val SurfaceVariantDark = BackgroundCyan
+val OnSurfaceVariantDark = OnBackgroundBlack
+val OutlineDark = BorderNavy
+val OutlineVariantDark = BorderNavy
+val InverseSurfaceDark = BorderNavy
+val InverseOnSurfaceDark = ClockAccentCyan
+val InversePrimaryDark = ClockAccentCyan

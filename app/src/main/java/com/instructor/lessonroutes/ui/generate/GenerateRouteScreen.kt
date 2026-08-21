@@ -19,7 +19,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,7 +47,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -98,6 +102,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.maplibre.android.geometry.LatLng
+import kotlin.math.abs
 import java.time.Duration
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -107,7 +112,7 @@ private const val LOG_TAG = "GenerateRouteScreen"
 
 /**
  * Plans a route to actually go drive, rather than record/tap one by hand: pick a
- * destination (loop back to the start, tap the map, or search an address), a
+ * destination (tap the map or search an address), a
  * start/end time (used only to compute a target duration -- generation happens
  * immediately, this doesn't wait or schedule anything), and avoid/prefer filters
  * across hazards/construction/school zones/cameras/highways/roundabouts/merging
@@ -154,7 +159,9 @@ fun GenerateRouteScreen(
     }
 
     // -- Destination --
-    var loopBackToStart by remember { mutableStateOf(true) }
+    // Always a real place now -- "loop back to where I start" was removed (per
+    // Corey's request) since it was a separate, less-used third path to picking
+    // a destination alongside map-tap and address search.
     var destination by remember { mutableStateOf<LatLng?>(null) }
     // Optional ceiling on how far the generated route can detour from the
     // start/destination midpoint (see generateCandidateRoutes' maxRadiusKm) --
@@ -169,13 +176,11 @@ fun GenerateRouteScreen(
     // like new typing and fire another search for the exact same text).
     var lastAppliedResultLabel by remember { mutableStateOf<String?>(null) }
 
-    val effectiveDestination = if (loopBackToStart) currentLocation else destination
+    val effectiveDestination = destination
 
     // Debounced live search: waits 500ms after the user stops typing before
     // actually calling the geocoding API, so results appear as-you-type without
-    // firing a request per keystroke. Not gated on loopBackToStart -- the search box is always visible
-    // now, and picking a result unchecks "loop back to start" itself, so search
-    // should always respond to typing regardless of the checkbox's state.
+    // firing a request per keystroke.
     LaunchedEffect(searchQuery) {
         // Captured once, at the start of this specific search -- see the guard
         // below for why.
@@ -357,6 +362,18 @@ fun GenerateRouteScreen(
                     // can't prove a delegated var won't change in between).
                     val radiusKm = selectedRadiusKm
                     val radiusExceeded = radiusKm != null && routeExceedsRadius(result, start, radiusKm)
+                    // How far the actual duration landed from the target -- see the
+                    // radiusLimitedDuration case below. Same 25% tolerance concept as
+                    // RouteGenerator's own DURATION_TOLERANCE_RATIO (not imported --
+                    // that constant is private, and duplicating one plain ratio check
+                    // here isn't worth exposing it just for this).
+                    val durationErrorRatio = abs(result.durationSeconds - minutes * 60.0) / (minutes * 60.0)
+                    // A radius cap takes priority over the target duration by design
+                    // (generateCandidateRoutes/pickBestRoute's maxRadiusKm) -- a real,
+                    // confirmed case (target 1h30m, radius capped, generated 34min)
+                    // where the cap was the actual cause, not a generator bug, but with
+                    // no visible signal it read as "the duration target was ignored."
+                    val radiusLimitedDuration = radiusKm != null && !radiusExceeded && durationErrorRatio > 0.25
                     dataWarning = when {
                         emptyScoringCategories.isNotEmpty() ->
                             "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
@@ -370,6 +387,10 @@ fun GenerateRouteScreen(
                         radiusExceeded ->
                             "This route goes beyond your ${radiusKm?.toInt()}km radius — no route to this " +
                                 "destination could stay within it. Try a larger radius or a closer destination."
+                        radiusLimitedDuration ->
+                            "This route came in well short of your target time — your ${radiusKm?.toInt()}km " +
+                                "radius didn't allow enough detour to reach it. Try a larger radius for a " +
+                                "closer match to your target duration."
                         else -> null
                     }
                 }
@@ -402,10 +423,7 @@ fun GenerateRouteScreen(
                 RouteMapView(
                     modifier = Modifier.fillMaxSize(),
                     routePoints = generatedRoute?.points ?: emptyList(),
-                    // Looping back to start's destination is the current location,
-                    // already shown as the live-location dot -- a second marker on
-                    // top of it would just be a confusing duplicate.
-                    waypoints = if (loopBackToStart) emptyList() else listOfNotNull(destination),
+                    waypoints = listOfNotNull(destination),
                     liveLocation = currentLocation,
                     fitBoundsToRoute = generatedRoute != null,
                     // This screen already tracks the device's location itself
@@ -424,15 +442,8 @@ fun GenerateRouteScreen(
                     // while no radius is set or before a location fix exists.
                     radiusCircleCenter = currentLocation,
                     radiusCircleKm = selectedRadiusKm,
-                    // Always active now (was conditionally null while "loop back
-                    // to start" was checked) -- tapping a destination is itself a
-                    // clear enough signal to switch out of loop mode automatically,
-                    // rather than silently doing nothing because a checkbox
-                    // elsewhere hadn't been unticked first (that read as "tapping
-                    // the map is broken").
                     onMapClick = { latLng ->
                         destination = latLng
-                        loopBackToStart = false
                         searchResults = emptyList()
                     },
                 )
@@ -446,7 +457,12 @@ fun GenerateRouteScreen(
             // weighted sibling and an unbounded one otherwise).
             generatedRoute?.let { route ->
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text("Generated: ${formatDuration(route.durationSeconds)}, ${formatDistance(route.distanceMeters)}")
+                    Text(
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Generated") }
+                            append(": ${formatDuration(route.durationSeconds)}, ${formatDistance(route.distanceMeters)}")
+                        },
+                    )
                     if (saveComplete) {
                         Text("Saved.")
                     }
@@ -473,20 +489,10 @@ fun GenerateRouteScreen(
             }
 
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                Text("Destination")
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Checkbox(checked = loopBackToStart, onCheckedChange = { loopBackToStart = it })
-                    Text("Loop back to where I start")
-                }
+                Text("Destination", fontWeight = FontWeight.Bold)
                 RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
-                // Always visible now -- these used to be hidden while "loop back to
-                // start" was checked, which looked like the address box had
-                // disappeared and tapping the map did nothing (both were
-                // intentionally disabled, but with no visible reason why).
-                // Tapping the map or picking a search result unchecks the box
-                // above automatically, so there's no separate step to remember.
                 Text(
-                    if (destination != null && !loopBackToStart) {
+                    if (destination != null) {
                         "Destination set — tap the map to change it, or search below."
                     } else {
                         "Tap the map to set a destination, or search below."
@@ -508,7 +514,6 @@ fun GenerateRouteScreen(
                         headlineContent = { Text(result.label) },
                         modifier = Modifier.fillMaxWidth().clickable {
                             destination = result.location
-                            loopBackToStart = false
                             searchResults = emptyList()
                             lastAppliedResultLabel = result.label
                             searchQuery = result.label
@@ -518,7 +523,7 @@ fun GenerateRouteScreen(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Trip time")
+                Text("Trip time", fontWeight = FontWeight.Bold)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.weight(1f)) {
                         Text(startTime?.let { formatTime(it) } ?: "Start time (now)")
@@ -527,13 +532,29 @@ fun GenerateRouteScreen(
                         Text(endTime?.let { formatTime(it) } ?: "End time")
                     }
                 }
-                Text(
-                    text = targetDurationMinutes?.let { "Duration: ${it / 60}h ${it % 60}m" }
-                        ?: if (endTime != null) "End time must be after start time" else "Pick an end time (start defaults to now)",
-                )
+                when {
+                    // An end time is mandatory (canGenerate requires
+                    // targetDurationMinutes != null) -- bold red so it reads as a
+                    // real requirement, not just a hint, until it's satisfied. Once
+                    // endTime is set (valid or not) this branch no longer shows --
+                    // either the real duration below, or the "must be after start"
+                    // validation message, take over instead.
+                    targetDurationMinutes != null -> Text(
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Duration") }
+                            append(": ${targetDurationMinutes / 60}h ${targetDurationMinutes % 60}m")
+                        },
+                    )
+                    endTime != null -> Text("End time must be after start time")
+                    else -> Text(
+                        "Pick an end time (start defaults to now)",
+                        color = Color(0xFFD21F3C),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Optional Filters")
+                Text("Optional Filters", fontWeight = FontWeight.Bold)
                 Text(
                     "Neither selected: no preference either way. Avoid: try not to include it in the " +
                         "generated route at all. Prefer: try to include more of it (e.g. more school " +
@@ -554,10 +575,8 @@ fun GenerateRouteScreen(
                 FilterRow("Roundabouts", filters.roundabouts) { filters = filters.copy(roundabouts = it) }
                 FilterRow("Merging lanes", filters.mergingLanes) { filters = filters.copy(mergingLanes = it) }
                 Text(
-                    "These are best-effort, not guarantees: a few candidate routes are generated and " +
-                        "whichever one best matches your filters is picked — none of them can be steered " +
-                        "around a specific hazard/zone while being generated. Highways/Roundabouts/Merging " +
-                        "lanes add a little extra time to generation (an extra check per route direction).",
+                    "Best-effort, not guaranteed — picks the closest-matching candidate rather than " +
+                        "steering around a specific hazard.",
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
