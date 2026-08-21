@@ -1,15 +1,11 @@
 package com.instructor.lessonroutes.navigation
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavType
@@ -26,6 +22,7 @@ import com.instructor.lessonroutes.ui.routes.FollowScreen
 import com.instructor.lessonroutes.ui.routes.RouteDetailScreen
 import com.instructor.lessonroutes.ui.routes.RouteListScreen
 import com.instructor.lessonroutes.ui.settings.SettingsScreen
+import com.instructor.lessonroutes.ui.splash.SplashScreen
 
 private const val LIVE_MAP = "liveMap"
 private const val STUDENT_PROFILES = "studentProfiles"
@@ -55,6 +52,9 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
     // first composition, so if it composed before this finished inserting ~4,000
     // rows, it would load an empty result and never re-fetch. Only matters on a
     // fresh install -- the count() check makes every later launch resolve instantly.
+    // This is also the app's actual "just opened, still loading" moment on every
+    // launch (brief once seeded), which is why it shows SplashScreen (Corey's
+    // launch-screen design) rather than a plain spinner.
     var isStaticDataReady by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         seedStaticDataIfNeeded(context, database)
@@ -62,9 +62,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
     }
 
     if (!isStaticDataReady) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
+        SplashScreen(modifier = modifier)
         return
     }
 
