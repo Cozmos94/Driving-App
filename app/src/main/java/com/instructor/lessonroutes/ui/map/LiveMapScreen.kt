@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -20,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.location.LocationCallback
@@ -38,6 +40,7 @@ import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchQuietRoads
+import com.instructor.lessonroutes.ui.theme.BorderNavy
 import com.instructor.lessonroutes.data.remote.matchRoadGeometry
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -186,10 +189,16 @@ fun LiveMapScreen(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(onClick = onPlanRouteClick, modifier = Modifier.weight(1f)) {
+            // Corey's explicit choice: these two get their own #0096C7, distinct
+            // from the app's general primary/secondary button colors elsewhere.
+            val liveMapButtonColors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF0096C7),
+                contentColor = BorderNavy,
+            )
+            Button(onClick = onPlanRouteClick, modifier = Modifier.weight(1f), colors = liveMapButtonColors) {
                 Text("Student Profiles")
             }
-            Button(onClick = onGenerateTripClick, modifier = Modifier.weight(1f)) {
+            Button(onClick = onGenerateTripClick, modifier = Modifier.weight(1f), colors = liveMapButtonColors) {
                 Text("Plan a trip")
             }
         }

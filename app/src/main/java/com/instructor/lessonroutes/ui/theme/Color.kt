@@ -5,10 +5,15 @@ import androidx.compose.ui.graphics.Color
 // Brand colors (Corey's choice): a fixed blue palette, five exact hex values
 // used everywhere -- no other shade is introduced anywhere in this file.
 // Was a light grass-green theme before this.
-//   SelectedBlue   #023E8A -- selected buttons, selected time on the TimePicker
+//   SelectedBlue   #023E8A -- selected buttons
 //   UnselectedBlue #0077B6 -- unselected buttons
-//   BackgroundCyan #90E0EF -- background/surface shade
-//   ClockAccentCyan#ADE8F4 -- AM/PM selector + other clock colours
+//   BackgroundCyan #CAF0F8 -- background/surface shade
+//   ClockAccentCyan#ADE8F4 -- fallback role used by a couple of "extra" M3
+//                             roles below (tertiary) that Corey hasn't given
+//                             a specific instruction for -- NOT the TimePicker
+//                             any more, see AppTimePickerDialog in
+//                             GenerateRouteScreen.kt, which now deliberately
+//                             opts back out to plain Material3 defaults.
 //   BorderNavy     #03045E -- border colour and button font (on top of
 //                             SelectedBlue/UnselectedBlue/ClockAccentCyan)
 // Font in front of BackgroundCyan is plain black instead, per Corey's spec --
@@ -16,7 +21,7 @@ import androidx.compose.ui.graphics.Color
 // one of the five above rather than introducing a new shade.
 val SelectedBlue = Color(0xFF023E8A)
 val UnselectedBlue = Color(0xFF0077B6)
-val BackgroundCyan = Color(0xFF90E0EF)
+val BackgroundCyan = Color(0xFFCAF0F8)
 val ClockAccentCyan = Color(0xFFADE8F4)
 val BorderNavy = Color(0xFF03045E)
 val OnBackgroundBlack = Color(0xFF000000)

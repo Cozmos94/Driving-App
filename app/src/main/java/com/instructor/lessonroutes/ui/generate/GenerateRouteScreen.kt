@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -752,7 +755,19 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
     val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = false)
     AlertDialog(
         onDismissRequest = onDismiss,
-        text = { TimePicker(state = state) },
+        text = {
+            // Deliberately opts back OUT of the app's own blue theme here --
+            // Corey asked for the clock to stay unstyled (plain Material3
+            // defaults), unlike everything else in this app which explicitly
+            // fills in every color role (see Color.kt/Theme.kt's own doc
+            // comments on why). A fresh, un-customized MaterialTheme -- still
+            // respecting the system's dark/light setting, just not
+            // LessonRoutesTheme's custom palette -- gets that without
+            // affecting any other composable's colors.
+            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                TimePicker(state = state)
+            }
+        },
         confirmButton = {
             TextButton(onClick = { onConfirm(LocalTime.of(state.hour, state.minute)) }) { Text("OK") }
         },
