@@ -60,12 +60,29 @@ suspend fun searchAddress(query: String): List<GeocodeResult> {
     }
 }
 
+// NSW_RECT_FILTER above only bounds a lat/lon rectangle -- it's a real box,
+// not NSW's actual state border, so it still lets through genuine
+// Victoria/ACT/South Australia/Queensland addresses that happen to fall
+// inside that rectangle (confirmed live: e.g. "Wodonga VIC" -- just across
+// the Murray from Albury NSW -- geocodes fine and sits well inside the box).
+// Geoapify's own response carries a real state_code field per result
+// (confirmed live: "NSW" for a real NSW address, "VIC" for Wodonga) --
+// filtering on that is an actual state-boundary check, not another
+// approximate box, so this is the real fix for "restrict to NSW addresses
+// only" rather than the rect filter's rough margin.
+private const val NSW_STATE_CODE = "NSW"
+
 private fun parseResults(json: String): List<GeocodeResult> {
     // format=json gives {"results":[...]}, not a bare array (unlike Nominatim's
     // response shape this replaced) -- confirmed live.
     val array = org.json.JSONObject(json).optJSONArray("results") ?: JSONArray()
     return (0 until array.length()).mapNotNull { i ->
         val item = array.optJSONObject(i) ?: return@mapNotNull null
+        // Excludes a result with no state_code at all, not just a wrong one --
+        // can't confirm it's actually NSW either way, and "NSW addresses only"
+        // means erring toward excluding an unconfirmed result over letting a
+        // possibly-interstate one through.
+        if (!item.optString("state_code").equals(NSW_STATE_CODE, ignoreCase = true)) return@mapNotNull null
         val label = item.optString("formatted").takeIf { it.isNotBlank() } ?: return@mapNotNull null
         GeocodeResult(label = label, location = LatLng(item.getDouble("lat"), item.getDouble("lon")))
     }
