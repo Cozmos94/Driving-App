@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TimePickerDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -86,6 +87,7 @@ import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchRoundabouts
 import com.instructor.lessonroutes.data.remote.searchAddress
 import com.instructor.lessonroutes.data.routegen.FilterPreference
+import com.instructor.lessonroutes.data.routegen.FilterSummary
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.instructor.lessonroutes.data.routegen.RouteGenerationFilters
 import com.instructor.lessonroutes.data.routegen.ScoringData
@@ -546,28 +548,20 @@ fun GenerateRouteScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Trip time", fontWeight = FontWeight.Bold)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(startTime?.let { formatTime(it) } ?: "Start time (now)")
-                        }
+                    OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.weight(1f)) {
+                        Text(startTime?.let { formatTime(it) } ?: "Start time (now)")
                     }
-                    Column(modifier = Modifier.weight(1f)) {
-                        OutlinedButton(onClick = { showEndTimePicker = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(endTime?.let { formatTime(it) } ?: "End time")
-                        }
-                        // An end time is mandatory (canGenerate requires
-                        // targetDurationMinutes != null) -- bold red, directly
-                        // under the button it's asking about, so it reads as a
-                        // real requirement rather than a general hint below the
-                        // whole row. Disappears the moment endTime is set (valid
-                        // or not) -- either the real duration or the "must be
-                        // after start" message below takes over from there.
-                        if (endTime == null) {
-                            Text("Set End time", color = Color(0xFFD21F3C), fontWeight = FontWeight.Bold)
-                        }
+                    OutlinedButton(onClick = { showEndTimePicker = true }, modifier = Modifier.weight(1f)) {
+                        Text(endTime?.let { formatTime(it) } ?: "End time")
                     }
                 }
                 when {
+                    // An end time is mandatory (canGenerate requires
+                    // targetDurationMinutes != null) -- bold red so it reads as
+                    // a real requirement, not just a hint, until it's satisfied.
+                    // Disappears the moment endTime is set (valid or not) --
+                    // either the real duration or the "must be after start"
+                    // message below takes over from there.
                     targetDurationMinutes != null -> Text(
                         buildAnnotatedString {
                             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Duration") }
@@ -575,11 +569,12 @@ fun GenerateRouteScreen(
                         },
                     )
                     endTime != null -> Text("End time must be after start time")
-                    else -> Unit
+                    else -> Text("Set End time", color = Color(0xFFD21F3C), fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Optional Filters", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
                 // Each on its own line, and a step down from "Optional Filters"
                 // itself (Medium, not Bold) -- a lighter emphasis than the
                 // section header above, but still calling out the label word
@@ -658,9 +653,16 @@ fun GenerateRouteScreen(
     if (showSaveDialog) {
         val allProfiles by profileDao.getAllProfiles().collectAsState(initial = emptyList())
         var selectedProfileIds by remember { mutableStateOf(setOfNotNull(preselectedProfileId)) }
+        // Computed fresh each time the dialog opens (not `remember`ed across
+        // recompositions of this whole screen) -- generatedRoute/filters can
+        // only change while the dialog is closed anyway (Regenerate closes it
+        // first), so this always reflects the route actually being saved.
+        val route = generatedRoute
+        val initialDescription = route?.let { buildAutoDescription(it, filters.summarize()) } ?: ""
         SaveGeneratedRouteDialog(
             allProfiles = allProfiles,
             selectedProfileIds = selectedProfileIds,
+            initialDescription = initialDescription,
             onToggleProfile = { id ->
                 selectedProfileIds = if (selectedProfileIds.contains(id)) selectedProfileIds - id else selectedProfileIds + id
             },
@@ -671,13 +673,14 @@ fun GenerateRouteScreen(
                 }
             },
             onDismiss = { showSaveDialog = false },
-            onConfirm = { name, notes ->
-                val route = generatedRoute ?: return@SaveGeneratedRouteDialog
+            onConfirm = { name, description, notes ->
+                val savedRoute = generatedRoute ?: return@SaveGeneratedRouteDialog
                 val filterSummary = filters.summarize()
                 scope.launch {
                     val id = dao.insertRoute(
                         Route(
                             name = name,
+                            description = description.ifBlank { null },
                             notes = notes.ifBlank { null },
                             dateCreated = System.currentTimeMillis(),
                             avoidFilters = filterSummary.avoidCsv,
@@ -685,7 +688,7 @@ fun GenerateRouteScreen(
                         ),
                     )
                     dao.insertPoints(
-                        route.points.mapIndexed { index, point ->
+                        savedRoute.points.mapIndexed { index, point ->
                             RoutePoint(
                                 routeId = id,
                                 latitude = point.latitude,
@@ -828,7 +831,28 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
                 lightColorScheme()
             }
             MaterialTheme(colorScheme = clockColorScheme) {
-                TimePicker(state = state)
+                // The AM/PM selector's own default colors read from
+                // tertiary/tertiaryContainer, not primary -- and Material
+                // You's tertiary tonal palette is deliberately a different,
+                // often pink/purple-leaning hue family from primary/secondary
+                // (by design, for contrast), regardless of light/dark or
+                // which real device this runs on. Confirmed as the actual
+                // source of the "pink/purple behind the AM/PM" report, not a
+                // leftover from the app's own theme. Remapped to the
+                // primary/surface roles instead so it reads as a plain
+                // selected/unselected control, still fully derived from
+                // clockColorScheme above (dynamic-or-baseline), just not the
+                // one M3 role that happens to trend pink.
+                TimePicker(
+                    state = state,
+                    colors = TimePickerDefaults.colors(
+                        periodSelectorSelectedContainerColor = clockColorScheme.primary,
+                        periodSelectorSelectedContentColor = clockColorScheme.onPrimary,
+                        periodSelectorUnselectedContainerColor = clockColorScheme.surface,
+                        periodSelectorUnselectedContentColor = clockColorScheme.onSurface,
+                        periodSelectorBorderColor = clockColorScheme.outline,
+                    ),
+                )
             }
         },
         confirmButton = {
@@ -842,12 +866,17 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
 private fun SaveGeneratedRouteDialog(
     allProfiles: List<StudentProfile>,
     selectedProfileIds: Set<Long>,
+    /** Auto-generated summary (duration/distance/filters) to start the
+     * Description field with -- see [buildAutoDescription]. Just a starting
+     * point: fully editable/overridable below, not locked in. */
+    initialDescription: String,
     onToggleProfile: (Long) -> Unit,
     onCreateProfile: (String) -> Unit,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, notes: String) -> Unit,
+    onConfirm: (name: String, description: String, notes: String) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf(initialDescription) }
     var notes by remember { mutableStateOf("") }
 
     AlertDialog(
@@ -860,6 +889,12 @@ private fun SaveGeneratedRouteDialog(
                     onValueChange = { name = it },
                     label = { Text("Name") },
                     singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
@@ -877,10 +912,23 @@ private fun SaveGeneratedRouteDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name.ifBlank { "Generated route" }, notes) }) { Text("Save") }
+            TextButton(onClick = { onConfirm(name.ifBlank { "Generated route" }, description, notes) }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** Auto-generated starting point for a generated route's Description field --
+ * duration/distance plus which categories it was actually generated to
+ * avoid/prefer, if any. Purely a convenience default; the instructor can
+ * edit or replace it entirely before saving (see [SaveGeneratedRouteDialog]). */
+private fun buildAutoDescription(route: GeneratedRoute, filterSummary: FilterSummary): String {
+    val base = "${formatDuration(route.durationSeconds)} drive, ${formatDistance(route.distanceMeters)}."
+    val filterParts = buildList {
+        if (filterSummary.avoid.isNotEmpty()) add("Avoid: ${filterSummary.avoid.joinToString(", ")}.")
+        if (filterSummary.prefer.isNotEmpty()) add("Prefer: ${filterSummary.prefer.joinToString(", ")}.")
+    }
+    return (listOf(base) + filterParts).joinToString(" ")
 }
 
 /** [ScoringData] plus the display name of any requested category that ended up

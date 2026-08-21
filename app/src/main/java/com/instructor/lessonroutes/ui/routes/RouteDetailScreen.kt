@@ -104,6 +104,9 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
                 }
+                if (!current.route.description.isNullOrBlank()) {
+                    Text(text = current.route.description, modifier = Modifier.padding(16.dp))
+                }
                 if (!current.route.notes.isNullOrBlank()) {
                     Text(text = current.route.notes, modifier = Modifier.padding(16.dp))
                 }
