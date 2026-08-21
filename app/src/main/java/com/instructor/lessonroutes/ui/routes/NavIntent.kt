@@ -18,8 +18,8 @@ import kotlin.math.hypot
  * only ~9 points can leave Maps free to find a substantially shorter path
  * between two of them, especially for a there-and-back/loop route where the
  * same small waypoint budget has to constrain both legs. A generated route's
- * *own* stated duration (shown in this app, computed by OSRM for the actual
- * polyline) can therefore end up noticeably longer than what Maps recomputes
+ * *own* stated duration (shown in this app, computed by the routing API for
+ * the actual polyline) can therefore end up noticeably longer than what Maps recomputes
  * once handed off -- that gap is a known, unavoidable trade-off of this
  * free/keyless approach, not evidence the generated duration itself is wrong. */
 private const val MAX_NAV_WAYPOINTS = 9
@@ -71,7 +71,7 @@ fun openInNavApp(context: Context, routePoints: List<LatLng>) {
 
 /**
  * Picks up to [maxPoints] points evenly spaced by *distance* along [points], not
- * by index. An OSRM/GPS polyline isn't uniformly spaced -- far more vertices on
+ * by index. A routed/GPS polyline isn't uniformly spaced -- far more vertices on
  * curvy roads, far fewer on a long straight stretch (a highway run, say) -- so
  * index-based sampling could leave a long straight section with zero waypoints
  * at all, handing Google Maps complete freedom to substitute a totally different

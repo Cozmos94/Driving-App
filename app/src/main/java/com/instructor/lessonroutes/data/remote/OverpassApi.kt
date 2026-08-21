@@ -126,11 +126,12 @@ suspend fun fetchMergeLaneProxies(center: LatLng, radiusDegrees: Double = QUIET_
 
 /**
  * Motorway/trunk roads near [center] -- used for the route generator's Highways
- * avoid/prefer scoring (RouteGenerator.kt), both directions. An OSRM
- * `exclude=motorway` hard constraint was tried for the Avoid case, but OSRM's
- * public demo server rejects that parameter outright for every value (confirmed
- * directly against the live API) -- so Highways is soft proximity scoring like
- * every other filter category, not a real routing constraint either way.
+ * avoid/prefer scoring (RouteGenerator.kt) as a secondary tie-breaker. Highways
+ * ->Avoid itself is now a real hard routing constraint (Geoapify's
+ * `avoid=highways`, confirmed live against the API -- see GeoapifyRoutingApi.kt's
+ * doc comment; an earlier OSRM-backed `exclude=motorway` attempt was rejected
+ * outright by that server for every value). This data is still used for
+ * Highways->Prefer, which has no real "prefer highways" constraint available.
  */
 suspend fun fetchMajorRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> =
     fetchWaysByHighwayTag(center, radiusDegrees, "motorway|trunk", "major-roads")

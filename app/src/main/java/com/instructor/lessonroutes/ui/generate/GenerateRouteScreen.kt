@@ -172,9 +172,8 @@ fun GenerateRouteScreen(
     val effectiveDestination = if (loopBackToStart) currentLocation else destination
 
     // Debounced live search: waits 500ms after the user stops typing before
-    // actually calling Nominatim, so results appear as-you-type without firing a
-    // request per keystroke (Nominatim's usage policy asks for ~1 request/second
-    // at most). Not gated on loopBackToStart -- the search box is always visible
+    // actually calling the geocoding API, so results appear as-you-type without
+    // firing a request per keystroke. Not gated on loopBackToStart -- the search box is always visible
     // now, and picking a result unchecks "loop back to start" itself, so search
     // should always respond to typing regardless of the checkbox's state.
     LaunchedEffect(searchQuery) {
@@ -266,18 +265,6 @@ fun GenerateRouteScreen(
         generationError = null
         dataWarning = null
         isGenerating = true
-        // fetchAlternatives adds one extra sequential OSRM call per bearing
-        // (after that bearing's own refinement converges), so it's only turned
-        // on for the filters that actually need a meaningfully different path
-        // shape per bearing to be worth scoring against -- Highways/Roundabouts/
-        // Merging lanes, none of which OSRM can be told to route around
-        // directly (unlike a real exclude constraint, which doesn't exist here
-        // -- see RouteGenerator's doc comments). Also read outside the
-        // withTimeoutOrNull block below so it's available for the timeout
-        // diagnostic message even if the block itself gets cancelled.
-        val needsAlternatives = filters.highways != FilterPreference.NONE ||
-            filters.roundabouts != FilterPreference.NONE ||
-            filters.mergingLanes != FilterPreference.NONE
         // Populated *during* the withTimeoutOrNull block below, not read from its
         // return value -- if the 45s ceiling fires, the block's own result is
         // discarded entirely, but these plain vars keep whatever they were last
@@ -290,9 +277,10 @@ fun GenerateRouteScreen(
         var candidateCount = 0
         scope.launch {
             try {
-                // Hard ceiling so a slow/stuck network call (OSRM, Overpass, or
-                // TfNSW) can never leave the spinner running forever -- surfaces
-                // as a timeout error instead. Widened 20s->45s: the 20s budget
+                // Hard ceiling so a slow/stuck network call (Geoapify routing,
+                // Overpass, or TfNSW) can never leave the spinner running
+                // forever -- surfaces as a timeout error instead. Widened
+                // 20s->45s: the 20s budget
                 // left little slack once a slow-but-not-timed-out-itself Overpass
                 // response ate into it (see SCORING_FETCH_TIMEOUT_MS's own 8s
                 // per-category bound below), and typical-case generation is still
@@ -303,7 +291,7 @@ fun GenerateRouteScreen(
                     // Genuinely independent of each other -- run concurrently
                     // rather than one after the other, so a slow Overpass
                     // response (a heavily loaded shared community server) isn't
-                    // just added on top of however long OSRM's candidates take.
+                    // just added on top of however long the routing API's candidates take.
                     val scoringDataDeferred = async {
                         buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
                     }
@@ -313,7 +301,6 @@ fun GenerateRouteScreen(
                             end,
                             minutes,
                             avoidHighways = filters.highways == FilterPreference.AVOID,
-                            fetchAlternatives = needsAlternatives,
                             maxRadiusKm = selectedRadiusKm,
                         )
                     }
@@ -351,11 +338,8 @@ fun GenerateRouteScreen(
                                 "${emptyScoringCategories.joinToString(", ")}. Their server can be slow, " +
                                 "overloaded, or briefly down; try again, or turn those filters off."
                         candidateCount == 0 ->
-                            "Couldn't generate a route — the routing service (OSRM) didn't return a route " +
+                            "Couldn't generate a route — the routing service didn't return a route " +
                                 "in time. This isn't caused by your filters; check your connection and try again."
-                        needsAlternatives ->
-                            "Couldn't generate a route in time — try again, or turn off Highways/Roundabouts/" +
-                                "Merging lanes (they add extra route-checking time per candidate)."
                         else -> "Couldn't generate a route in time — check your connection and try again."
                     }
                 } else {

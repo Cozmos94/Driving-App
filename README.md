@@ -163,6 +163,29 @@ things independently, both already worked around in this repo:
 This isn't specific to this app — it'll affect any networked Android dev/emulator
 work on a Novigi machine.
 
+## Required setup: Geoapify API key
+
+Unlike the TfNSW key below (optional, only disables some overlays), this one is
+**required** — map tiles, address search, and the trip generator's routing all
+depend on it, replacing the previous free/keyless stack (OpenFreeMap tiles,
+Nominatim geocoding, OSRM routing — the "Trip generator" section further down
+still describes the OSRM-era design/history; that's superseded by
+[GeoapifyRoutingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyRoutingApi.kt)/
+[GeoapifyGeocodingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyGeocodingApi.kt)
+now, most notably: Highways→Avoid is a *real* routing constraint via
+`avoid=highways`, confirmed live, not just soft proximity scoring). Sign up free
+at [geoapify.com](https://www.geoapify.com) (no card required; free tier is
+100k+ requests/month, far beyond this app's real usage), generate an API key,
+then add it to `local.properties` (git-ignored, never committed):
+
+```properties
+GEOAPIFY_API_KEY=your-key-here
+```
+
+Read into `BuildConfig.GEOAPIFY_API_KEY` at build time, same pattern as
+`TFNSW_API_KEY` below. With no key set (empty string), map tiles, address
+search, and trip generation will all fail outright — this one isn't optional.
+
 ## Phase 2 setup: Transport for NSW API key
 
 Needed for the map overlays (school zones, live hazards, etc.) — not needed for

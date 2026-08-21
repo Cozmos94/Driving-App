@@ -109,9 +109,9 @@ fun CreateRouteScreen(
     }
 
     // Tap mode: hand-placed points are joined by straight lines by default, which
-    // rarely matches the real road -- snap them through OSRM (free, keyless, same
-    // "best effort" posture as the Overpass calls elsewhere in this app) so the
-    // in-progress preview follows actual roads. Debounced so rapid taps don't fire
+    // rarely matches the real road -- snap them through Geoapify's Routing API
+    // (same account as the map tiles/geocoding -- see GeoapifyRoutingApi.kt) so
+    // the in-progress preview follows actual roads. Debounced so rapid taps don't fire
     // a request per tap; falls back to the straight-line points on failure or while
     // a fetch is in flight. Record mode is untouched -- a live GPS trail is already
     // dense real-road data and shouldn't be rerouted through a routing engine.

@@ -32,6 +32,7 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.instructor.lessonroutes.BuildConfig
 import com.instructor.lessonroutes.data.SchoolZone
 import com.instructor.lessonroutes.data.SpeedCamera
 import com.instructor.lessonroutes.data.SpeedCameraType
@@ -60,8 +61,13 @@ import kotlin.math.hypot
 import kotlin.math.sin
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-/** Free, keyless vector tile style. Liberty is OpenFreeMap's general-purpose style. */
-const val OPENFREEMAP_LIBERTY_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+/** Geoapify's vector tile style.json (needs [BuildConfig.GEOAPIFY_API_KEY] -- see
+ * local.properties/README). Replaces OpenFreeMap's free/keyless tiles -- osm-liberty
+ * is Geoapify's equivalent of the "liberty" style this app used before, kept for
+ * visual continuity. Confirmed live that this style.json URL resolves correctly
+ * (returns a valid MapLibre style with its own sprite/glyphs URLs already filled
+ * in) before switching. */
+val GEOAPIFY_STYLE_URL = "https://maps.geoapify.com/v1/styles/osm-liberty/style.json?apiKey=${BuildConfig.GEOAPIFY_API_KEY}"
 
 /**
  * Fallback camera when location permission is denied or a fix isn't available yet
@@ -141,7 +147,7 @@ private const val RADIUS_CIRCLE_SEGMENTS = 64
 private const val EMPTY_FEATURE_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
 
 /**
- * The shared map surface used by every screen: renders free OpenFreeMap tiles inside an
+ * The shared map surface used by every screen: renders Geoapify's vector tiles inside an
  * `AndroidView`, optionally centers on the device's location or fits a saved route's
  * bounds, draws a route polyline + waypoint markers, shows a live position dot, renders
  * live hazards (incidents as red dots, roadworks with a construction icon), and can
@@ -161,7 +167,7 @@ private const val EMPTY_FEATURE_COLLECTION = """{"type":"FeatureCollection","fea
 @Composable
 fun RouteMapView(
     modifier: Modifier = Modifier,
-    styleUrl: String = OPENFREEMAP_LIBERTY_STYLE_URL,
+    styleUrl: String = GEOAPIFY_STYLE_URL,
     routePoints: List<LatLng> = emptyList(),
     waypoints: List<LatLng> = emptyList(),
     liveLocation: LatLng? = null,

@@ -17,15 +17,16 @@ private const val LOG_TAG = "RoadSnappedRoute"
  * The polyline to actually draw for a saved route. Tap-created routes (every point
  * has a null `timestamp` -- see RoutePoint's own doc) are a handful of hand-placed
  * points that would otherwise be joined by straight lines, which rarely matches
- * the real road; snapping them through OSRM (see OsrmApi.kt) turns them into a
- * path that follows the actual roads. Recorded routes (any point has a timestamp)
- * are already a dense real-GPS trail -- already looks like a road -- so they're
- * left exactly as recorded rather than run through a routing engine that could
- * reroute around a deliberate off-road/wrong-lane maneuver the instructor recorded
- * on purpose (e.g. practicing a driveway pull-in).
+ * the real road; snapping them through Geoapify's Routing API (see
+ * GeoapifyRoutingApi.kt) turns them into a path that follows the actual roads.
+ * Recorded routes (any point has a timestamp) are already a dense real-GPS
+ * trail -- already looks like a road -- so they're left exactly as recorded
+ * rather than run through a routing engine that could reroute around a
+ * deliberate off-road/wrong-lane maneuver the instructor recorded on purpose
+ * (e.g. practicing a driveway pull-in).
  *
- * Falls back to the original straight-line points if OSRM fails or hasn't
- * returned yet, so the map never shows nothing while a fetch is in flight.
+ * Falls back to the original straight-line points if the routing call fails or
+ * hasn't returned yet, so the map never shows nothing while a fetch is in flight.
  */
 @Composable
 fun rememberDisplayRoutePoints(points: List<RoutePoint>): List<LatLng> {

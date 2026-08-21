@@ -4,13 +4,33 @@ Orientation for a fresh Claude Code session picking this project up. Read
 `spec.md` (original design) and `README.md` (build status, data sources, known
 gotchas) for full detail — this file is the short version plus pointers.
 
+**This file's "Current status"/"Trip generator" sections below are stale in one
+important way**: map tiles, address geocoding, and trip-generator routing were
+switched from the free/keyless stack described there (OpenFreeMap, Nominatim,
+OSRM) to **Geoapify** (needs `GEOAPIFY_API_KEY` in `local.properties` — see
+README's "Required setup" section, now first). This was a real, deliberate
+upgrade, not just a swap: Geoapify's routing API supports `avoid=highways` as a
+genuine hard constraint (confirmed live), fixing what used to be Highways→Avoid's
+long-standing soft-scoring-only limitation, and its geocoding blends in the
+OpenAddresses dataset, giving better AU house-number coverage than Nominatim
+alone (also confirmed live). See
+[GeoapifyRoutingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyRoutingApi.kt)/
+[GeoapifyGeocodingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyGeocodingApi.kt)
+(replacing the deleted OsrmApi.kt/NominatimApi.kt) and
+[RouteMapView.kt](app/src/main/java/com/instructor/lessonroutes/ui/map/RouteMapView.kt)'s
+`GEOAPIFY_STYLE_URL`. **Not yet tested on-device** — the live API calls
+themselves were verified directly (routing, geocoding, tile style.json), but the
+actual app hasn't been rebuilt/run with this change yet as of this handoff.
+
 ## What this is
 
-An Android app (Kotlin, Jetpack Compose, MapLibre + OpenFreeMap tiles, Room) for a
+An Android app (Kotlin, Jetpack Compose, MapLibre + Geoapify tiles, Room) for a
 NSW driving instructor to record/save/follow custom routes with students, plus a
 live map home screen showing hazards, high-traffic-volume roads, school zones,
 speed cameras, and a "quiet roads" heuristic — all from free NSW open data. Zero
-running cost, no billing account, no login/cloud sync. Package:
+running cost, no billing account, no login/cloud sync (Geoapify above is the one
+exception to "no billing account" — a free-tier account with no card required,
+not literally zero-account). Package:
 `com.instructor.lessonroutes`. Repo: https://github.com/Cozmos94/Driving-App
 
 ## Current status (as of this handoff)

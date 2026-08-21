@@ -51,7 +51,8 @@ fun SettingsScreen(routeDao: RouteDao, onBack: () -> Unit) {
 
             Text("Data sources", fontWeight = FontWeight.Bold)
             Text(
-                "Map tiles: © OpenFreeMap, © OpenStreetMap contributors.\n" +
+                "Map tiles, address search, and route planning: © Geoapify, " +
+                    "© OpenMapTiles, © OpenStreetMap contributors.\n" +
                     "Live hazards, traffic volume, school zones, speed cameras: " +
                     "Transport for NSW Open Data Hub.\n" +
                     "Quiet-road estimate: OpenStreetMap road classification (a heuristic, " +

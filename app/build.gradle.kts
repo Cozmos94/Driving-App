@@ -19,6 +19,19 @@ val tfnswApiKey: String = run {
     properties.getProperty("TFNSW_API_KEY", "")
 }
 
+// Same pattern as tfnswApiKey above. Geoapify (maps/tiles + geocoding + routing,
+// replacing OpenFreeMap/Nominatim/OSRM) has a free tier with no card required
+// (100k+/day-ish depending on the API, plenty for this app's actual usage) but
+// still needs a real account/key -- see README's Geoapify section.
+val geoapifyApiKey: String = run {
+    val properties = Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { properties.load(it) }
+    }
+    properties.getProperty("GEOAPIFY_API_KEY", "")
+}
+
 android {
     namespace = "com.instructor.lessonroutes"
     compileSdk = 34
@@ -30,6 +43,7 @@ android {
         versionCode = 1
         versionName = "0.1"
         buildConfigField("String", "TFNSW_API_KEY", "\"$tfnswApiKey\"")
+        buildConfigField("String", "GEOAPIFY_API_KEY", "\"$geoapifyApiKey\"")
     }
 
     buildTypes {
