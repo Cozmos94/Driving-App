@@ -3,6 +3,7 @@ package com.instructor.lessonroutes.ui.map
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -39,8 +40,9 @@ import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchQuietRoads
+import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
-import com.instructor.lessonroutes.ui.theme.ButtonAccentBlue
+import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.data.remote.matchRoadGeometry
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -190,17 +192,29 @@ fun LiveMapScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // Corey's explicit choice: these two (plus Generate route on the
-            // trip-generator screen) get their own #00B4D8, distinct from the
-            // app's general primary/secondary button colors elsewhere. Was
-            // #0096C7 briefly before Corey settled on this shade instead.
+            // trip-generator screen) get their own look, distinct from the
+            // app's general primary/secondary button colors elsewhere. Was a
+            // filled #00B4D8/#0096C7 briefly before Corey settled on white
+            // with a SelectedBlue border instead.
             val liveMapButtonColors = ButtonDefaults.buttonColors(
-                containerColor = ButtonAccentBlue,
+                containerColor = BackgroundWhite,
                 contentColor = BorderNavy,
             )
-            Button(onClick = onPlanRouteClick, modifier = Modifier.weight(1f), colors = liveMapButtonColors) {
+            val liveMapButtonBorder = BorderStroke(1.dp, SelectedBlue)
+            Button(
+                onClick = onPlanRouteClick,
+                modifier = Modifier.weight(1f),
+                colors = liveMapButtonColors,
+                border = liveMapButtonBorder,
+            ) {
                 Text("Student Profiles")
             }
-            Button(onClick = onGenerateTripClick, modifier = Modifier.weight(1f), colors = liveMapButtonColors) {
+            Button(
+                onClick = onGenerateTripClick,
+                modifier = Modifier.weight(1f),
+                colors = liveMapButtonColors,
+                border = liveMapButtonBorder,
+            ) {
                 Text("Plan a trip")
             }
         }

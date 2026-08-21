@@ -4,6 +4,7 @@ import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -97,8 +98,9 @@ import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.routes.openInNavApp
+import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
-import com.instructor.lessonroutes.ui.theme.ButtonAccentBlue
+import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
@@ -612,11 +614,14 @@ fun GenerateRouteScreen(
                     onClick = { onGenerateClick() },
                     enabled = canGenerate && !isGenerating,
                     modifier = Modifier.fillMaxWidth(),
-                    // Same #00B4D8 as the live map's "Plan a trip"/"Student
+                    // Same look as the live map's "Plan a trip"/"Student
                     // Profiles" buttons -- Corey's explicit choice for this
                     // button specifically, distinct from the app's general
-                    // primary/secondary button colors elsewhere.
-                    colors = ButtonDefaults.buttonColors(containerColor = ButtonAccentBlue, contentColor = BorderNavy),
+                    // primary/secondary button colors elsewhere. Was a filled
+                    // #00B4D8 briefly before Corey settled on white with a
+                    // SelectedBlue border instead.
+                    colors = ButtonDefaults.buttonColors(containerColor = BackgroundWhite, contentColor = BorderNavy),
+                    border = BorderStroke(1.dp, SelectedBlue),
                 ) {
                     Text(if (isGenerating) "Generating…" else "Generate route")
                 }
