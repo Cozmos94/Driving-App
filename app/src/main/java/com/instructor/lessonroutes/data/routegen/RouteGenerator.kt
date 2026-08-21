@@ -122,14 +122,23 @@ private const val AVG_SPEED_KMH = 40.0
 // Bearings run in parallel, but each bearing's refinement rounds are inherently
 // sequential (each depends on the previous round's response) -- that per-
 // bearing round-trip chain, not the bearing count, is the dominant latency cost.
-// 3 directions x up to 2 rounds = up to 6 routing calls per generation (was
-// 4x3=12, 8x4=32 originally) -- cut for speed (target: well under 10s typical)
-// at some cost to candidate diversity/duration precision. A looser tolerance
-// (25%, was 15%) means the *common* case converges in a single round instead of
-// needing a second one, which matters more for wall-clock time than the round
-// cap itself.
+// 3 directions x up to 3 rounds = up to 9 routing calls per generation (was
+// 4x3=12, 8x4=32 originally). A looser tolerance (25%, was 15%) means the
+// *common* case still converges in a single round -- the extra round below
+// only gets used when the first correction wasn't enough.
+//
+// MAX_RADIUS_ITERATIONS was cut to 2 for speed in an earlier session, but that
+// leaves only ONE correction step: round 1 measures the initial guess, round 2
+// applies one ratio-scaled correction (clamped to at most 2.5x) and whatever
+// that produces is final, converged or not. Confirmed as a real cause of a
+// badly-off result (target 2h16m, generated 3h19m, no radius cap involved) --
+// AVG_SPEED_KMH's flat 40km/h assumption can be far from a real route's actual
+// speed, so the single correction can itself overshoot (or still undershoot)
+// by a lot with no further round to walk it back. Restored to 3 so a bad
+// single correction gets a second chance to converge instead of being final
+// by construction.
 private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
-private const val MAX_RADIUS_ITERATIONS = 2
+private const val MAX_RADIUS_ITERATIONS = 3
 private const val DURATION_TOLERANCE_RATIO = 0.25
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
@@ -307,6 +316,17 @@ private suspend fun refineCandidate(
         }
         best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
+        // Visibility into each round's actual result -- previously only a
+        // failure logged anything at all, so a badly-converged (but
+        // technically successful) result left zero trace of *why* it landed
+        // where it did. See MAX_RADIUS_ITERATIONS' own doc comment for the
+        // real mismatch this helped diagnose.
+        Log.d(
+            LOG_TAG,
+            "refineCandidate: bearing=$bearingDegrees iteration=$iteration radius=${"%.2f".format(radiusKm)}km " +
+                "duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
+                "target=${"%.1f".format(targetSeconds / 60.0)}min ratio=${"%.2f".format(ratio)}",
+        )
         if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) {
             converged = true
         } else {

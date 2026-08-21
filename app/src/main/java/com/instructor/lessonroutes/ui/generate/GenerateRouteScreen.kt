@@ -400,6 +400,16 @@ fun GenerateRouteScreen(
                             "This route came in well short of your target time — your ${radiusKm?.toInt()}km " +
                                 "radius didn't allow enough detour to reach it. Try a larger radius for a " +
                                 "closer match to your target duration."
+                        // No radius cap to blame this time -- a real, confirmed
+                        // case (target 2h16m, generated 3h19m, no radius set)
+                        // where the duration heuristic itself missed by a lot.
+                        // Surfaced rather than left silent, since the generated
+                        // number is otherwise indistinguishable from a
+                        // well-converged one.
+                        radiusKm == null && durationErrorRatio > 0.25 ->
+                            "This route's time missed your target by a fair bit (wanted " +
+                                "${formatDuration(minutes * 60.0)}, got ${formatDuration(result.durationSeconds)}) " +
+                                "— try Regenerate, or a different destination/time."
                         else -> null
                     }
                 }
