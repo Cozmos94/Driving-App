@@ -13,7 +13,10 @@ import android.os.Bundle
 import android.view.Gravity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -22,9 +25,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -209,6 +214,25 @@ fun RouteMapView(
     onHighVolumeClick: ((HighVolumeRoad) -> Unit)? = null,
     onQuietRoadClick: (() -> Unit)? = null,
 ) {
+    // Fails loud instead of silently: an empty/missing key means the style.json
+    // request gets rejected and MapLibre's map.setStyle() callback never fires
+    // (see below) -- previously that just left a blank view on every screen that
+    // uses this composable, with zero indication of why. GEOAPIFY_API_KEY comes
+    // from local.properties, which is git-ignored *by design* (must never be
+    // committed) -- confirmed as a real cause of "the map disappeared" after
+    // pulling the Geoapify switch onto a checkout whose own local.properties
+    // was never updated (git-ignored files don't travel with git pull/push).
+    if (BuildConfig.GEOAPIFY_API_KEY.isBlank()) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "Map unavailable — no Geoapify API key configured.\n" +
+                    "Add GEOAPIFY_API_KEY to local.properties (see README) and rebuild.",
+                modifier = Modifier.padding(24.dp),
+            )
+        }
+        return
+    }
+
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val mapViewRef = remember { mutableStateOf<MapView?>(null) }
