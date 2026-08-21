@@ -10,6 +10,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -43,6 +44,16 @@ private val LightColors = lightColorScheme(
     outlineVariant = OutlineVariantLight,
     inverseSurface = InverseSurfaceLight,
     inverseOnSurface = InverseOnSurfaceLight,
+    // Left unset, this defaults to `primary` -- M3 blends this tint over any
+    // elevated Surface (AlertDialog, Card, DropdownMenu, the app's own
+    // GeneratingDialog, etc.) proportional to its elevation, via
+    // surfaceColorAtElevation(). That's why colors that were exact flat hex
+    // values in Color.kt were rendering visibly different (blended toward
+    // primary blue) once shown inside anything elevated -- confirmed as the
+    // real cause of Corey's "these are the colours, they don't look the same
+    // in the app" report. Transparent disables that blending entirely, so
+    // every surface stays exactly the literal hex it was given.
+    surfaceTint = Color.Transparent,
 )
 
 private val DarkColors = darkColorScheme(
@@ -68,6 +79,8 @@ private val DarkColors = darkColorScheme(
     outlineVariant = OutlineVariantDark,
     inverseSurface = InverseSurfaceDark,
     inverseOnSurface = InverseOnSurfaceDark,
+    // See LightColors' surfaceTint comment above -- same fix, same reason.
+    surfaceTint = Color.Transparent,
 )
 
 @Composable
