@@ -386,11 +386,17 @@ fun GenerateRouteScreen(
                     // that constant is private, and duplicating one plain ratio check
                     // here isn't worth exposing it just for this).
                     val durationErrorRatio = abs(result.durationSeconds - minutes * 60.0) / (minutes * 60.0)
-                    // A radius cap takes priority over the target duration by design
-                    // (generateCandidateRoutes/pickBestRoute's maxRadiusKm) -- a real,
-                    // confirmed case (target 1h30m, radius capped, generated 34min)
-                    // where the cap was the actual cause, not a generator bug, but with
-                    // no visible signal it read as "the duration target was ignored."
+                    // Generation actively tries to fill the target duration within
+                    // the radius now (RouteGenerator.refineCandidateWithinRadius
+                    // loops through several waypoints, not just one detour point,
+                    // once the radius is set) -- an earlier version treated the
+                    // radius as a ceiling duration was allowed to fall short of
+                    // instead, confirmed wrong by a real report (target 1h30m,
+                    // 10km radius, generated 34min, "hitting the radius barrier
+                    // does not mean the route has to finish"). A miss this large
+                    // now most likely means the road network within the radius
+                    // genuinely couldn't be stretched far enough, not that the
+                    // cap stopped the generator from trying.
                     val radiusLimitedDuration = radiusKm != null && !radiusExceeded && durationErrorRatio > 0.25
                     dataWarning = when {
                         emptyScoringCategories.isNotEmpty() ->
@@ -405,10 +411,18 @@ fun GenerateRouteScreen(
                         radiusExceeded ->
                             "This route goes beyond your ${radiusKm?.toInt()}km radius — no route to this " +
                                 "destination could stay within it. Try a larger radius or a closer destination."
+                        // Generation actively tries to fill the target duration
+                        // within the radius (looping through several waypoints,
+                        // not just one detour point -- see
+                        // RouteGenerator.refineCandidateWithinRadius), so a
+                        // large remaining miss here means the road network
+                        // genuinely confined to that ${radiusKm?.toInt()}km
+                        // area couldn't be stretched far enough, not that the
+                        // radius stopped it from trying.
                         radiusLimitedDuration ->
-                            "This route came in well short of your target time — your ${radiusKm?.toInt()}km " +
-                                "radius didn't allow enough detour to reach it. Try a larger radius for a " +
-                                "closer match to your target duration."
+                            "This route came in short of your target time even using the full " +
+                                "${radiusKm?.toInt()}km radius — there may not be enough road network in that " +
+                                "area to fill it. Try a larger radius."
                         // No radius cap to blame this time -- a real, confirmed
                         // case (target 2h16m, generated 3h19m, no radius set)
                         // where the duration heuristic itself missed by a lot.

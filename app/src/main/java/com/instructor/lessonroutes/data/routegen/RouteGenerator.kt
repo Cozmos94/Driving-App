@@ -7,8 +7,10 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.maplibre.android.geometry.LatLng
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.round
 import kotlin.math.sin
 
 private const val LOG_TAG = "RouteGenerator"
@@ -143,6 +145,14 @@ private const val DURATION_TOLERANCE_RATIO = 0.25
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
 
+// Radius-confined generation (see refineCandidateWithinRadius) chains
+// start + this many "petal" waypoints + destination in one routing call --
+// confirmed live against Geoapify's actual API that even 18 waypoints in one
+// request comes back in ~1.5s with sensible geometry, so this is a
+// comfortable ceiling chosen for request/response size, not a real API
+// limit that was hit.
+private const val MAX_SPOKES = 12
+
 /**
  * How large an area (in degrees, for an Overpass bbox query) the generator might
  * range over for [targetDurationMinutes] -- callers use this to fetch scoring
@@ -164,8 +174,7 @@ private fun initialRadiusKm(targetDurationMinutes: Int): Double {
 }
 
 /**
- * Generates candidate routes from [start] to [destination] (pass the same point
- * for both to plan a loop that returns to where it began) aiming for
+ * Generates candidate routes from [start] to [destination] aiming for
  * [targetDurationMinutes] of driving -- one candidate per compass bearing tried.
  * Doesn't score/pick a winner itself; pair with [pickBestRoute] once filter
  * scoring data is ready. Deliberately split into two functions rather than one
@@ -175,24 +184,39 @@ private fun initialRadiusKm(targetDurationMinutes: Int): Double {
  * server, and needlessly serializing two already-independent slow operations
  * was eating into the same overall time budget for no reason.
  *
- * No free routing API can plan "a route of duration X" directly, so this is a
- * heuristic: try a detour point at each compass bearing around the start/
- * destination midpoint, ask the routing API for its actual drive time, and
- * adjust the detour distance iteratively (up to [MAX_RADIUS_ITERATIONS] times)
- * until it converges near the target.
+ * No free routing API can plan "a route of duration X" directly, so both modes
+ * below are heuristics that ask the routing API for actual drive time and
+ * iteratively adjust something about the route to converge on the target:
+ *
+ * - **No radius cap** ([maxRadiusKm] null): try a single detour point at each
+ *   compass bearing around the start/destination midpoint, adjusting how far out
+ *   that one point sits (up to [MAX_RADIUS_ITERATIONS] times) -- see
+ *   [refineCandidate].
+ * - **Radius cap set**: the radius is a hard spatial boundary the whole trip must
+ *   stay inside, not a ceiling that duration is allowed to fall short of --
+ *   confirmed directly by Corey after an earlier version treated it as the
+ *   latter (a real bug report: 1.5h target, 10km radius, generated 34min, "the
+ *   route needs to stay within the radius... hitting the radius barrier does
+ *   not mean the route has to then go to the destination and finish"). Once a
+ *   single detour point is maxed out at [maxRadiusKm], there's nothing left to
+ *   stretch on that knob -- so this mode instead chains *multiple* waypoints
+ *   ("petals"), each at the full [maxRadiusKm] from [start], adjusting how many
+ *   there are rather than how far out any one of them reaches. See
+ *   [refineCandidateWithinRadius]. Confirmed live against Geoapify's routing API
+ *   that a many-waypoint chain like this both works and produces a genuinely
+ *   long, realistic duration from a small radius (an 8km-radius, 6-petal test
+ *   chain came back as an 85-minute, 84km route) -- not guessed at.
  *
  * @param avoidHighways Passed straight through to the routing API as a real
  * `avoid=highways` constraint (confirmed live -- see GeoapifyRoutingApi.kt's
  * doc comment) -- unlike the previous OSRM-backed implementation, which
  * couldn't enforce this at all and relied purely on post-hoc proximity scoring
  * plus a shorter-implied-distance nudge.
- * @param maxRadiusKm Caps how far from [base] the detour point can be, if set --
- * an instructor-chosen ceiling (e.g. "don't take my student more than 20km from
- * home"), independent of and taking priority over [targetDurationMinutes]'s own
- * detour-distance guess: duration convergence can undershoot its target if
- * hitting it would need a wider detour than this allows, which is the intended
- * trade-off (the radius is a hard-ish ceiling, duration is still just a
- * best-effort target either way -- see this whole function's doc comment).
+ * @param maxRadiusKm Hard ceiling on how far from [start] the trip may range, if
+ * set -- an instructor-chosen boundary (e.g. "don't take my student more than
+ * 10km from home"). Duration is still the real target either way; this changes
+ * *how* the generator tries to hit it, not whether it keeps trying once the
+ * boundary binds.
  *
  * Returns every candidate that converged; empty if every attempt failed outright
  * (e.g. no network).
@@ -204,25 +228,40 @@ suspend fun generateCandidateRoutes(
     avoidHighways: Boolean = false,
     maxRadiusKm: Double? = null,
 ): List<GeneratedRoute> = coroutineScope {
-    val base = midpoint(start, destination)
     val targetSeconds = targetDurationMinutes * 60.0
-    val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
-        .let { if (maxRadiusKm != null) minOf(it, maxRadiusKm) else it }
-    Log.d(
-        LOG_TAG,
-        "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
-            "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
-            "avoidHighways=$avoidHighways, maxRadiusKm=$maxRadiusKm",
-    )
 
-    val candidates = CANDIDATE_BEARINGS_DEGREES
-        .map { bearing ->
-            async {
-                refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways, maxRadiusKm)
+    val candidates = if (maxRadiusKm != null) {
+        Log.d(
+            LOG_TAG,
+            "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
+                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways",
+        )
+        CANDIDATE_BEARINGS_DEGREES
+            .map { bearing ->
+                async {
+                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways)
+                }
             }
-        }
-        .awaitAll()
-        .filterNotNull()
+            .awaitAll()
+            .filterNotNull()
+    } else {
+        val base = midpoint(start, destination)
+        val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
+        Log.d(
+            LOG_TAG,
+            "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
+                "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
+                "avoidHighways=$avoidHighways",
+        )
+        CANDIDATE_BEARINGS_DEGREES
+            .map { bearing ->
+                async {
+                    refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
+                }
+            }
+            .awaitAll()
+            .filterNotNull()
+    }
 
     Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size} candidate route(s) from ${CANDIDATE_BEARINGS_DEGREES.size} bearings")
     candidates
@@ -281,7 +320,9 @@ fun routeExceedsRadius(route: GeneratedRoute, anchor: LatLng, maxRadiusKm: Doubl
     route.points.any { approxDistanceMeters(anchor, it) / 1000.0 > maxRadiusKm }
 
 /** Returns the converged (or best-effort) route for this bearing, or null if
- * every attempt at this bearing failed outright. */
+ * every attempt at this bearing failed outright. Only used when there's no
+ * radius cap -- see [refineCandidateWithinRadius] for that case, which needs a
+ * different knob to turn once a single detour point's reach is maxed out. */
 private suspend fun refineCandidate(
     start: LatLng,
     destination: LatLng,
@@ -290,7 +331,6 @@ private suspend fun refineCandidate(
     initialRadiusKm: Double,
     targetSeconds: Double,
     avoidHighways: Boolean,
-    maxRadiusKm: Double?,
 ): GeneratedRoute? {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
@@ -334,13 +374,107 @@ private suspend fun refineCandidate(
             // guess doesn't overshoot into an even-worse radius next round.
             radiusKm *= ratio.coerceIn(0.4, 2.5)
         }
-        // Re-clamped every round, not just on the initial guess -- duration
-        // convergence above can otherwise push radiusKm back out past the
-        // instructor's chosen ceiling on a later iteration.
-        if (maxRadiusKm != null) radiusKm = minOf(radiusKm, maxRadiusKm)
     }
 
     return best
+}
+
+/** Returns the converged (or best-effort) route for this bearing when a radius
+ * cap is active, or null if every attempt failed outright.
+ *
+ * Chains [start], then [spokeCount] "petal" waypoints evenly spaced around a
+ * full circle starting at [bearingDegrees] (see [spokePoints]), then
+ * [destination] -- every petal sits at the *full* [maxRadiusKm] from [start]
+ * (there's no reason to use less of the allowed area), so the only knob left to
+ * tune against the target duration is how many petals there are, not how far
+ * out any single one reaches. A route with several petals in different
+ * directions from [start] routinely has to backtrack through the same nearby
+ * roads to get from one petal to the next -- which is exactly the "may need to
+ * drive over the same roads to stay within the radius" behaviour this was
+ * built for, produced by the geometry itself rather than anything explicitly
+ * forcing a repeat.
+ *
+ * [spokeCount] starts from a direct estimate (total distance implied by
+ * [targetSeconds] at [AVG_SPEED_KMH], divided by one petal's out-and-back
+ * distance) rather than iterating up from zero -- same reasoning as
+ * [initialRadiusKm] for the unconstrained case, just applied to a petal count
+ * instead of a single radius. */
+private suspend fun refineCandidateWithinRadius(
+    start: LatLng,
+    destination: LatLng,
+    bearingDegrees: Double,
+    maxRadiusKm: Double,
+    targetSeconds: Double,
+    avoidHighways: Boolean,
+): GeneratedRoute? {
+    val totalDistanceNeededKm = AVG_SPEED_KMH * (targetSeconds / 3600.0)
+    var spokeCount = ceil(totalDistanceNeededKm / (2.0 * maxRadiusKm)).toInt().coerceIn(0, MAX_SPOKES)
+    // Pulled in slightly (not maxRadiusKm itself) only when a petal lands
+    // somewhere unroutable (water, no road access) -- see the routed == null
+    // branch below. Otherwise stays at the full allowed radius every round.
+    var spokeRadiusKm = maxRadiusKm
+    var best: GeneratedRoute? = null
+    var converged = false
+    repeat(MAX_RADIUS_ITERATIONS) { iteration ->
+        if (converged) return@repeat
+        val chain = buildList {
+            add(start)
+            addAll(spokePoints(start, bearingDegrees, spokeCount, spokeRadiusKm))
+            add(destination)
+        }
+        val routed = try {
+            fetchRoutedPaths(chain, avoidHighways = avoidHighways).firstOrNull()
+        } catch (e: Exception) {
+            Log.e(
+                LOG_TAG,
+                "Radius-confined routing call failed (bearing=$bearingDegrees, iteration=$iteration, " +
+                    "spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km)",
+                e,
+            )
+            null
+        }
+        if (routed == null) {
+            // At least one petal likely landed somewhere unroutable -- pull
+            // every petal in slightly and retry, same shrink-and-retry
+            // approach the unconstrained path uses for its one detour point.
+            spokeRadiusKm *= 0.85
+            return@repeat
+        }
+        best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
+        val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
+        Log.d(
+            LOG_TAG,
+            "refineCandidateWithinRadius: bearing=$bearingDegrees iteration=$iteration spokes=$spokeCount " +
+                "spokeRadius=${"%.2f".format(spokeRadiusKm)}km duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
+                "target=${"%.1f".format(targetSeconds / 60.0)}min ratio=${"%.2f".format(ratio)}",
+        )
+        if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) {
+            converged = true
+        } else if (spokeCount == 0) {
+            // spokeCount * ratio can never climb back up from zero (0 * any
+            // ratio is still 0) -- if the direct start-to-destination leg
+            // alone already missed the target without converging, the next
+            // thing to try is exactly one petal, not "0 forever".
+            spokeCount = 1
+        } else {
+            // The knob here is petal *count*, not reach -- reach is already
+            // maxed out at maxRadiusKm every round.
+            spokeCount = round(spokeCount * ratio).toInt().coerceIn(0, MAX_SPOKES)
+        }
+    }
+
+    return best
+}
+
+/** [count] points evenly spaced by 360/[count] degrees around a full circle
+ * starting at [seedBearing], each [radiusKm] from [anchor] -- the "petals" of a
+ * radius-confined loop (see [refineCandidateWithinRadius]). Empty for
+ * [count] <= 0 (no petals needed -- the direct start-to-destination leg alone
+ * already covers the target duration). */
+private fun spokePoints(anchor: LatLng, seedBearing: Double, count: Int, radiusKm: Double): List<LatLng> {
+    if (count <= 0) return emptyList()
+    val stepDegrees = 360.0 / count
+    return (0 until count).map { i -> offset(anchor, seedBearing + i * stepDegrees, radiusKm) }
 }
 
 /** Duration-closeness is weighted heavily enough to dominate typical filter
