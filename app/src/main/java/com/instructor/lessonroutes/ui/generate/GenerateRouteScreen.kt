@@ -2,6 +2,7 @@ package com.instructor.lessonroutes.ui.generate
 
 import android.os.Build
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -99,7 +100,6 @@ import com.instructor.lessonroutes.data.routegen.routeExceedsRadius
 import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
-import com.instructor.lessonroutes.ui.routes.openInNavApp
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
 import com.instructor.lessonroutes.ui.theme.SelectedBlue
@@ -265,6 +265,11 @@ fun GenerateRouteScreen(
     var dataWarning by remember { mutableStateOf<String?>(null) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var saveComplete by remember { mutableStateOf(false) }
+    // "Navigate" (below) swaps the whole screen to a live-tracking view of
+    // generatedRoute rather than handing off to Google Maps -- see the
+    // button's own comment for why. Not persisted/saved -- purely a live
+    // view of whatever's currently generated in memory.
+    var isNavigating by remember { mutableStateOf(false) }
 
     val canGenerate = currentLocation != null && effectiveDestination != null && targetDurationMinutes != null && targetDurationMinutes > 0
 
@@ -426,6 +431,36 @@ fun GenerateRouteScreen(
         }
     }
 
+    // Swaps the *whole* screen to a live-tracking view instead of layering it
+    // inside the normal content below -- same early-return pattern
+    // RouteMapView.kt itself uses for its own "no API key" fallback. Reuses
+    // currentLocation (already tracked continuously by this screen, above)
+    // rather than starting a second, redundant location listener -- and
+    // deliberately doesn't chase it with the camera, matching FollowScreen's
+    // existing behaviour for saved routes (a jumpy re-centering camera during
+    // an actual lesson would be worse than a fixed one).
+    if (isNavigating) {
+        val route = generatedRoute
+        BackHandler { isNavigating = false }
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Navigate") },
+                    actions = { TextButton(onClick = { isNavigating = false }) { Text("Close") } },
+                )
+            },
+        ) { padding ->
+            RouteMapView(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                routePoints = route?.points ?: emptyList(),
+                waypoints = listOfNotNull(destination),
+                liveLocation = currentLocation,
+                fitBoundsToRoute = true,
+            )
+        }
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -473,7 +508,7 @@ fun GenerateRouteScreen(
             }
 
             // Pinned between the map and the scrollable content below -- NOT part
-            // of the scroll, so Regenerate/Open in nav app/Save stay visible no
+            // of the scroll, so Regenerate/Navigate/Save stay visible no
             // matter how far down the instructor scrolls through Destination/Time/
             // Filters. Same fixed-height-sibling-plus-weighted-scroll pattern as
             // the map above (a Column can't correctly share space between a
@@ -498,10 +533,23 @@ fun GenerateRouteScreen(
                             Text("Regenerate")
                         }
                         OutlinedButton(
-                            onClick = { openInNavApp(context, route.points) },
+                            // Was "Open in nav app" (handed off to Google Maps
+                            // via a handful of sampled waypoints) -- replaced
+                            // because Maps recomputes its *own* optimized path
+                            // between those waypoints rather than replaying the
+                            // generated one, which silently discards a
+                            // deliberately looping/backtracking route (the
+                            // whole point of a small-radius, long-duration
+                            // trip) -- confirmed as a real, large discrepancy
+                            // (a 3h19m generated route showing as 1h21m in
+                            // Maps). Opens this screen's own live-tracking view
+                            // instead (see isNavigating below), which draws the
+                            // exact generated polyline with a live position dot
+                            // -- nothing to recompute or discard.
+                            onClick = { isNavigating = true },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Open in nav app")
+                            Text("Navigate")
                         }
                         Button(onClick = { showSaveDialog = true }, modifier = Modifier.weight(1f)) {
                             Text("Save")
