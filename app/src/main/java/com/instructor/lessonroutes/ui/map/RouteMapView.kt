@@ -375,21 +375,27 @@ fun RouteMapView(
         map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, BOUNDS_PADDING_PX))
     }
 
-    // Zooms out to fit the radius circle as soon as it's set -- otherwise it's
-    // drawn correctly right away but can easily sit entirely outside the
-    // current zoomed-in view (the default zoom shows maybe a ~10-20km span,
-    // nowhere near enough for e.g. a 100km radius), reading as "it doesn't
-    // appear until I generate a route" when generating just happens to also
-    // zoom out afterward (via fitBoundsToRoute above). Skipped once a route
-    // exists (fitBoundsToRoute takes over) so this doesn't fight that.
+    // Zooms out to fit the radius circle, but only the *first* time one appears
+    // (hasFitRadiusCircle guards this the same way hasAppliedFocusPoint does
+    // above) -- otherwise it's drawn correctly right away but can easily sit
+    // entirely outside the current zoomed-in view (the default zoom shows
+    // maybe a ~10-20km span, nowhere near enough for e.g. a 100km radius),
+    // reading as "it doesn't appear until I generate a route". Deliberately
+    // does NOT re-fit on every later radius change, though -- picking a
+    // different radius from the dropdown should just resize the circle in
+    // place (see the geometry-update effect below), not fight the user's own
+    // pan/zoom every time they adjust the value. Skipped once a route exists
+    // (fitBoundsToRoute takes over) so this doesn't fight that either.
+    var hasFitRadiusCircle by remember { mutableStateOf(false) }
     LaunchedEffect(mapLibreMap, radiusCircleCenter, radiusCircleKm, fitBoundsToRoute, routePoints) {
         val map = mapLibreMap ?: return@LaunchedEffect
-        if (fitBoundsToRoute && routePoints.size >= 2) return@LaunchedEffect
+        if (hasFitRadiusCircle || (fitBoundsToRoute && routePoints.size >= 2)) return@LaunchedEffect
         val center = radiusCircleCenter ?: return@LaunchedEffect
         val km = radiusCircleKm ?: return@LaunchedEffect
         if (km <= 0) return@LaunchedEffect
         val bounds = LatLngBounds.Builder().apply { circlePolygonRing(center, km).forEach { include(it) } }.build()
         map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, BOUNDS_PADDING_PX))
+        hasFitRadiusCircle = true
     }
 
     LaunchedEffect(routePoints, mapLibreMap) {
