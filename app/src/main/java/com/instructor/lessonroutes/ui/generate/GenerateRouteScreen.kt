@@ -544,20 +544,28 @@ fun GenerateRouteScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Trip time", fontWeight = FontWeight.Bold)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.weight(1f)) {
-                        Text(startTime?.let { formatTime(it) } ?: "Start time (now)")
+                    Column(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(startTime?.let { formatTime(it) } ?: "Start time (now)")
+                        }
                     }
-                    OutlinedButton(onClick = { showEndTimePicker = true }, modifier = Modifier.weight(1f)) {
-                        Text(endTime?.let { formatTime(it) } ?: "End time")
+                    Column(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { showEndTimePicker = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(endTime?.let { formatTime(it) } ?: "End time")
+                        }
+                        // An end time is mandatory (canGenerate requires
+                        // targetDurationMinutes != null) -- bold red, directly
+                        // under the button it's asking about, so it reads as a
+                        // real requirement rather than a general hint below the
+                        // whole row. Disappears the moment endTime is set (valid
+                        // or not) -- either the real duration or the "must be
+                        // after start" message below takes over from there.
+                        if (endTime == null) {
+                            Text("Set End time", color = Color(0xFFD21F3C), fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
                 when {
-                    // An end time is mandatory (canGenerate requires
-                    // targetDurationMinutes != null) -- bold red so it reads as a
-                    // real requirement, not just a hint, until it's satisfied. Once
-                    // endTime is set (valid or not) this branch no longer shows --
-                    // either the real duration below, or the "must be after start"
-                    // validation message, take over instead.
                     targetDurationMinutes != null -> Text(
                         buildAnnotatedString {
                             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Duration") }
@@ -565,20 +573,18 @@ fun GenerateRouteScreen(
                         },
                     )
                     endTime != null -> Text("End time must be after start time")
-                    else -> Text(
-                        "Pick an end time (start defaults to now)",
-                        color = Color(0xFFD21F3C),
-                        fontWeight = FontWeight.Bold,
-                    )
+                    else -> Unit
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Optional Filters", fontWeight = FontWeight.Bold)
-                Text(
-                    "Neither selected: no preference either way. Avoid: try not to include it in the " +
-                        "generated route at all. Prefer: try to include more of it (e.g. more school " +
-                        "zones, or more roundabouts).",
-                )
+                // Each on its own line, and a step down from "Optional Filters"
+                // itself (Medium, not Bold) -- a lighter emphasis than the
+                // section header above, but still calling out the label word
+                // from its explanation.
+                FilterLegendLine("Neither selected", "no preference either way.")
+                FilterLegendLine("Avoid", "try not to include it in the generated route at all.")
+                FilterLegendLine("Prefer", "try to include more of it (e.g. more school zones, or more roundabouts).")
                 if (BuildConfig.TFNSW_API_KEY.isBlank()) {
                     Text(
                         "Hazards/construction/high traffic filters need a Transport for NSW API key " +
@@ -717,6 +723,20 @@ private fun RadiusPicker(selectedRadiusKm: Double?, onSelect: (Double?) -> Unit)
             }
         }
     }
+}
+
+/** One line of the Avoid/Prefer legend -- [term] (e.g. "Avoid") bolded to
+ * Medium weight, [explanation] following at normal weight. Medium rather than
+ * Bold deliberately reads as a lighter emphasis than the "Optional Filters"
+ * section header above it. */
+@Composable
+private fun FilterLegendLine(term: String, explanation: String) {
+    Text(
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(term) }
+            append(": $explanation")
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

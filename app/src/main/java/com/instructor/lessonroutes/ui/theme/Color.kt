@@ -7,8 +7,9 @@ import androidx.compose.ui.graphics.Color
 // theme before this.
 //   SelectedBlue   #023E8A -- selected buttons
 //   UnselectedBlue #0077B6 -- unselected buttons
-//   ButtonAccentBlue#00B4D8 -- Generate Route / Plan a Trip / Student
-//                             Profiles buttons specifically
+//   ButtonAccentBlue#90E0EF -- Generate Route / Plan a Trip / Student
+//                             Profiles buttons specifically (was #0096C7,
+//                             then #00B4D8, before Corey settled on this)
 //   BackgroundWhite plain white -- background/surface shade (was #CAF0F8,
 //                             then #90E0EF, before Corey settled on plain
 //                             white instead of any of the blue-family shades)
@@ -26,7 +27,7 @@ import androidx.compose.ui.graphics.Color
 // one of the colors above rather than introducing a new shade.
 val SelectedBlue = Color(0xFF023E8A)
 val UnselectedBlue = Color(0xFF0077B6)
-val ButtonAccentBlue = Color(0xFF00B4D8)
+val ButtonAccentBlue = Color(0xFF90E0EF)
 val BackgroundWhite = Color(0xFFFFFFFF)
 val ClockAccentCyan = Color(0xFFADE8F4)
 val BorderNavy = Color(0xFF03045E)
