@@ -1,6 +1,7 @@
 package com.instructor.lessonroutes.data.routegen
 
 import android.util.Log
+import com.instructor.lessonroutes.data.remote.RoutedPath
 import com.instructor.lessonroutes.data.remote.fetchRoutedPaths
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -481,7 +482,7 @@ private suspend fun refineCandidateWithinRadius(
         // *inside* one outer iteration (shrinking+rotating each attempt, same
         // as before) before giving up on it, so a single bad petal placement
         // doesn't cost an entire duration-convergence round.
-        var routed: GeneratedRoute? = null
+        var routed: RoutedPath? = null
         var attempt = 0
         while (routed == null && attempt < MAX_UNROUTABLE_RETRIES) {
             val chain = buildList {
