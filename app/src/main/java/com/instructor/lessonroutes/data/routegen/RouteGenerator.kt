@@ -428,6 +428,18 @@ private suspend fun refineCandidateWithinRadius(
     // somewhere unroutable (water, no road access) -- see the routed == null
     // branch below. Otherwise stays at the full allowed radius every round.
     var spokeRadiusKm = maxRadiusKm
+    // Also rotated (not just shrunk) on a failed round -- confirmed live that
+    // a failure here is Geoapify's real "No suitable edges near location"
+    // (one petal landed in water/a park/etc.), not a transient error. Shrinking
+    // radius alone keeps every petal pointed in the exact same directions,
+    // which does nothing if what's blocking a petal is still within the
+    // smaller radius too (a real risk for any start point near coastline or a
+    // large park -- confirmed as a real, reproduced case, not hypothetical).
+    // Rotating the whole ring by an offset that isn't a clean fraction of 360
+    // (so it doesn't just relabel the same directions) gives every retry an
+    // actual chance to land the blocked petal somewhere routable instead of
+    // repeating the same doomed direction closer to start each time.
+    var currentBearingDegrees = bearingDegrees
     var best: GeneratedRoute? = null
     // See refineCandidate's own comment on the exact same bug -- `best` used
     // to be unconditionally overwritten every round, so a later, worse round
@@ -445,7 +457,7 @@ private suspend fun refineCandidateWithinRadius(
         if (converged) return@repeat
         val chain = buildList {
             add(start)
-            addAll(spokePoints(start, bearingDegrees, spokeCount, spokeRadiusKm))
+            addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm))
             add(destination)
         }
         val routed = try {
@@ -453,17 +465,18 @@ private suspend fun refineCandidateWithinRadius(
         } catch (e: Exception) {
             Log.e(
                 LOG_TAG,
-                "Radius-confined routing call failed (bearing=$bearingDegrees, iteration=$iteration, " +
+                "Radius-confined routing call failed (bearing=$currentBearingDegrees, iteration=$iteration, " +
                     "spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km)",
                 e,
             )
             null
         }
         if (routed == null) {
-            // At least one petal likely landed somewhere unroutable -- pull
-            // every petal in slightly and retry, same shrink-and-retry
-            // approach the unconstrained path uses for its one detour point.
+            // At least one petal likely landed somewhere unroutable -- shrink
+            // *and* rotate the whole ring (see currentBearingDegrees' own
+            // comment above) and retry.
             spokeRadiusKm *= 0.85
+            currentBearingDegrees += 47.0
             return@repeat
         }
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
@@ -474,7 +487,7 @@ private suspend fun refineCandidateWithinRadius(
         }
         Log.d(
             LOG_TAG,
-            "refineCandidateWithinRadius: bearing=$bearingDegrees iteration=$iteration spokes=$spokeCount " +
+            "refineCandidateWithinRadius: bearing=$currentBearingDegrees iteration=$iteration spokes=$spokeCount " +
                 "spokeRadius=${"%.2f".format(spokeRadiusKm)}km duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
                 "target=${"%.1f".format(targetSeconds / 60.0)}min ratio=${"%.2f".format(ratio)}",
         )
