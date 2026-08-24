@@ -334,6 +334,17 @@ private suspend fun refineCandidate(
 ): GeneratedRoute? {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
+    // Tracked separately from `best` -- see this function's own bug history:
+    // `best` used to just be overwritten every round regardless of whether
+    // that round was actually closer to target than a previous one. If a
+    // later round landed worse and then the round after *that* failed
+    // outright (network error, bad request, etc.), `best` was left holding
+    // the worse round's result instead of the closest one actually seen
+    // across the whole loop -- a real, confirmed contributor to a generated
+    // route landing wildly short of target even though an earlier round had
+    // gotten close. Now `best` only updates when a round is a genuine
+    // improvement.
+    var bestErrorSeconds = Double.MAX_VALUE
     var converged = false
     repeat(MAX_RADIUS_ITERATIONS) { iteration ->
         if (converged) return@repeat // already converged -- skip remaining rounds without another call
@@ -354,8 +365,12 @@ private suspend fun refineCandidate(
             radiusKm *= 0.7
             return@repeat
         }
-        best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
+        val errorSeconds = abs(routed.durationSeconds - targetSeconds)
+        if (errorSeconds < bestErrorSeconds) {
+            best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
+            bestErrorSeconds = errorSeconds
+        }
         // Visibility into each round's actual result -- previously only a
         // failure logged anything at all, so a badly-converged (but
         // technically successful) result left zero trace of *why* it landed
@@ -414,6 +429,17 @@ private suspend fun refineCandidateWithinRadius(
     // branch below. Otherwise stays at the full allowed radius every round.
     var spokeRadiusKm = maxRadiusKm
     var best: GeneratedRoute? = null
+    // See refineCandidate's own comment on the exact same bug -- `best` used
+    // to be unconditionally overwritten every round, so a later, worse round
+    // could clobber an earlier, better one, and if the round after *that*
+    // then failed outright, `best` was left holding the worse result. Real,
+    // confirmed contributor to a generated route landing at ~1 minute for a
+    // 1-2 hour target: a degenerate 0-petal (direct start-to-destination,
+    // skipping the detour loop entirely) round can measure as a short
+    // duration, and if the *next* round (retrying with petals again) then
+    // hit a routing failure, that short direct-route result was what got
+    // returned as "best" even though it was never actually the closest one.
+    var bestErrorSeconds = Double.MAX_VALUE
     var converged = false
     repeat(MAX_RADIUS_ITERATIONS) { iteration ->
         if (converged) return@repeat
@@ -440,8 +466,12 @@ private suspend fun refineCandidateWithinRadius(
             spokeRadiusKm *= 0.85
             return@repeat
         }
-        best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
+        val errorSeconds = abs(routed.durationSeconds - targetSeconds)
+        if (errorSeconds < bestErrorSeconds) {
+            best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
+            bestErrorSeconds = errorSeconds
+        }
         Log.d(
             LOG_TAG,
             "refineCandidateWithinRadius: bearing=$bearingDegrees iteration=$iteration spokes=$spokeCount " +

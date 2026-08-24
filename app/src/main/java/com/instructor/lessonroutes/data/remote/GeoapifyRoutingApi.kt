@@ -80,7 +80,17 @@ suspend fun fetchRoutedPaths(
         val request = Request.Builder().url(url).build()
 
         val body = client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Geoapify routing request failed: HTTP ${response.code}")
+            // Was discarding the response body on failure -- a 400/422 from
+            // Geoapify almost always carries the actual reason (bad waypoint,
+            // duplicate/too-close points, unsupported avoid combination, etc.)
+            // in that body, and "HTTP 400" alone gives zero way to tell which.
+            // Confirmed as a real gap: a radius-confined multi-waypoint chain
+            // started failing with bare "HTTP 400" and no way to diagnose why
+            // without this.
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()
+                throw IOException("Geoapify routing request failed: HTTP ${response.code} -- $errorBody")
+            }
             response.body?.string() ?: throw IOException("Geoapify routing returned an empty body")
         }
 
