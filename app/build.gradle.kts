@@ -142,5 +142,16 @@ dependencies {
     implementation(libs.tomtom.sdk.common.configuration)
     implementation(libs.tomtom.sdk.location.provider.simulation)
     implementation(libs.tomtom.sdk.routing.route.planner)
-    implementation(libs.tomtom.sdk.navigation.android)
+    // navigation-android comes from a completely independent version family
+    // (1.26.8) from everything else here (2.4.2) -- see tomtomNavigationEngine's
+    // own comment in libs.versions.toml. Both families bundle their own copy of
+    // TomTom's telemetry/Sensoris (vehicle-data standard) generated classes,
+    // which collide at dex-merge time ("Duplicate class org.sensoris.types...").
+    // Excluding the whole telemetry group from this one mismatched-version
+    // dependency keeps only the 2.4.2-family copy (pulled in transitively by
+    // init/common-configuration) on the classpath. Not needed for this spike --
+    // it's opt-in analytics reporting, unrelated to route reconstruction/guidance.
+    implementation(libs.tomtom.sdk.navigation.android) {
+        exclude(group = "com.tomtom.sdk.telemetry")
+    }
 }
