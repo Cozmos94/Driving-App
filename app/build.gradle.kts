@@ -104,23 +104,13 @@ android {
     }
 }
 
-// A scoped exclude on just the navigation-android dependency line didn't
-// actually clear "Duplicate class com.tomtom.trace.fcd.ingest.sensoris...
-// found in modules sensoris-1.26.8.jar (com.tomtom.sdk.telemetry:sensoris:
-// 1.26.8) and telemetry-protobuf-internal-2.4.2.jar
-// (com.tomtom.sdk.telemetry:telemetry-protobuf-internal:2.4.2)" -- confirmed
-// with a full clean + re-sync + rebuild, so it's a real miss, not a stale
-// cache. This applies the exclude unconditionally across every configuration
-// instead, regardless of which specific dependency's transitive graph
-// actually pulls sensoris in -- a stronger mechanism than scoping it to one
-// implementation(...) line. Narrowed to just the "sensoris" module (not the
-// whole com.tomtom.sdk.telemetry group) since telemetry-protobuf-internal
-// embeds the same generated classes natively rather than depending on a
-// separate "sensoris" artifact for them -- so removing just the standalone
-// duplicate copy should leave a single, complete copy of these classes
-// (from telemetry-protobuf-internal) on the classpath, without risking
-// stripping out telemetry APIs navigation-android's own compiled code
-// might reference directly.
+// Left in as a cheap safety net even though the actual root cause (mixing
+// navigation-android's independent 1.26.8 version family with everything
+// else's 2.4.2 -- see tomtom-sdk-navigation's comment in libs.versions.toml)
+// is now fixed by depending on the plain, properly-2.4.2-versioned
+// "navigation" artifact instead. Excluding a module that's no longer on the
+// classpath at all is a harmless no-op, so there's no reason to pull this
+// back out on the chance some other transitive path still reaches it.
 configurations.all {
     exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
 }
@@ -163,11 +153,11 @@ dependencies {
     implementation(libs.tomtom.sdk.common.configuration)
     implementation(libs.tomtom.sdk.location.provider.simulation)
     implementation(libs.tomtom.sdk.routing.route.planner)
-    // navigation-android comes from a completely independent version family
-    // (1.26.8) from everything else here (2.4.2) -- see tomtomNavigationEngine's
-    // own comment in libs.versions.toml. See the configurations.all { exclude }
-    // block above (outside this dependencies{} block) for the actual fix for
-    // the resulting duplicate-class conflict -- a scoped exclude right here
-    // didn't work, confirmed with a full clean + re-sync + rebuild.
-    implementation(libs.tomtom.sdk.navigation.android)
+    // Was navigation-android (a real artifact, but independently versioned at
+    // 1.26.8 -- see tomtom-sdk-navigation's own comment in libs.versions.toml
+    // for the two wrong guesses that preceded this and the cascade of
+    // duplicate-class errors that came from mixing that version family with
+    // everything else's 2.4.2). Plain "navigation" publishes proper 2.4.2
+    // releases and depends only on other 2.4.2 artifacts.
+    implementation(libs.tomtom.sdk.navigation)
 }
