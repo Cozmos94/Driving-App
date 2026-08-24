@@ -141,5 +141,5 @@ dependencies {
     implementation(libs.tomtom.sdk.init)
     implementation(libs.tomtom.sdk.location.provider.simulation)
     implementation(libs.tomtom.sdk.routing.route.planner)
-    implementation(libs.tomtom.sdk.navigation.online)
+    implementation(libs.tomtom.sdk.navigation.android)
 }

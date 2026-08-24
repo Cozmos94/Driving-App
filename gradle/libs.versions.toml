@@ -20,6 +20,16 @@ okhttp = "4.12.0"
 # docs.tomtom.com/navigation/android/getting-started/project-setup for a
 # newer version before bumping blindly.
 tomtomSdk = "2.4.2"
+# The actual navigation-guidance engine (com.tomtom.sdk.navigation:*) is
+# released on its own, completely independent version scheme from the rest of
+# the SDK -- confirmed live by browsing repositories.tomtom.com's Artifactory
+# listing directly (publicly browsable with no login). Pinning this to 2.4.2
+# like everything else was a real bug, not a permissions issue: that version
+# doesn't exist for this module family, and Artifactory returns 401 rather
+# than 404 for a nonexistent version path here, which read exactly like an
+# access-restriction error until checked directly. 1.26.8 is the latest
+# available as of this check -- verify before bumping.
+tomtomNavigationEngine = "1.26.8"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -56,9 +66,14 @@ tomtom-sdk-location-provider-simulation = { group = "com.tomtom.sdk.location", n
 tomtom-sdk-routing-route-planner = { group = "com.tomtom.sdk.routing", name = "route-planner", version.ref = "tomtomSdk" }
 # Not in the quickstart's own dependency list (a real gap in their docs --
 # NavigationOptions/RoutePlan/TomTomNavigation, all under com.tomtom.sdk.navigation,
-# were unresolved without it) -- best-guess artifact name, unverified, may need
-# correcting against the Artifactory repo browser at repositories.tomtom.com if wrong.
-tomtom-sdk-navigation-online = { group = "com.tomtom.sdk.navigation", name = "navigation-online", version.ref = "tomtomSdk" }
+# were unresolved without it). Confirmed via Artifactory directly: AAR packaging,
+# depends on navigation-engines-android/route-replanner-android/the online
+# hazards-traffic-safety-location modules -- this is the real guidance engine,
+# not navigation-online (wrong version scheme, see tomtomNavigationEngine's own
+# comment) or navigation-android-complete (turned out to be a bundle of
+# supporting services -- adas/hazards/traffic/vehicle/data-management -- not
+# the engine itself).
+tomtom-sdk-navigation-android = { group = "com.tomtom.sdk.navigation", name = "navigation-android", version.ref = "tomtomNavigationEngine" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
