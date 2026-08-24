@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
+import com.tomtom.sdk.common.configuration.buildSdkConfiguration
 import com.tomtom.sdk.init.TomTomSdk
 import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.navigation.NavigationOptions
@@ -87,14 +88,15 @@ fun TomTomNavSpikeScreen(onBack: () -> Unit) {
     var state by remember { mutableStateOf<SpikeState>(SpikeState.Idle) }
     var sdkReady by remember { mutableStateOf(false) }
 
-    // Initialize once. Real shape of buildSdkConfiguration()'s params (telemetry
-    // consent callback, etc.) is one of the inferred-not-verified spots flagged
-    // above -- fix alongside Android Studio if this doesn't match.
+    // Initialize once. buildSdkConfiguration is a top-level function (not a
+    // TomTomSdk member as first guessed), confirmed via the real Dokka API
+    // reference (com.tomtom.sdk.common.configuration) -- the overload used
+    // here needs only context/apiKey, no telemetry-consent callback required.
     LaunchedEffect(Unit) {
         try {
             TomTomSdk.initialize(
                 context.applicationContext,
-                TomTomSdk.buildSdkConfiguration(
+                buildSdkConfiguration(
                     context = context.applicationContext,
                     apiKey = BuildConfig.TOMTOM_API_KEY,
                 ),

@@ -139,6 +139,7 @@ dependencies {
     // provider-simulation is a stand-in GPS source for this spike only; a real
     // build would use a real location provider instead.
     implementation(libs.tomtom.sdk.init)
+    implementation(libs.tomtom.sdk.common.configuration)
     implementation(libs.tomtom.sdk.location.provider.simulation)
     implementation(libs.tomtom.sdk.routing.route.planner)
     implementation(libs.tomtom.sdk.navigation.android)

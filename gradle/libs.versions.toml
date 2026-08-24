@@ -62,6 +62,13 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 # real GPS-backed provider once past the spike stage), and the routing module
 # (RoutePlanner, route reconstruction from supportingPoints).
 tomtom-sdk-init = { group = "com.tomtom.sdk", name = "init", version.ref = "tomtomSdk" }
+# buildSdkConfiguration()/SdkConfiguration -- confirmed via the real Dokka API
+# reference that these live here, not as TomTomSdk members as first guessed;
+# not pulled in transitively by init/routing/navigation, needs declaring
+# explicitly. Confirmed anonymously downloadable at 2.4.2 directly against
+# Artifactory, same version family as init/location/routing (not the
+# independent navigation-engine scheme).
+tomtom-sdk-common-configuration = { group = "com.tomtom.sdk.common", name = "configuration", version.ref = "tomtomSdk" }
 tomtom-sdk-location-provider-simulation = { group = "com.tomtom.sdk.location", name = "provider-simulation", version.ref = "tomtomSdk" }
 tomtom-sdk-routing-route-planner = { group = "com.tomtom.sdk.routing", name = "route-planner", version.ref = "tomtomSdk" }
 # Not in the quickstart's own dependency list (a real gap in their docs --
