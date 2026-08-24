@@ -422,7 +422,24 @@ private suspend fun refineCandidate(
  * [targetSeconds] at [AVG_SPEED_KMH], divided by one petal's out-and-back
  * distance) rather than iterating up from zero -- same reasoning as
  * [initialRadiusKm] for the unconstrained case, just applied to a petal count
- * instead of a single radius. */
+ * instead of a single radius. That total-distance estimate now subtracts the
+ * mandatory [start]->[destination] leg's own straight-line distance first --
+ * confirmed as a real, systematic overshoot bug when [destination] isn't
+ * close to [start] (a real point-to-point trip, not a loop back to start):
+ * the old estimate assumed *all* of the target distance had to come from the
+ * petals, then added the start->destination leg on top of that regardless,
+ * double-counting whatever distance that leg itself covers. Corey report: 110
+ * min target, 30km radius, generated 168min (also flagged as exceeding the
+ * radius -- petals sitting at the full 30km from start, connected by a real
+ * road path rather than a straight line, easily bulge past that circle en
+ * route to a destination that's a meaningful fraction of the radius away).
+ * The same target at 35km radius came out accurate -- not because this bug
+ * wasn't present, just because the destination leg was a smaller fraction of
+ * a bigger radius, so the double-counting mattered less. This is a
+ * straight-line estimate (the real road distance will usually be a bit
+ * more), same approximation level as the rest of this initial guess -- it
+ * only needs to be in the right ballpark, the convergence loop below still
+ * corrects from there. */
 private suspend fun refineCandidateWithinRadius(
     start: LatLng,
     destination: LatLng,
@@ -431,7 +448,8 @@ private suspend fun refineCandidateWithinRadius(
     targetSeconds: Double,
     avoidHighways: Boolean,
 ): GeneratedRoute? {
-    val totalDistanceNeededKm = AVG_SPEED_KMH * (targetSeconds / 3600.0)
+    val directLegKm = distanceKm(start, destination)
+    val totalDistanceNeededKm = (AVG_SPEED_KMH * (targetSeconds / 3600.0) - directLegKm).coerceAtLeast(0.0)
     var spokeCount = ceil(totalDistanceNeededKm / (2.0 * maxRadiusKm)).toInt().coerceIn(0, MAX_SPOKES)
     // Pulled in slightly (not maxRadiusKm itself) only when a petal lands
     // somewhere unroutable (water, no road access) -- see the routed == null
