@@ -15,6 +15,12 @@ playServicesLocation = "21.3.0"
 coroutines = "1.8.1"
 navigationCompose = "2.9.8"
 okhttp = "4.12.0"
+# Matches the version TomTom's own ui-android-complete POM already pulls in
+# transitively (confirmed against Artifactory) -- declared explicitly rather
+# than relying on that transitive edge by accident, same reasoning as
+# buildSdkConfiguration/createRoutePlanner needing their own explicit
+# dependency elsewhere in this file.
+fragmentKtx = "1.8.9"
 # TomTom Navigation SDK -- confirmed live against docs.tomtom.com's current
 # (post my.tomtom.com migration) project-setup page. Check
 # docs.tomtom.com/navigation/android/getting-started/project-setup for a
@@ -43,6 +49,11 @@ play-services-location = { group = "com.google.android.gms", name = "play-servic
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+
+# FragmentActivity/FragmentContainerView -- needed to host TomTom's
+# NavigationFragment (com.tomtom.sdk.navigation.ui) inside Compose. See
+# fragmentKtx's own comment above.
+androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragmentKtx" }
 
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
@@ -76,6 +87,17 @@ tomtom-sdk-routing-route-planner = { group = "com.tomtom.sdk.routing", name = "r
 # unlike navigation-android, and its own POM depends only on other 2.4.2
 # artifacts, so this should be the one release train, not two colliding ones.
 tomtom-sdk-navigation = { group = "com.tomtom.sdk.navigation", name = "navigation", version.ref = "tomtomSdk" }
+# Real turn-by-turn guidance UI (maneuver banner, live map, speed/speed-limit
+# display) -- NavigationFragment lives here (com.tomtom.sdk.navigation.ui).
+# "-android-complete" confirmed directly against Artifactory's own POM before
+# adding this (not guessed, unlike navigation-android's own "-android"-suffix
+# trap earlier in this project) -- its dependency list is sane real 2.4.2
+# artifacts (navigation core, tts, material, fragment-ktx), not a mismatched
+# version family. Voice is muted via NavigationUiOptions(isSoundEnabled =
+# false) at the call site, not by omitting this -- the module pulls in
+# com.tomtom.sdk:tts transitively regardless (its own POM depends on it), no
+# way around that short of not using this module's guidance UI at all.
+tomtom-sdk-navigation-ui = { group = "com.tomtom.sdk.navigation", name = "ui-android-complete", version.ref = "tomtomSdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

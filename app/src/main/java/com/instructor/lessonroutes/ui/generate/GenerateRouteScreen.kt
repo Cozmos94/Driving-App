@@ -2,7 +2,6 @@ package com.instructor.lessonroutes.ui.generate
 
 import android.os.Build
 import android.util.Log
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -100,6 +99,7 @@ import com.instructor.lessonroutes.data.routegen.pickBestRoute
 import com.instructor.lessonroutes.data.routegen.routeExceedsRadius
 import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
+import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
@@ -123,11 +123,6 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 private const val LOG_TAG = "GenerateRouteScreen"
-
-// Close, driving-style zoom for the "Navigate" live-tracking view -- much
-// closer than RouteMapView's own DEFAULT_ZOOM (11, a city-wide view meant for
-// browsing/planning, not actually driving).
-private const val NAVIGATE_ZOOM = 16.0
 
 /**
  * Plans a route to actually go drive, rather than record/tap one by hand: pick a
@@ -451,37 +446,27 @@ fun GenerateRouteScreen(
         }
     }
 
-    // Swaps the *whole* screen to a live-tracking view instead of layering it
-    // inside the normal content below -- same early-return pattern
-    // RouteMapView.kt itself uses for its own "no API key" fallback. Reuses
-    // currentLocation (already tracked continuously by this screen, above)
-    // rather than starting a second, redundant location listener. Unlike
-    // FollowScreen's deliberately-static camera for a saved route (avoids a
-    // jumpy re-centering camera mid-lesson), this is meant to actually be
-    // driven by right now -- zoomed in close and panning to follow the live
-    // position as it updates, like a real driving view, not just a fixed
-    // fitted-to-bounds overview.
+    // Swaps the *whole* screen to real TomTom turn-by-turn guidance instead of
+    // layering it inside the normal content below -- same early-return
+    // pattern RouteMapView.kt itself uses for its own "no API key" fallback.
+    // Used to be a plain custom live-tracking view (this screen's own
+    // RouteMapView with a live position dot, built as an interim replacement
+    // for the abandoned Google Maps hand-off) -- replaced with real guidance
+    // once TomTomNavSpikeScreen.kt confirmed TomTom's supportingPoints/
+    // ReconstructionMode.Route reconstruction actually preserves a
+    // backtracking/petal-loop route's real distance instead of collapsing it
+    // the way Google Maps did (see TomTomNavigationScreen.kt's own doc
+    // comment for the confirmed numbers).
     if (isNavigating) {
         val route = generatedRoute
-        BackHandler { isNavigating = false }
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Navigate") },
-                    actions = { TextButton(onClick = { isNavigating = false }) { Text("Close") } },
-                )
-            },
-        ) { padding ->
-            RouteMapView(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                routePoints = route?.points ?: emptyList(),
-                waypoints = listOfNotNull(destination),
-                liveLocation = currentLocation,
-                centerOnDeviceLocation = false,
-                focusPoint = currentLocation,
-                focusZoom = NAVIGATE_ZOOM,
-                followLiveLocation = true,
-            )
+        if (route == null) {
+            // Shouldn't be reachable -- the Navigate button only exists once
+            // generatedRoute is non-null (see below) -- but isNavigating is
+            // independent state, so guard against it anyway rather than
+            // crashing on a null route if something ever gets out of sync.
+            isNavigating = false
+        } else {
+            TomTomNavigationScreen(route = route, onExit = { isNavigating = false })
         }
         return
     }
@@ -567,10 +552,13 @@ fun GenerateRouteScreen(
                             // whole point of a small-radius, long-duration
                             // trip) -- confirmed as a real, large discrepancy
                             // (a 3h19m generated route showing as 1h21m in
-                            // Maps). Opens this screen's own live-tracking view
-                            // instead (see isNavigating below), which draws the
-                            // exact generated polyline with a live position dot
-                            // -- nothing to recompute or discard.
+                            // Maps). Opens real TomTom turn-by-turn guidance
+                            // instead (see isNavigating below /
+                            // TomTomNavigationScreen.kt), reconstructed from
+                            // this exact generated polyline -- confirmed live
+                            // (via TomTomNavSpikeScreen.kt) that this preserves
+                            // the real route shape/distance instead of
+                            // recomputing a different one the way Maps did.
                             onClick = { isNavigating = true },
                             modifier = Modifier.weight(1f),
                         ) {

@@ -143,6 +143,10 @@ dependencies {
     // Navigation between screens (step 4+)
     implementation(libs.androidx.navigation.compose)
 
+    // FragmentActivity/FragmentContainerView -- see fragmentKtx's own comment
+    // in libs.versions.toml.
+    implementation(libs.androidx.fragment.ktx)
+
     // Phase 2: Transport for NSW live hazards feed
     implementation(libs.okhttp)
 
@@ -160,4 +164,9 @@ dependencies {
     // everything else's 2.4.2). Plain "navigation" publishes proper 2.4.2
     // releases and depends only on other 2.4.2 artifacts.
     implementation(libs.tomtom.sdk.navigation)
+    // Real turn-by-turn guidance UI wired into the real "Navigate" button
+    // (TomTomNavigationScreen.kt) -- see ui-android-complete's own comment in
+    // libs.versions.toml. Separate from the spike above, which never needed a
+    // UI module since it doesn't render one.
+    implementation(libs.tomtom.sdk.navigation.ui)
 }
