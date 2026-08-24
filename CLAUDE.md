@@ -6,6 +6,258 @@ gotchas) for full detail — this file is the short version plus pointers.
 
 ## Latest session recap (read this first)
 
+**This section supersedes everything below it up to "What this is"**,
+including the "Geoapify replaces..." and "real bugs found" narrative that used
+to be the first thing in this file -- that older material is still fine for
+background on Overpass/Geoapify history, but this session's work (UI theme,
+radius-generation algorithm rewrite, and a long TomTom Navigation SDK
+integration saga) is far more current and, in several places, directly
+contradicts it (e.g. "Open in nav app" no longer exists; the radius/duration
+relationship was fundamentally wrong before this session and has been rebuilt).
+
+### In-progress right now: TomTom Navigation SDK integration
+
+**Why**: Google Maps' "Open in nav app" hand-off (waypoint-based Directions)
+can't faithfully replay a route that deliberately loops/backtracks -- Maps
+always recomputes its own optimized path between at most ~8-10 waypoints,
+which silently collapsed a real generated 3h19m route down to 1h21m once
+opened in Maps. TomTom's Navigation SDK has a genuine "reconstruct route from
+an already-computed polyline" mechanism (`supportingPoints`/
+`ReconstructionMode`) with no documented waypoint cap, unlike Mapbox (needs a
+card even for the free tier -- Corey said no) and Google's own Navigation SDK
+(25-waypoint hard cap, also needs GCP billing enabled = a card, no way around
+it). TomTom's free tier needs no card.
+
+**Current state**: a throwaway spike screen,
+`app/src/main/java/com/instructor/lessonroutes/ui/navspike/TomTomNavSpikeScreen.kt`
+(reachable via Settings → "TomTom nav spike", a temporary debug button --
+delete this whole screen/button/nav-destination once the spike question is
+answered either way), reconstructs a hardcoded 6-petal backtracking test loop
+and attempts to start TomTom guidance. **Gradle now compiles successfully**
+after a long chain of wrong-guess fixes (see below) -- **not yet confirmed
+that the spike actually runs/guides correctly on-device**, since Corey's
+testing has all been on the *main app's* "Plan a trip" flow (which still uses
+Geoapify for generation, unrelated to TomTom -- see below) rather than this
+spike screen specifically. **Next step: get Corey to actually open Settings →
+"TomTom nav spike" and report what happens.**
+
+**TomTom is NOT wired into the real "Navigate" button yet.** The main app's
+"Navigate" button (on `GenerateRouteScreen.kt`, was "Open in nav app") still
+shows a plain custom live-tracking view (`RouteMapView` with the generated
+route drawn + a live position dot, zoomed in and following via
+`followLiveLocation`/`focusZoom`) -- built *before* the TomTom work started, as
+an interim replacement for the abandoned Google Maps hand-off. Wiring TomTom's
+real guidance into that button is future work, only worth doing once the spike
+proves the reconstruction approach actually works well.
+
+**Hard-won TomTom Gradle/SDK facts** (worth a lot to not have to
+rediscover -- their docs are inconsistent and their examples repo is
+archived; the only reliable source was browsing
+`repositories.tomtom.com/artifactory/maven` directly, which is publicly
+browsable without login even though downloading some paths needs auth, and
+the real Dokka API reference at
+`developer.tomtom.com/assets/downloads/tomtom-sdks/android/api-reference/2.4.2/index.html`):
+
+- TomTom moved their whole developer portal to `my.tomtom.com` recently --
+  `developer.tomtom.com`/`docs.tomtom.com` guide pages are stale/inconsistent
+  post-migration. The Dokka API reference URL above is still reliable.
+- `repositories.tomtom.com` (the Maven repo host) uses a **separate SSO
+  system** from `my.tomtom.com` -- Corey's `my.tomtom.com` account doesn't
+  work there, and he has no way to sign up for it. **Turned out not to
+  matter**: the "complete" SDK flavor (see `missingDimensionStrategy` in
+  `app/build.gradle.kts`) downloads fine with zero repo credentials for every
+  artifact actually needed. `settings.gradle.kts` still has an optional
+  credentials block (reads `TOMTOM_REPO_USERNAME`/`TOMTOM_REPO_IDENTITY_TOKEN`
+  from `local.properties` if present, skipped entirely otherwise) in case a
+  future artifact does need it.
+- **compileSdk must be 35** (bumped from 34 -- a hard TomTom requirement).
+  `targetSdk` deliberately left at 34.
+- Needs `ndk { abiFilters += listOf("arm64-v8a", "x86_64") }` and
+  `missingDimensionStrategy("tomtom-sdk-version", "complete")` in
+  `defaultConfig`.
+- **The `com.tomtom.sdk.navigation:*` module family is versioned on a
+  completely independent scheme from the rest of the SDK.** Everything else
+  (`init`, `common:configuration`, `location:provider-simulation`,
+  `routing:route-planner`) is on the "2.4.2" umbrella version
+  (`tomtomSdk` in `gradle/libs.versions.toml`). `navigation-online` and
+  `navigation-android` are on their own 0.x/1.x scheme (up to 1.26.8 as of
+  this session) -- **do not** pin either of those to "2.4.2", it doesn't
+  exist and Artifactory returns a misleading **401** (not 404) for that
+  nonexistent version path, which reads exactly like a real permissions
+  problem and sent this session down a dead-end SSO rabbit hole before being
+  found out. **The fix**: depend on the plain `com.tomtom.sdk.navigation:
+  navigation` artifact (no `-android` suffix, same naming pattern as
+  `com.tomtom.sdk:init`) -- it genuinely does publish real "2.4.2" releases
+  and its own POM depends only on other 2.4.2 artifacts, avoiding the whole
+  version-mismatch cascade. Mixing the two version families caused a chain of
+  "Duplicate class" dex-merge errors (first `org.sensoris.types.*`, then a
+  *third*, totally unrelated version scheme `com.tomtom.navigation.internal:
+  navigation-drivingassistance-model:33.1.0`) that would have kept recurring
+  indefinitely if pursued by excluding one colliding module at a time instead
+  of fixing the actual mismatch.
+- `navigation-android-complete` (tempting name-match with the "complete"
+  flavor) is a **red herring** -- it's a bundle of supporting services
+  (adas/hazards/traffic/vehicle/data-management), not the actual navigation
+  guidance engine (`TomTomNavigation`/`NavigationOptions`/`RoutePlan`).
+- `buildSdkConfiguration()` is a **top-level function** in
+  `com.tomtom.sdk.common.configuration` (module `com.tomtom.sdk.common:
+  configuration`, not pulled in transitively by anything else -- needs its
+  own explicit dependency), **not** a member of `TomTomSdk` as the docs'
+  code-snippet styling implies. The overload used in the spike needs only
+  `context`/`apiKey`, no telemetry-consent callback.
+- `createRoutePlanner()` is a genuine Kotlin **extension function** on
+  `TomTomSdk` (`fun TomTomSdk.createRoutePlanner(): RoutePlanner`, declared in
+  `com.tomtom.sdk.init`) -- Kotlin requires importing extension functions
+  explicitly even when called via `TomTomSdk.createRoutePlanner()` receiver
+  syntax; easy to forget.
+- `Itinerary`/`RouteLegOptions`/`RoutePlanningOptions` live in
+  `com.tomtom.sdk.routing.options` (not the bare `com.tomtom.sdk.routing`
+  package). `ReconstructionMode` is one level deeper still, in
+  `com.tomtom.sdk.routing.options.calculation`.
+  `RoutePlanningCallback`/`RoutePlanningResponse`/`RoutingFailure`/
+  `RoutePlanner` *are* in the bare `com.tomtom.sdk.routing` package.
+- `Route`'s total distance/duration are **not** `route.distance`/
+  `route.duration` -- they're nested under `route.summary.length` (type
+  `Distance`) and `route.summary.travelTime` (type `Duration`). The spike
+  just displays these via their own `toString()` rather than chasing the
+  exact meters/seconds accessor.
+- `NavigationOptions`/`RoutePlan`/`TomTomNavigation` are all in the plain
+  `com.tomtom.sdk.navigation` package (the same "navigation" artifact
+  mentioned above). `NavigationOptions(activeRoutePlan: RoutePlan)`,
+  `RoutePlan(route: Route, routePlanningOptions: RoutePlanningOptions)`,
+  `TomTomNavigation.start(NavigationOptions)`/`.stop()` are genuine interface
+  members, no import surprises there.
+
+### Route generator: radius is now a hard spatial boundary, not a duration ceiling
+
+Real, confirmed-by-Corey bug: the old design let duration silently undershoot
+once a radius cap was hit ("the intended trade-off", per the old code
+comment) -- wrong. Corey: *"the route needs to stay within the radius...
+hitting the radius barrier does not mean the route has to then go to the
+destination and finish."* `RouteGenerator.kt` was rewritten:
+
+- **No radius set**: unchanged single-detour-point convergence
+  (`refineCandidate`).
+- **Radius set**: `refineCandidateWithinRadius` chains `start` + several
+  "petal" waypoints (each at the *full* radius from start, evenly spaced
+  around a circle) + `destination`, tuning **petal count** against the target
+  duration instead of a single point's reach (which is already maxed out at
+  the cap). Several petals in different directions naturally forces
+  backtracking through nearby roads between them -- satisfying "drive over
+  the same roads if it has to" via the geometry itself, not an explicit rule.
+  Confirmed live against Geoapify that an 8km-radius, 6-petal chain produces a
+  genuinely realistic 85min/84km route, and that 18-waypoint chains resolve
+  fine in ~1.5s (well within `MAX_SPOKES = 12`).
+
+**Two real bugs found and fixed since that rewrite, both via actual Corey
+bug reports, not hypothetical**:
+
+1. **`best` was unconditionally overwritten every round** in both
+   `refineCandidate` and `refineCandidateWithinRadius`, regardless of whether
+   that round actually landed closer to target than a previous one. If a
+   later, worse round (e.g. a degenerate 0-petal direct route, which is short
+   by construction) ran right before the *next* round then failed outright,
+   the worse result is what got returned as "best" -- not the actual closest
+   one seen. Fixed: both functions now track `bestErrorSeconds` and only
+   replace `best` on genuine improvement.
+2. **A single unroutable petal failed the whole chain, and retrying only
+   shrank the radius, never changed direction.** Geoapify's real error
+   (confirmed by fixing `GeoapifyRoutingApi.kt` to stop discarding the
+   response body on failure -- it only ever logged bare "HTTP 400" before,
+   now includes Geoapify's actual message) is `"No suitable edges near
+   location"` -- a genuine "this waypoint has no nearby road" (water, a park,
+   etc.), not a real lat/lon-order bug despite what that message's own text
+   suggests. Shrinking radius by 15% and retrying the *same* bearing
+   directions does nothing if whatever's blocking a petal (e.g. a harbour
+   near the start point) is still within the smaller radius too -- confirmed
+   as the actual cause of routes landing at ~1 minute regardless of target
+   (every petaled attempt kept failing in the same doomed direction, leaving
+   only the short direct-route fallback to ever succeed). Fixed: failed
+   rounds now also rotate the whole petal ring by 47° (not a clean fraction
+   of 360, so it doesn't just relabel the same directions), giving each retry
+   an actual chance to dodge the blocked direction.
+
+**Not yet confirmed working end-to-end on-device** -- this was mid-retest
+when the session paused for context. If Corey reports another bad result,
+check Logcat tag `RouteGenerator` first (heavily instrumented: every round
+logs radius/spokes/duration/target/ratio) before guessing further.
+
+### UI/theme, in final-as-of-this-session state
+
+- **Color palette** (`Color.kt`): `#023E8A` selected buttons + reused as the
+  border for Generate Route/Plan a Trip/Student Profiles buttons (which are
+  **white fill + `#023E8A` border**, not filled -- went through several
+  iterations: filled `#0096C7` → filled `#00B4D8` → filled `#90E0EF` → current
+  white+border). `#0077B6` unselected buttons. Background/surface is **plain
+  white** (`BackgroundWhite`, went through `#CAF0F8` → `#90E0EF` → white).
+  `#ADE8F4` (`ClockAccentCyan`) is a leftover fallback for tertiary-family M3
+  roles Corey hasn't specified -- **not** used for the clock anymore (next
+  point). `#03045E` (`BorderNavy`) is border colour + button font, black is
+  used for all other text on the white background. A real M3 gotcha fixed
+  along the way: `surfaceTint` was never set explicitly (defaults to
+  `primary`), so elevated surfaces (dialogs, cards) were blending toward
+  primary blue instead of showing the literal flat hex -- fixed with
+  `surfaceTint = Color.Transparent` in `Theme.kt`.
+- **The clock (TimePicker)** deliberately does *not* use the app's custom
+  theme -- `AppTimePickerDialog` in `GenerateRouteScreen.kt` wraps it in a
+  fresh `MaterialTheme` using `dynamicLightColorScheme`/
+  `dynamicDarkColorScheme` (Android 12+ Material You, derived from the
+  device's actual wallpaper) when available, falling back to the M3 baseline
+  only pre-Android-12. Plain baseline colors alone are NOT "device default"
+  despite looking like a reasonable default -- they're a purple/pink-seeded
+  demo palette baked into Compose Material3, confirmed as the real source of
+  an earlier "the AM/PM selector is pink" report. The AM/PM period-selector
+  colors are further remapped from the (Material-You-typically-pink) tertiary
+  role to primary/surface/outline specifically, since Material You
+  deliberately makes tertiary a different hue family from primary by design.
+- **"Loop back to where I start" removed** -- destination is now always a
+  real place (map tap or address search); `loopBackToStart` and all its
+  branches are gone from `GenerateRouteScreen.kt`.
+- **A splash/launch screen** now exists
+  (`app/src/main/java/com/instructor/lessonroutes/ui/splash/SplashScreen.kt`),
+  shown by `AppNavHost.kt` during the one-time static-data-seed gate (the
+  app's actual "just opened, still loading" moment). Reconstructs Corey's
+  supplied SVG design (green background, hand-drawn squiggle, flag/pennant,
+  yellow L-plate, bottom fade, title+subtitle) directly via Compose `Canvas`
+  draw calls (paths/transforms traced 1:1 from the SVG), not a raster/vector
+  asset -- scales to any real screen size via scale-to-fit. Two known
+  simplifications: text position is approximated (SVG's baseline-based x/y
+  vs Compose `drawText`'s top-left-based positioning), and the SVG's
+  requested Inter font falls back to the platform default sans-serif (not
+  bundled in this app).
+- **Address search restricted to real NSW addresses** via Geoapify's
+  per-result `state_code` field (confirmed live: `"NSW"` vs `"VIC"`), not
+  just the existing `NSW_RECT_FILTER` bounding-box (which only approximates
+  NSW's border and let genuine interstate addresses like Wodonga VIC through)
+  in `GeoapifyGeocodingApi.kt`.
+
+### Other changes this session
+
+- **Bold labels + minor UI polish on "Plan a trip"**: "Generated"/
+  "Destination"/"Trip time"/"Duration"/"Optional Filters" bolded (label word
+  only, via `buildAnnotatedString`, where the line also carries a value).
+  "Set End time" (was "Pick an end time...") is bold red, shown as a
+  full-width line below the Start/End time row, disappearing once an end time
+  is picked. The Avoid/Prefer legend is three separate lines
+  (`FilterLegendLine` helper) with the term bolded to `Medium` weight (a step
+  lighter than section headers).
+- **Auto-generated route description**: the Save dialog's Description field
+  now pre-fills with a summary (duration/distance + Avoid/Prefer categories
+  used, `buildAutoDescription()` in `GenerateRouteScreen.kt`), fully editable
+  before saving. Wired to `Route.description`, a column that already existed
+  in the schema but was never actually used anywhere -- no migration needed.
+  Also now shown on `RouteDetailScreen` (previously only showed `notes`).
+- **"Navigate"** (was "Open in nav app") swaps the whole "Plan a trip" screen
+  to a live-tracking view: the exact `generatedRoute` polyline via
+  `RouteMapView`, zoomed in (`focusZoom = 16.0`, a new `RouteMapView` param)
+  and panning to follow the live position (`followLiveLocation = true`,
+  reusing `currentLocation` this screen already tracks -- no second location
+  listener). Exits via a Close button or system back (`BackHandler`). Not
+  persisted -- Save is still separate. See the TomTom section above for
+  where this is headed next.
+
+## Old recap (superseded by the above, kept for background only)
+
 Everything below this point up to "What this is" happened in one long session
 after the "Current status"/"Trip generator" narrative further down was last
 written -- that narrative is still worth reading for the trip generator's core
@@ -568,6 +820,30 @@ one from https://opendata.transport.nsw.gov.au. School zones/cameras (bundled
 assets) and quiet roads (OSM only) don't need it.
 
 ## Likely next steps
+
+**Current, as of this handoff (see "Latest session recap" at the top for full
+detail) -- these supersede everything numbered below, which is all from a much
+older session:**
+
+A. Get Corey to actually try Settings → "TomTom nav spike" and report what
+   happens (build succeeds now; never confirmed the spike runs/guides
+   correctly on a device). This is the actual open question the whole TomTom
+   detour exists to answer -- does reconstruction handle a backtracking loop
+   well, or collapse it like Google Maps did.
+B. Confirm the radius-as-hard-boundary rewrite + the two bug fixes on top of
+   it (best-tracking, bearing rotation) actually produce a correct-duration
+   route on a real retest -- was mid-retest when this session paused. Logcat
+   tag `RouteGenerator` first if it's still wrong.
+C. Once B is solid and A confirms TomTom's reconstruction is sound, wire
+   TomTom's real guidance into the actual "Navigate" button (currently a
+   plain custom live-tracking view, see recap) -- replacing the hardcoded
+   spike test route with the real `generatedRoute` from `GenerateRouteScreen`.
+D. Delete the spike screen/nav-destination/Settings button once C is done (or
+   once the spike proves TomTom isn't viable and a different path is chosen).
+
+---
+
+**Older, from a previous session -- likely stale, re-verify before acting:**
 
 0. **Immediate/pending, as of this handoff**: the tenth-round fix (commit
    `4c99efa` — `ALTERNATIVES_TIMEOUT_MS = 5_000L` bounding the OSRM
