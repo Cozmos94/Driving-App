@@ -57,6 +57,21 @@ import com.tomtom.sdk.routing.options.calculation.ReconstructionMode
 
 private const val LOG_TAG = "TomTomNavSpike"
 
+// TomTomSdk.initialize() is a real process-wide singleton init, not an
+// idempotent no-op -- calling it a second time throws "TomTomSdk is already
+// initialized" instead of just succeeding again. LaunchedEffect(Unit) below
+// re-runs every time this screen re-enters composition (back out via
+// Settings then back in again, or a config change like rotation recreating
+// the Activity) even though the SDK itself, once initialized for the
+// process, stays initialized regardless -- so a second entry doesn't need
+// (and can't survive) another initialize() call. This file-level flag
+// remembers that across this screen's own composition lifecycle; the catch
+// block below is a second line of defense for the same "already
+// initialized" case (e.g. if this flag's own state was somehow lost, such as
+// process death + restore) so it's treated as "already ready" rather than a
+// real failure either way.
+private var sdkInitializedThisProcess = false
+
 /** A hand-picked, deliberately backtracking test loop -- similar shape to what
  * RouteGenerator.refineCandidateWithinRadius produces for a small radius (a
  * few "petals" around a start point, in different compass directions, which

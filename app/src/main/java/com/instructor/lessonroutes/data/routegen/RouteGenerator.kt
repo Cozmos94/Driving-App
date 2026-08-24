@@ -141,6 +141,14 @@ private const val AVG_SPEED_KMH = 40.0
 // by construction.
 private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
 private const val MAX_RADIUS_ITERATIONS = 3
+// How many shrink+rotate retries an unroutable petal ring gets *within* one
+// outer duration-convergence iteration before that iteration gives up -- see
+// refineCandidateWithinRadius's own comment on why this needs to be separate
+// from MAX_RADIUS_ITERATIONS (a routing failure used to cost a whole
+// convergence round, which -- with only 3 of those total -- could exhaust the
+// entire budget on retries alone, stranding `best` on an early, badly-off
+// result).
+private const val MAX_UNROUTABLE_RETRIES = 3
 private const val DURATION_TOLERANCE_RATIO = 0.25
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
@@ -455,28 +463,61 @@ private suspend fun refineCandidateWithinRadius(
     var converged = false
     repeat(MAX_RADIUS_ITERATIONS) { iteration ->
         if (converged) return@repeat
-        val chain = buildList {
-            add(start)
-            addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm))
-            add(destination)
-        }
-        val routed = try {
-            fetchRoutedPaths(chain, avoidHighways = avoidHighways).firstOrNull()
-        } catch (e: Exception) {
-            Log.e(
-                LOG_TAG,
-                "Radius-confined routing call failed (bearing=$currentBearingDegrees, iteration=$iteration, " +
-                    "spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km)",
-                e,
-            )
-            null
+        // A routing failure (an unroutable petal) used to shrink+rotate and
+        // then immediately hand control back to the *outer* loop, burning one
+        // of only MAX_RADIUS_ITERATIONS=3 precious duration-convergence
+        // rounds on what's really just "try again with a nudged ring" --
+        // confirmed as a real cause of a route landing well short of target
+        // (Corey report: 70min target, 30km radius, generated 41min, with
+        // Geoapify's "No suitable edges near location" recurring in Logcat).
+        // Walking through it: spokeCount starts at 1 (a direct estimate from
+        // maxRadiusKm), round 1 succeeds at 41min, ratio-adjustment bumps
+        // spokeCount to 2 for round 2 -- but if *that* round's 2-petal ring
+        // hits an unroutable petal, the old code spent round 2 shrinking/
+        // rotating and round 3 (the last one) either also failed or, even if
+        // it succeeded, measured a worse-converged result than round 1's --
+        // leaving round 1's 41min as `best` with the convergence budget
+        // already exhausted. Fixed: retry an unroutable ring several times
+        // *inside* one outer iteration (shrinking+rotating each attempt, same
+        // as before) before giving up on it, so a single bad petal placement
+        // doesn't cost an entire duration-convergence round.
+        var routed: GeneratedRoute? = null
+        var attempt = 0
+        while (routed == null && attempt < MAX_UNROUTABLE_RETRIES) {
+            val chain = buildList {
+                add(start)
+                addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm))
+                add(destination)
+            }
+            routed = try {
+                fetchRoutedPaths(chain, avoidHighways = avoidHighways).firstOrNull()
+            } catch (e: Exception) {
+                Log.e(
+                    LOG_TAG,
+                    "Radius-confined routing call failed (bearing=$currentBearingDegrees, iteration=$iteration, " +
+                        "attempt=$attempt, spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km)",
+                    e,
+                )
+                null
+            }
+            if (routed == null) {
+                // At least one petal likely landed somewhere unroutable --
+                // shrink *and* rotate the whole ring (see
+                // currentBearingDegrees' own comment above) and retry, still
+                // within this same outer iteration.
+                spokeRadiusKm *= 0.85
+                currentBearingDegrees += 47.0
+                attempt++
+            }
         }
         if (routed == null) {
-            // At least one petal likely landed somewhere unroutable -- shrink
-            // *and* rotate the whole ring (see currentBearingDegrees' own
-            // comment above) and retry.
-            spokeRadiusKm *= 0.85
-            currentBearingDegrees += 47.0
+            // Every retry at this spokeCount was unroutable -- rather than
+            // silently returning to the outer loop with nothing to show for
+            // this whole iteration (still stuck at the same spokeCount next
+            // time), back off by one petal as a last resort so the next
+            // outer iteration has an actual chance to land somewhere
+            // routable instead of repeating the exact same doomed count.
+            if (spokeCount > 0) spokeCount -= 1
             return@repeat
         }
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
@@ -569,6 +610,11 @@ private fun approxDistanceMeters(a: LatLng, b: LatLng): Double {
  * searches around. */
 fun midpoint(a: LatLng, b: LatLng): LatLng =
     LatLng((a.latitude + b.latitude) / 2.0, (a.longitude + b.longitude) / 2.0)
+
+/** Public wrapper on [approxDistanceMeters] so callers (see
+ * GenerateRouteScreen.kt's Overpass scoring-radius sizing) can reason about
+ * real-world distance without duplicating the equirectangular approximation. */
+fun distanceKm(a: LatLng, b: LatLng): Double = approxDistanceMeters(a, b) / 1000.0
 
 /** Offsets [point] by [distanceKm] along compass [bearingDegrees] (0 = north,
  * 90 = east), via a flat-earth approximation -- fine at the few-km scale this is

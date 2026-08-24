@@ -92,6 +92,7 @@ import com.instructor.lessonroutes.data.routegen.FilterSummary
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.instructor.lessonroutes.data.routegen.RouteGenerationFilters
 import com.instructor.lessonroutes.data.routegen.ScoringData
+import com.instructor.lessonroutes.data.routegen.distanceKm
 import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
@@ -321,7 +322,7 @@ fun GenerateRouteScreen(
                     // response (a heavily loaded shared community server) isn't
                     // just added on top of however long the routing API's candidates take.
                     val scoringDataDeferred = async {
-                        buildScoringData(filters, center, radiusDegrees, schoolZoneDao, speedCameraDao)
+                        buildScoringData(filters, center, radiusDegrees, start, end, selectedRadiusKm, schoolZoneDao, speedCameraDao)
                     }
                     val candidatesDeferred = async {
                         generateCandidateRoutes(
@@ -1039,7 +1040,44 @@ private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 20_000L
 // specifically for the Overpass-backed categories cuts both query cost and the
 // amount of data to sample/process afterward, without capping the (much
 // smaller, already-fast) TfNSW/Room-backed categories' search area.
+//
+// Real bug found from this cap alone (Corey report: "couldn't load data for:
+// roundabouts" on a route that visibly has plenty of them): this flat 0.15°
+// (~16.7km) radius is centered on the start/destination *midpoint*
+// (see `center` above), with zero regard for how far apart start and
+// destination actually are, or how far a radius-confined generation's petal
+// loops range from `start` specifically (see RouteGenerator.refineCandidateWithinRadius).
+// A one-way trip whose two ends are more than ~33km apart already leaves both
+// endpoints outside this box; a petal loop can range even farther from
+// `start` than from the midpoint. The Overpass query then legitimately finds
+// nothing in that (wrong) box and reports "no data", indistinguishable from a
+// real absence -- see coverageRadiusDegrees below, which now floors the box at
+// whatever's actually needed to contain start, destination, and any petal
+// reach, only falling back to this flat cap when that's already enough.
 private const val OVERPASS_SCORING_RADIUS_CAP_DEGREES = 0.15
+
+// Equirectangular approximation, same one RouteGenerator.kt uses internally --
+// fine at this scale, just needed here to convert a km floor into degrees for
+// the Overpass bbox query below.
+private const val KM_PER_DEGREE_LAT = 111.32
+
+// Margin added on top of the bare minimum (start/destination/petal-reach) so a
+// roundabout sitting right at the edge of where the route could plausibly go
+// isn't missed by a box drawn exactly at that edge.
+private const val OVERPASS_SCORING_MARGIN_KM = 5.0
+
+/** The smallest radius (in degrees, around [center]) that's guaranteed to
+ * contain [start], [end], and (if a radius cap is active) the full reach of a
+ * petal loop from [start] -- i.e. the real minimum the Overpass scoring box
+ * needs to cover this generation, regardless of how tight
+ * [OVERPASS_SCORING_RADIUS_CAP_DEGREES] normally is. */
+private fun coverageRadiusDegrees(center: LatLng, start: LatLng, end: LatLng, maxRadiusKm: Double?): Double {
+    val toStart = distanceKm(center, start)
+    val toEnd = distanceKm(center, end)
+    val petalReachKm = maxRadiusKm ?: 0.0
+    val requiredKm = maxOf(toStart, toEnd) + petalReachKm + OVERPASS_SCORING_MARGIN_KM
+    return requiredKm / KM_PER_DEGREE_LAT
+}
 
 /** Fetches point-of-interest data only for the categories actually set to
  * AVOID/PREFER in [filters] -- fetching the rest would be wasted network calls.
@@ -1051,6 +1089,9 @@ private suspend fun buildScoringData(
     filters: RouteGenerationFilters,
     center: LatLng,
     radiusDegrees: Double,
+    start: LatLng,
+    end: LatLng,
+    maxRadiusKm: Double?,
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
 ): ScoringFetchResult = coroutineScope {
@@ -1069,7 +1110,10 @@ private suspend fun buildScoringData(
             ?: emptyList()
         list to (if (list.isEmpty()) name else null)
     }
-    val overpassRadiusDegrees = minOf(radiusDegrees, OVERPASS_SCORING_RADIUS_CAP_DEGREES)
+    val overpassRadiusDegrees = maxOf(
+        minOf(radiusDegrees, OVERPASS_SCORING_RADIUS_CAP_DEGREES),
+        coverageRadiusDegrees(center, start, end, maxRadiusKm),
+    )
 
     val incidents: Deferred<Pair<List<LatLng>, String?>>? = if (filters.incidents != FilterPreference.NONE) {
         fetchBounded("Hazards") { fetchOpenIncidents(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
