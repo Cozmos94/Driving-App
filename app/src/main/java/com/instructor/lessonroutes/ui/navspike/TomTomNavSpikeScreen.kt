@@ -27,13 +27,13 @@ import com.tomtom.sdk.init.TomTomSdk
 import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.navigation.NavigationOptions
 import com.tomtom.sdk.navigation.RoutePlan
-import com.tomtom.sdk.routing.Itinerary
-import com.tomtom.sdk.routing.ReconstructionMode
-import com.tomtom.sdk.routing.RouteLegOptions
 import com.tomtom.sdk.routing.RoutePlanningCallback
-import com.tomtom.sdk.routing.RoutePlanningOptions
 import com.tomtom.sdk.routing.RoutePlanningResponse
 import com.tomtom.sdk.routing.RoutingFailure
+import com.tomtom.sdk.routing.options.Itinerary
+import com.tomtom.sdk.routing.options.RouteLegOptions
+import com.tomtom.sdk.routing.options.RoutePlanningOptions
+import com.tomtom.sdk.routing.options.calculation.ReconstructionMode
 
 // ---------------------------------------------------------------------------
 // THROWAWAY SPIKE -- exists only to answer one question: can TomTom's
