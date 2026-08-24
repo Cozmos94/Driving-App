@@ -104,6 +104,27 @@ android {
     }
 }
 
+// A scoped exclude on just the navigation-android dependency line didn't
+// actually clear "Duplicate class com.tomtom.trace.fcd.ingest.sensoris...
+// found in modules sensoris-1.26.8.jar (com.tomtom.sdk.telemetry:sensoris:
+// 1.26.8) and telemetry-protobuf-internal-2.4.2.jar
+// (com.tomtom.sdk.telemetry:telemetry-protobuf-internal:2.4.2)" -- confirmed
+// with a full clean + re-sync + rebuild, so it's a real miss, not a stale
+// cache. This applies the exclude unconditionally across every configuration
+// instead, regardless of which specific dependency's transitive graph
+// actually pulls sensoris in -- a stronger mechanism than scoping it to one
+// implementation(...) line. Narrowed to just the "sensoris" module (not the
+// whole com.tomtom.sdk.telemetry group) since telemetry-protobuf-internal
+// embeds the same generated classes natively rather than depending on a
+// separate "sensoris" artifact for them -- so removing just the standalone
+// duplicate copy should leave a single, complete copy of these classes
+// (from telemetry-protobuf-internal) on the classpath, without risking
+// stripping out telemetry APIs navigation-android's own compiled code
+// might reference directly.
+configurations.all {
+    exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -144,14 +165,9 @@ dependencies {
     implementation(libs.tomtom.sdk.routing.route.planner)
     // navigation-android comes from a completely independent version family
     // (1.26.8) from everything else here (2.4.2) -- see tomtomNavigationEngine's
-    // own comment in libs.versions.toml. Both families bundle their own copy of
-    // TomTom's telemetry/Sensoris (vehicle-data standard) generated classes,
-    // which collide at dex-merge time ("Duplicate class org.sensoris.types...").
-    // Excluding the whole telemetry group from this one mismatched-version
-    // dependency keeps only the 2.4.2-family copy (pulled in transitively by
-    // init/common-configuration) on the classpath. Not needed for this spike --
-    // it's opt-in analytics reporting, unrelated to route reconstruction/guidance.
-    implementation(libs.tomtom.sdk.navigation.android) {
-        exclude(group = "com.tomtom.sdk.telemetry")
-    }
+    // own comment in libs.versions.toml. See the configurations.all { exclude }
+    // block above (outside this dependencies{} block) for the actual fix for
+    // the resulting duplicate-class conflict -- a scoped exclude right here
+    // didn't work, confirmed with a full clean + re-sync + rebuild.
+    implementation(libs.tomtom.sdk.navigation.android)
 }
