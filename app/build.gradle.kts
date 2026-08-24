@@ -32,9 +32,27 @@ val geoapifyApiKey: String = run {
     properties.getProperty("GEOAPIFY_API_KEY", "")
 }
 
+// Same pattern again. This is the TomTom Navigation SDK's *runtime* API key --
+// separate from the Maven repository Identity Token needed just to download the
+// SDK itself (that one goes in settings.gradle.kts instead, Gradle credentials
+// aren't read via BuildConfig). See the TomTom "Project Setup" section of
+// README once it's written up.
+val tomtomApiKey: String = run {
+    val properties = Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { properties.load(it) }
+    }
+    properties.getProperty("TOMTOM_API_KEY", "")
+}
+
 android {
     namespace = "com.instructor.lessonroutes"
-    compileSdk = 34
+    // Bumped 34->35: a hard requirement of the TomTom Navigation SDK (confirmed
+    // live against its current project-setup docs) -- targetSdk deliberately
+    // left at 34 for now, since that's a bigger behavioral surface than just
+    // the compiler/tooling version compileSdk controls.
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.instructor.lessonroutes"
@@ -44,6 +62,17 @@ android {
         versionName = "0.1"
         buildConfigField("String", "TFNSW_API_KEY", "\"$tfnswApiKey\"")
         buildConfigField("String", "GEOAPIFY_API_KEY", "\"$geoapifyApiKey\"")
+        buildConfigField("String", "TOMTOM_API_KEY", "\"$tomtomApiKey\"")
+
+        // TomTom SDK requirements, confirmed live from its own docs:
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+        // TomTom ships the SDK in flavors (e.g. a smaller "lite" vs "complete"
+        // feature set) via a Gradle product flavor dimension it declares
+        // internally -- "complete" is the one their own quickstart uses and
+        // needs no separate Maven repo credentials, unlike some other flavor.
+        missingDimensionStrategy("tomtom-sdk-version", "complete")
     }
 
     buildTypes {
@@ -105,4 +134,11 @@ dependencies {
 
     // Phase 2: Transport for NSW live hazards feed
     implementation(libs.okhttp)
+
+    // TomTom Navigation SDK spike -- see ui/navspike/TomTomNavSpikeScreen.kt.
+    // provider-simulation is a stand-in GPS source for this spike only; a real
+    // build would use a real location provider instead.
+    implementation(libs.tomtom.sdk.init)
+    implementation(libs.tomtom.sdk.location.provider.simulation)
+    implementation(libs.tomtom.sdk.routing.route.planner)
 }

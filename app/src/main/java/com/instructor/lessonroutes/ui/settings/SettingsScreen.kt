@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(routeDao: RouteDao, onBack: () -> Unit) {
+fun SettingsScreen(routeDao: RouteDao, onBack: () -> Unit, onNavSpikeClick: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var showClearConfirm by remember { mutableStateOf(false) }
     var cleared by remember { mutableStateOf(false) }
@@ -68,6 +68,16 @@ fun SettingsScreen(routeDao: RouteDao, onBack: () -> Unit) {
             }
             if (cleared) {
                 Text("All saved routes cleared.")
+            }
+
+            HorizontalDivider()
+
+            // Temporary -- see TomTomNavSpikeScreen.kt's own top-of-file comment.
+            // Delete this whole block (and the block below it) once the spike
+            // question is answered and either kept properly or torn out.
+            Text("Debug", fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = onNavSpikeClick, modifier = Modifier.fillMaxWidth()) {
+                Text("TomTom nav spike")
             }
 
             HorizontalDivider()

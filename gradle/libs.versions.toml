@@ -15,6 +15,11 @@ playServicesLocation = "21.3.0"
 coroutines = "1.8.1"
 navigationCompose = "2.9.8"
 okhttp = "4.12.0"
+# TomTom Navigation SDK -- confirmed live against docs.tomtom.com's current
+# (post my.tomtom.com migration) project-setup page. Check
+# docs.tomtom.com/navigation/android/getting-started/project-setup for a
+# newer version before bumping blindly.
+tomtomSdk = "2.4.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -40,6 +45,15 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+
+# TomTom Navigation SDK -- see version note above. Three artifacts confirmed
+# from the current project-setup/quickstart docs: init (core SDK + TomTomSdk
+# entry point), a location provider (simulation, for this spike -- swap for a
+# real GPS-backed provider once past the spike stage), and the routing module
+# (RoutePlanner, route reconstruction from supportingPoints).
+tomtom-sdk-init = { group = "com.tomtom.sdk", name = "init", version.ref = "tomtomSdk" }
+tomtom-sdk-location-provider-simulation = { group = "com.tomtom.sdk.location", name = "provider-simulation", version.ref = "tomtomSdk" }
+tomtom-sdk-routing-route-planner = { group = "com.tomtom.sdk.routing", name = "route-planner", version.ref = "tomtomSdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

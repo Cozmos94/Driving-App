@@ -17,6 +17,7 @@ import com.instructor.lessonroutes.data.AppDatabase
 import com.instructor.lessonroutes.data.seedStaticDataIfNeeded
 import com.instructor.lessonroutes.ui.generate.GenerateRouteScreen
 import com.instructor.lessonroutes.ui.map.LiveMapScreen
+import com.instructor.lessonroutes.ui.navspike.TomTomNavSpikeScreen
 import com.instructor.lessonroutes.ui.profiles.StudentProfilesScreen
 import com.instructor.lessonroutes.ui.routes.FollowScreen
 import com.instructor.lessonroutes.ui.routes.RouteDetailScreen
@@ -31,6 +32,8 @@ private const val ROUTE_DETAIL = "routeDetail/{routeId}"
 private const val ROUTE_GENERATE = "generateRoute"
 private const val ROUTE_FOLLOW = "follow/{routeId}"
 private const val SETTINGS = "settings"
+// Temporary -- see TomTomNavSpikeScreen.kt's own top-of-file comment.
+private const val TOMTOM_NAV_SPIKE = "tomtomNavSpike"
 
 @Composable
 fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
@@ -109,7 +112,15 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
             )
         }
         composable(SETTINGS) {
-            SettingsScreen(routeDao = dao, onBack = { navController.popBackStack() })
+            SettingsScreen(
+                routeDao = dao,
+                onBack = { navController.popBackStack() },
+                onNavSpikeClick = { navController.navigate(TOMTOM_NAV_SPIKE) },
+            )
+        }
+        // Temporary -- see TomTomNavSpikeScreen.kt's own top-of-file comment.
+        composable(TOMTOM_NAV_SPIKE) {
+            TomTomNavSpikeScreen(onBack = { navController.popBackStack() })
         }
         composable(
             route = ROUTE_DETAIL,
