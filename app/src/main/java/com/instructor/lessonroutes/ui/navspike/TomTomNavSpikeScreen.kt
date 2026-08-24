@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
 import com.tomtom.sdk.common.configuration.buildSdkConfiguration
 import com.tomtom.sdk.init.TomTomSdk
+import com.tomtom.sdk.init.createRoutePlanner
 import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.navigation.NavigationOptions
 import com.tomtom.sdk.navigation.RoutePlan
@@ -76,7 +77,13 @@ private val SPIKE_PETALS = listOf(
 private sealed interface SpikeState {
     data object Idle : SpikeState
     data object Planning : SpikeState
-    data class Planned(val distanceMeters: Double, val durationSeconds: Double) : SpikeState
+    // Displayed via Summary.length/travelTime's own toString() rather than
+    // pulling out raw meters/seconds -- confirmed via Dokka that these are
+    // route.summary.length (Distance) / route.summary.travelTime (Duration),
+    // not route.distance/route.duration directly, but the exact
+    // meters/seconds accessor on those two value types wasn't worth chasing
+    // further for a spike's display text.
+    data class Planned(val length: String, val travelTime: String) : SpikeState
     data object Navigating : SpikeState
     data class Failed(val message: String) : SpikeState
 }
@@ -137,8 +144,8 @@ fun TomTomNavSpikeScreen(onBack: () -> Unit) {
                         state = SpikeState.Failed("Planning succeeded but returned no routes")
                         return
                     }
-                    Log.d(LOG_TAG, "Reconstructed route: distance=${route.distance} duration=${route.duration}")
-                    state = SpikeState.Planned(route.distance, route.duration.inWholeSeconds.toDouble())
+                    Log.d(LOG_TAG, "Reconstructed route: length=${route.summary.length} travelTime=${route.summary.travelTime}")
+                    state = SpikeState.Planned(route.summary.length.toString(), route.summary.travelTime.toString())
                     try {
                         val routePlan = RoutePlan(route = route, routePlanningOptions = routePlanningOptions)
                         TomTomSdk.navigation.start(NavigationOptions(routePlan))
@@ -191,8 +198,7 @@ fun TomTomNavSpikeScreen(onBack: () -> Unit) {
                 is SpikeState.Idle -> Text("Idle.")
                 is SpikeState.Planning -> Text("Planning…")
                 is SpikeState.Planned -> Text(
-                    "Planned: ${"%.1f".format(current.distanceMeters / 1000.0)} km, " +
-                        "${(current.durationSeconds / 60.0).toInt()} min. Starting guidance…",
+                    "Planned: ${current.length}, ${current.travelTime}. Starting guidance…",
                 )
                 is SpikeState.Navigating -> Text("Navigating -- check Logcat/guidance UI for turn instructions.")
                 is SpikeState.Failed -> Text("Failed: ${current.message}")
