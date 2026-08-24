@@ -54,6 +54,11 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 tomtom-sdk-init = { group = "com.tomtom.sdk", name = "init", version.ref = "tomtomSdk" }
 tomtom-sdk-location-provider-simulation = { group = "com.tomtom.sdk.location", name = "provider-simulation", version.ref = "tomtomSdk" }
 tomtom-sdk-routing-route-planner = { group = "com.tomtom.sdk.routing", name = "route-planner", version.ref = "tomtomSdk" }
+# Not in the quickstart's own dependency list (a real gap in their docs --
+# NavigationOptions/RoutePlan/TomTomNavigation, all under com.tomtom.sdk.navigation,
+# were unresolved without it) -- best-guess artifact name, unverified, may need
+# correcting against the Artifactory repo browser at repositories.tomtom.com if wrong.
+tomtom-sdk-navigation-online = { group = "com.tomtom.sdk.navigation", name = "navigation-online", version.ref = "tomtomSdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
