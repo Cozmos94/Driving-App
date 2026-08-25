@@ -2,9 +2,13 @@ package com.instructor.lessonroutes.ui.navigate
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -21,7 +25,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
+import com.instructor.lessonroutes.ui.map.RouteMapView
+import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
+import com.instructor.lessonroutes.util.hasLocationPermission
+import com.instructor.lessonroutes.util.startLocationUpdates
 import com.tomtom.sdk.init.TomTomSdk
 import com.tomtom.sdk.init.createRoutePlanner
 import com.tomtom.sdk.location.GeoPoint
@@ -215,10 +228,17 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                planningError != null ->
-                    Text(planningError.orEmpty(), modifier = Modifier.padding(16.dp))
                 !hasEnoughPoints ->
                     Text("This route doesn't have enough points to navigate.", modifier = Modifier.padding(16.dp))
+                // TomTom can genuinely fail to reconstruct/start guidance for
+                // a given route (confirmed live: CANNOT_RESTORE_BASEROUTE on
+                // some routes but not others, seemingly tied to route
+                // geometry/size rather than a fixable bug on our end) --
+                // rather than dead-ending on an error message, fall back to
+                // the plain map + live position view this screen replaced,
+                // so the instructor still has something usable.
+                planningError != null ->
+                    FallbackLiveMap(route = route, reason = planningError.orEmpty())
                 // Real bug, confirmed via a crash: this branch used to be
                 // reached as soon as hasEnoughPoints was true -- which is
                 // true on the very first composition, before the
@@ -323,5 +343,57 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
             },
         )
         NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
+    }
+}
+
+/** Fallback shown when TomTom fails for any reason (SDK init, reconstruction,
+ * or navigation.start() itself) -- no real turn-by-turn guidance, just the
+ * generated route drawn on this app's own map with a live position dot, the
+ * same shape the old placeholder "Navigate" view used before TomTom was wired
+ * in. Tracks location itself (this screen has no other location source to
+ * reuse, unlike GenerateRouteScreen.kt) via the same FusedLocationProvider
+ * pattern already used there -- centerOnDeviceLocation=false on RouteMapView
+ * since this live stream already drives followLiveLocation, avoiding the
+ * exact permission/centering race already documented on that other screen. */
+@Composable
+private fun FallbackLiveMap(route: GeneratedRoute, reason: String) {
+    val context = LocalContext.current
+    var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results -> hasLocationPermission = results.values.any { it } }
+    var currentLocation by remember { mutableStateOf<LatLng?>(null) }
+
+    LaunchedEffect(Unit) {
+        if (!hasLocationPermission) permissionLauncher.launch(LOCATION_PERMISSIONS)
+    }
+
+    val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    DisposableEffect(hasLocationPermission) {
+        if (!hasLocationPermission) return@DisposableEffect onDispose {}
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).build()
+        val callback = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                result.lastLocation?.let { currentLocation = LatLng(it.latitude, it.longitude) }
+            }
+        }
+        fusedClient.startLocationUpdates(request, callback)
+        onDispose { fusedClient.removeLocationUpdates(callback) }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Text(
+            "Full turn-by-turn guidance couldn't start ($reason). Showing your route on the map instead.",
+            modifier = Modifier.padding(12.dp),
+        )
+        RouteMapView(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            routePoints = route.points,
+            liveLocation = currentLocation,
+            followLiveLocation = true,
+            centerOnDeviceLocation = false,
+            focusPoint = currentLocation,
+            focusZoom = 16.0,
+        )
     }
 }
