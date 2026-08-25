@@ -151,6 +151,12 @@ private const val MAX_RADIUS_ITERATIONS = 3
 // result).
 private const val MAX_UNROUTABLE_RETRIES = 3
 private const val DURATION_TOLERANCE_RATIO = 0.25
+// Floor for the petal ring's spread angle (see spokePoints' own doc comment) --
+// narrowed from a full 360 when a full-circle ring keeps failing to route, but
+// not narrowed all the way to a sliver: petals need some real angular spacing
+// between them for the "several directions, forces backtracking" shape this
+// mode is built for to still mean anything.
+private const val MIN_SPREAD_DEGREES = 60.0
 private const val PROXIMITY_METERS = 40.0
 private const val KM_PER_DEGREE_LAT = 111.32
 
@@ -467,6 +473,18 @@ private suspend fun refineCandidateWithinRadius(
     // actual chance to land the blocked petal somewhere routable instead of
     // repeating the same doomed direction closer to start each time.
     var currentBearingDegrees = bearingDegrees
+    // How wide a fan the petals are spread across -- starts at a full circle
+    // (spokePoints' own default) and only narrows in reaction to repeated
+    // full-ring failures (see the attempt-retry loop below). Confirmed real
+    // via Corey's Wollongong report: a coastal-city start with an escarpment/
+    // national park on the other side has whole arcs of the compass with no
+    // road network at all, so evenly-spaced petals around the *full* circle
+    // kept landing at least one petal in a dead zone regardless of how the
+    // ring was rotated (target 106min/77min, 30km radius, generated ~3h+ both
+    // times -- Logcat showed the overwhelming majority of routing attempts,
+    // across many different rotations, failing with Geoapify's "No suitable
+    // edges near location", not just one unlucky petal).
+    var spreadDegrees = 360.0
     var best: GeneratedRoute? = null
     // See refineCandidate's own comment on the exact same bug -- `best` used
     // to be unconditionally overwritten every round, so a later, worse round
@@ -505,7 +523,7 @@ private suspend fun refineCandidateWithinRadius(
         while (routed == null && attempt < MAX_UNROUTABLE_RETRIES) {
             val chain = buildList {
                 add(start)
-                addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm))
+                addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm, spreadDegrees))
                 add(destination)
             }
             routed = try {
@@ -514,7 +532,8 @@ private suspend fun refineCandidateWithinRadius(
                 Log.e(
                     LOG_TAG,
                     "Radius-confined routing call failed (bearing=$currentBearingDegrees, iteration=$iteration, " +
-                        "attempt=$attempt, spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km)",
+                        "attempt=$attempt, spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km, " +
+                        "spread=${"%.0f".format(spreadDegrees)}deg)",
                     e,
                 )
                 null
@@ -523,9 +542,14 @@ private suspend fun refineCandidateWithinRadius(
                 // At least one petal likely landed somewhere unroutable --
                 // shrink *and* rotate the whole ring (see
                 // currentBearingDegrees' own comment above) and retry, still
-                // within this same outer iteration.
+                // within this same outer iteration. Also narrow the spread
+                // (see spreadDegrees' own comment) -- shrinking/rotating alone
+                // still spaces petals across the full circle, which does
+                // nothing if the blocked arc (ocean, escarpment, etc.) is
+                // wider than the gap rotation alone can dodge.
                 spokeRadiusKm *= 0.85
                 currentBearingDegrees += 47.0
+                spreadDegrees = (spreadDegrees * 0.6).coerceAtLeast(MIN_SPREAD_DEGREES)
                 attempt++
             }
         }
@@ -548,7 +572,8 @@ private suspend fun refineCandidateWithinRadius(
         Log.d(
             LOG_TAG,
             "refineCandidateWithinRadius: bearing=$currentBearingDegrees iteration=$iteration spokes=$spokeCount " +
-                "spokeRadius=${"%.2f".format(spokeRadiusKm)}km duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
+                "spokeRadius=${"%.2f".format(spokeRadiusKm)}km spread=${"%.0f".format(spreadDegrees)}deg " +
+                "duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
                 "target=${"%.1f".format(targetSeconds / 60.0)}min ratio=${"%.2f".format(ratio)}",
         )
         if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) {
@@ -569,14 +594,26 @@ private suspend fun refineCandidateWithinRadius(
     return best
 }
 
-/** [count] points evenly spaced by 360/[count] degrees around a full circle
- * starting at [seedBearing], each [radiusKm] from [anchor] -- the "petals" of a
+/** [count] points spread [spreadDegrees] apart in total starting at
+ * [seedBearing], each [radiusKm] from [anchor] -- the "petals" of a
  * radius-confined loop (see [refineCandidateWithinRadius]). Empty for
  * [count] <= 0 (no petals needed -- the direct start-to-destination leg alone
- * already covers the target duration). */
-private fun spokePoints(anchor: LatLng, seedBearing: Double, count: Int, radiusKm: Double): List<LatLng> {
+ * already covers the target duration).
+ *
+ * [spreadDegrees] defaults to a full 360 -- exactly the original behaviour
+ * (petals evenly wrapped around the whole compass). [refineCandidateWithinRadius]
+ * narrows it below 360 when a full-circle ring keeps failing to route: a start
+ * point near a coastline or a mountain escarpment (a real, common NSW shape --
+ * Wollongong confirmed live: ocean on one side, the Illawarra escarpment/
+ * national park on the other) can have whole arcs of the compass with no road
+ * network at all within [radiusKm], no matter how the ring is rotated -- evenly
+ * spacing petals around the *full* circle then guarantees some of them land in
+ * that dead zone. A narrower fan gives every petal a real chance to land within
+ * whatever arc actually has roads. */
+private fun spokePoints(anchor: LatLng, seedBearing: Double, count: Int, radiusKm: Double, spreadDegrees: Double = 360.0): List<LatLng> {
     if (count <= 0) return emptyList()
-    val stepDegrees = 360.0 / count
+    if (count == 1) return listOf(offset(anchor, seedBearing, radiusKm))
+    val stepDegrees = spreadDegrees / count
     return (0 until count).map { i -> offset(anchor, seedBearing + i * stepDegrees, radiusKm) }
 }
 
