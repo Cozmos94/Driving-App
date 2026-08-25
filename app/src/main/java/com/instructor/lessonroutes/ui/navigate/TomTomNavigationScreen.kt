@@ -65,7 +65,17 @@ import com.tomtom.sdk.navigation.ProgressUpdatedListener
 import com.tomtom.sdk.navigation.RoutePlan
 import com.tomtom.sdk.navigation.guidance.GuidanceAnnouncement
 import com.tomtom.sdk.navigation.guidance.InstructionPhase
+import com.tomtom.sdk.navigation.guidance.instruction.ArrivalGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.DepartureGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.ExitHighwayGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.ExitRoundaboutGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.ForkGuidanceInstruction
 import com.tomtom.sdk.navigation.guidance.instruction.GuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.MandatoryTurnGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.MergeGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.RoundaboutGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.TurnAroundWhenPossibleGuidanceInstruction
+import com.tomtom.sdk.navigation.guidance.instruction.TurnGuidanceInstruction
 import com.tomtom.quantity.Distance
 import com.tomtom.sdk.routing.RoutePlanner
 import com.tomtom.sdk.routing.RoutePlanningCallback
@@ -106,15 +116,12 @@ import java.util.Locale
 // repo's actual source files, not inferred from stale docs.
 //
 // What's genuinely simplified vs their app (deliberately, not by oversight):
-// no route-alternatives/preview UI (we already have exactly one reconstructed
-// route ready to go, so routingVisualizationDataProvider is fed trivial empty
-// flows -- NavigationVisualization is what actually draws the active route
-// once navigation.start() is called), no maneuver-text panel yet (a fast-
-// follow once this baseline is confirmed working on-device -- the map + live
-// position + route line + camera-follow below IS the core turn-by-turn
-// experience; a text overlay is polish on top, not required for it to work),
-// no TTS (matches "no voice" -- there's simply no code here that would ever
-// speak anything).
+// no route-alternatives/preview UI (we already have exactly one planned route
+// ready to go -- routingVisualizationDataProvider is fed that one real route,
+// not a driver-facing choice of several), no TTS (matches "no voice" --
+// there's simply no code here that would ever speak anything). The guidance
+// text overlay (next maneuver, distance, ETA) IS built now -- see
+// describeInstruction() and LiveNavigationMap's own listener setup.
 // ---------------------------------------------------------------------------
 
 private const val LOG_TAG = "TomTomNavigationScreen"
@@ -155,6 +162,38 @@ private fun <T> List<T>.downsampledTo(maxPoints: Int): List<T> {
     if (size <= maxPoints || maxPoints < 2) return this
     val stride = (size - 1).toDouble() / (maxPoints - 1)
     return (0 until maxPoints).map { i -> this[(i * stride).toInt().coerceAtMost(size - 1)] }
+}
+
+/** Turns an enum's raw name (e.g. "TURN_LEFT") into readable words ("turn
+ * left") without needing to know its exact constant names ahead of time --
+ * safer than hardcoding a guessed set of enum values that could be wrong. */
+private fun Enum<*>.readableName(): String = name.lowercase().replace('_', ' ')
+
+/** Real, human-readable turn-by-turn text -- previously this screen only
+ * showed the upcoming road name ("onto Bank Street"), never an actual
+ * maneuver verb, because GuidanceInstruction's base interface genuinely
+ * doesn't carry one: direction/turn info only exists on its subclasses
+ * (confirmed via TomTom's own Dokka reference, not guessed). Covers the
+ * common on-road cases; falls through to a plain road-name mention for the
+ * remaining subclasses (merge lanes, carpool lanes, tollgates, border
+ * crossings, waypoints) rather than guessing at how to phrase those too. */
+private fun describeInstruction(instruction: GuidanceInstruction): String {
+    val roadName = instruction.nextSignificantRoad?.name
+    val ontoRoad = roadName?.let { " onto $it" } ?: ""
+    return when (instruction) {
+        is TurnGuidanceInstruction -> "Turn ${instruction.turnDirection.readableName()}$ontoRoad"
+        is MandatoryTurnGuidanceInstruction -> "Turn ${instruction.turnDirection.readableName()}$ontoRoad"
+        is RoundaboutGuidanceInstruction ->
+            "At the roundabout" + (instruction.exitNumber?.let { ", take exit $it" } ?: "") + ontoRoad
+        is ExitRoundaboutGuidanceInstruction -> "Exit the roundabout$ontoRoad"
+        is ForkGuidanceInstruction -> "Keep ${instruction.forkDirection.readableName()}$ontoRoad"
+        is MergeGuidanceInstruction -> "Merge$ontoRoad"
+        is ExitHighwayGuidanceInstruction -> "Take the exit$ontoRoad"
+        is ArrivalGuidanceInstruction -> "Arrive at your destination"
+        is DepartureGuidanceInstruction -> "Head out$ontoRoad"
+        is TurnAroundWhenPossibleGuidanceInstruction -> "Turn around when possible"
+        else -> "Continue$ontoRoad"
+    }
 }
 
 /** Tries each of [attempts] (label to options) against [routePlanner] in
@@ -335,6 +374,7 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
             )
         },
     ) { padding ->
+        val plan = routePlan
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
                 !hasEnoughPoints ->
@@ -360,10 +400,10 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
                 // guarantees the SDK-init LaunchedEffect above has already
                 // run to completion first (routePlan is only ever set later
                 // in that same coroutine, after ensureInitialized succeeded).
-                routePlan == null ->
+                plan == null ->
                     Text("Preparing turn-by-turn guidance…", modifier = Modifier.padding(16.dp))
                 else ->
-                    LiveNavigationMap(route = route, isNavigating = navigationStarted)
+                    LiveNavigationMap(route = route, tomtomRoute = plan.route, isNavigating = navigationStarted)
             }
         }
     }
@@ -374,7 +414,7 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
  * confirmed-real API surface, see this file's own top comment for where each
  * piece came from. */
 @Composable
-private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
+private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavigating: Boolean) {
     val styleMode = if (isSystemInDarkTheme()) StyleMode.DARK else StyleMode.MAIN
 
     val mapDisplayInfrastructure = remember {
@@ -384,18 +424,22 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
             }
         }
     }
-    // No route-alternatives/preview concept here (unlike the example app,
-    // which lets the driver pick among several planned routes before
-    // starting) -- we already have exactly one reconstructed route, so this
-    // is fed trivial empty flows. NavigationVisualizationDataProvider (tied
-    // to the same TomTomSdk.navigation engine started above) is what
-    // actually draws the active route once navigation.start() has run.
-    val navigationVisualizationInfrastructure = remember {
+    // Real bug, confirmed live: feeding this trivial *empty* flows (no route-
+    // alternatives/preview concept here, unlike the example app which lets
+    // the driver pick among several planned routes before starting) meant
+    // nothing ever drew on the map even though navigation.start() genuinely
+    // succeeded and progress/guidance data was flowing -- the route line
+    // itself apparently needs to actually be present in
+    // RoutingVisualizationDataProvider's own routes/selectedRouteId, not just
+    // referenced indirectly via the shared TomTomNavigation engine. Fixed by
+    // feeding it the real planned route (tomtomRoute, the same Route object
+    // that's actually being navigated) instead of an empty placeholder.
+    val navigationVisualizationInfrastructure = remember(tomtomRoute) {
         NavigationVisualizationInfrastructure(
             routingVisualizationDataProvider = flowOf(
                 RoutingVisualizationDataProvider(
-                    routes = MutableStateFlow<List<Route>>(emptyList()),
-                    selectedRouteId = flowOf(null),
+                    routes = MutableStateFlow(listOf(tomtomRoute)),
+                    selectedRouteId = flowOf(tomtomRoute.id),
                 ),
             ),
             navigationVisualizationDataProvider = flowOf(
@@ -458,7 +502,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
     // upcoming road name is what's shown instead.
     var remainingTimeText by remember { mutableStateOf<String?>(null) }
     var remainingDistanceText by remember { mutableStateOf<String?>(null) }
-    var nextRoadName by remember { mutableStateOf<String?>(null) }
+    var instructionText by remember { mutableStateOf<String?>(null) }
     var distanceToManeuverText by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(Unit) {
@@ -477,11 +521,11 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
                 currentPhase: InstructionPhase,
             ) {
                 distanceToManeuverText = distance.toString()
-                nextRoadName = instructions.firstOrNull()?.nextSignificantRoad?.name
+                instructionText = instructions.firstOrNull()?.let(::describeInstruction)
             }
 
             override fun onInstructionsChanged(instructions: List<GuidanceInstruction>) {
-                nextRoadName = instructions.firstOrNull()?.nextSignificantRoad?.name
+                instructionText = instructions.firstOrNull()?.let(::describeInstruction)
             }
         }
         TomTomSdk.navigation.addProgressUpdatedListener(progressListener)
@@ -519,7 +563,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
         // the bottom) is the actual structure Google Maps/Waze-style nav
         // UIs use; the previous single small floating card read as a generic
         // app notice rather than a driving instrument.
-        if (nextRoadName != null) {
+        if (instructionText != null) {
             Surface(
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                 color = MaterialTheme.colorScheme.primary,
@@ -533,7 +577,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
                     Text(
-                        "onto $nextRoadName",
+                        instructionText.orEmpty(),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
