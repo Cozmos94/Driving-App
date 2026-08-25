@@ -1,10 +1,8 @@
 package com.instructor.lessonroutes.ui.navigate
 
-import android.content.Context
-import android.content.ContextWrapper
 import android.util.Log
-import android.view.View
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -23,16 +21,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.fragment.app.FragmentActivity
-import androidx.fragment.app.FragmentContainerView
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.tomtom.sdk.init.TomTomSdk
 import com.tomtom.sdk.init.createRoutePlanner
 import com.tomtom.sdk.location.GeoPoint
+import com.tomtom.sdk.map.display.MapLocationInfrastructure
+import com.tomtom.sdk.map.display.camera.CameraTrackingMode
+import com.tomtom.sdk.map.display.camera.InitialCameraOptions
+import com.tomtom.sdk.map.display.compose.TomTomMap
+import com.tomtom.sdk.map.display.compose.model.MapDisplayInfrastructure
+import com.tomtom.sdk.map.display.compose.nodes.CurrentLocationMarker
+import com.tomtom.sdk.map.display.compose.properties.CurrentLocationMarkerProperties
+import com.tomtom.sdk.map.display.compose.state.rememberMapViewState
+import com.tomtom.sdk.map.display.location.LocationMarkerOptions
+import com.tomtom.sdk.map.display.style.StandardStyles
+import com.tomtom.sdk.map.display.style.StyleMode
+import com.tomtom.sdk.map.display.visualization.navigation.NavigationVisualizationDataProvider
+import com.tomtom.sdk.map.display.visualization.navigation.compose.NavigationVisualization
+import com.tomtom.sdk.map.display.visualization.navigation.compose.model.NavigationVisualizationInfrastructure
+import com.tomtom.sdk.map.display.visualization.routing.RoutingVisualizationDataProvider
+import com.tomtom.sdk.navigation.NavigationOptions
 import com.tomtom.sdk.navigation.RoutePlan
-import com.tomtom.sdk.navigation.ui.NavigationFragment
-import com.tomtom.sdk.navigation.ui.NavigationUiOptions
 import com.tomtom.sdk.routing.RoutePlanningCallback
 import com.tomtom.sdk.routing.RoutePlanningResponse
 import com.tomtom.sdk.routing.RoutingFailure
@@ -40,73 +49,67 @@ import com.tomtom.sdk.routing.options.Itinerary
 import com.tomtom.sdk.routing.options.RouteLegOptions
 import com.tomtom.sdk.routing.options.RoutePlanningOptions
 import com.tomtom.sdk.routing.options.calculation.ReconstructionMode
+import com.tomtom.sdk.routing.route.Route
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import org.maplibre.android.geometry.LatLng
 
 // ---------------------------------------------------------------------------
-// Real turn-by-turn guidance for the "Navigate" button on GenerateRouteScreen.kt
-// -- replaces the plain custom-map live-tracking placeholder that was there
-// before. Confirmed viable first via TomTomNavSpikeScreen.kt: reconstructing a
-// real Geoapify-computed polyline through a 6-petal backtracking loop
-// (supportingPoints + ReconstructionMode.Route) preserved the route's actual
-// distance almost exactly (83718m fetched vs 83869m reconstructed, ~0.2% off)
-// rather than collapsing it the way Google Maps' waypoint hand-off did --
-// that's the one question this whole TomTom detour existed to answer, and the
-// spike answered it live, not just in theory.
+// Real turn-by-turn guidance for the "Navigate" button on GenerateRouteScreen.kt.
 //
-// Map-only, no voice (Corey's call) -- NavigationUiOptions(isSoundEnabled =
-// false) below. The navigation-ui module still pulls in com.tomtom.sdk:tts
-// transitively regardless (its own POM depends on it) -- no way around that
-// short of not using this module's guidance UI at all, but isSoundEnabled =
-// false means it's never actually invoked.
+// SECOND REWRITE, read before running: the first version used
+// com.tomtom.sdk.navigation:ui-android-complete's NavigationFragment (a
+// View/Fragment-based UI wrapper) -- confirmed live on-device that it renders
+// its guidance chrome (maneuver banner, speed display) but NO map at all.
+// Root cause, confirmed by reading that module's own POM: it has zero
+// dependency on any map-rendering module, and there's no documented way to
+// attach one to it. Rather than keep guessing at an increasingly-clearly
+// unsupported path, I read TomTom's own current, actively-maintained example
+// app (github.com/tomtom-international/tomtom-example-app) directly -- it
+// doesn't use NavigationFragment/navigation-ui at all. It uses a Compose-
+// native map (map-display-compose-standard) + a separate route/position
+// visualization layer (visualization-compose), both driven by the same
+// *headless* TomTomNavigation engine the original spike already proved works
+// (TomTomSdk.navigation.start(NavigationOptions(routePlan)), no Fragment
+// involved). This rewrite follows that confirmed-real pattern, not a guess:
+// every API used below (MapDisplayInfrastructure, NavigationVisualization,
+// NavigationVisualizationInfrastructure, RoutingVisualizationDataProvider,
+// TomTomSdk.sdkContext/locationProvider, etc.) was read verbatim out of that
+// repo's actual source files, not inferred from stale docs.
 //
-// A GeneratedRoute is already just a flat, dense points list (no separate
-// waypoints/legs once generated -- RouteGenerator.kt's chained-petal geometry
-// is baked into that one list), so unlike the spike (which had real, separate
-// petal waypoints to route through) this reconstructs the WHOLE route as a
-// single leg -- no network call needed here at all, route.points already IS
-// the "already-computed polyline" TomTom's reconstruction wants.
-//
-// IMPORTANT, read before running: two things here are standard, well-trodden
-// patterns (Fragment-in-Compose via AndroidView + FragmentContainerView;
-// MainActivity now extends FragmentActivity to host it) that I'm confident
-// in. What I *can't* independently confirm is the exact call-ordering
-// NavigationFragment itself expects (setTomTomNavigation then startNavigation
-// right after the fragment's created, vs needing to wait for its view to
-// actually be attached first) -- the Dokka reference lists these as plain
-// public methods with no stated ordering restriction, but that's not the same
-// as having run it. If this doesn't work first try, send me whatever Logcat
-// shows (tag below) rather than a re-guess -- there's a decent chance it's
-// just a call-ordering fix, not a wrong-approach one, given the spike already
-// proved the underlying reconstruction mechanism works.
+// What's genuinely simplified vs their app (deliberately, not by oversight):
+// no route-alternatives/preview UI (we already have exactly one reconstructed
+// route ready to go, so routingVisualizationDataProvider is fed trivial empty
+// flows -- NavigationVisualization is what actually draws the active route
+// once navigation.start() is called), no maneuver-text panel yet (a fast-
+// follow once this baseline is confirmed working on-device -- the map + live
+// position + route line + camera-follow below IS the core turn-by-turn
+// experience; a text overlay is polish on top, not required for it to work),
+// no TTS (matches "no voice" -- there's simply no code here that would ever
+// speak anything).
 // ---------------------------------------------------------------------------
 
 private const val LOG_TAG = "TomTomNavigationScreen"
 
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
 
-private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
-    is FragmentActivity -> this
-    is ContextWrapper -> baseContext.findFragmentActivity()
-    else -> null
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
     val context = LocalContext.current
-    val activity = remember(context) { context.findFragmentActivity() }
-
     var planningError by remember { mutableStateOf<String?>(null) }
     var routePlan by remember { mutableStateOf<RoutePlan?>(null) }
-    var navigationFragment by remember { mutableStateOf<NavigationFragment?>(null) }
     var navigationStarted by remember { mutableStateOf(false) }
+    // Checked synchronously (not just inside the async LaunchedEffect below)
+    // so a degenerate route can never reach LiveNavigationMap's
+    // route.points.first() before the async check would have caught it.
+    val hasEnoughPoints = route.points.size >= 2
 
-    // Reconstructs the already-generated route via TomTom, same shape
-    // confirmed live by the spike (see file comment above) -- one leg,
-    // supportingPoints = the route's own dense point list, no separate
-    // waypoints. No Geoapify call needed here: route.points already IS the
-    // dense polyline the spike had to fetch specially.
     LaunchedEffect(route) {
+        if (!hasEnoughPoints) {
+            planningError = "This route doesn't have enough points to navigate."
+            return@LaunchedEffect
+        }
         try {
             TomTomSdkInit.ensureInitialized(context)
         } catch (e: Exception) {
@@ -114,11 +117,13 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
             planningError = "Couldn't start navigation: SDK init failed (${e.message})"
             return@LaunchedEffect
         }
+        // Reconstructs the already-generated route via TomTom -- confirmed
+        // live by TomTomNavSpikeScreen.kt that this preserves a backtracking
+        // route's real distance instead of collapsing it. One leg,
+        // supportingPoints = the route's own dense point list -- no separate
+        // waypoints, no extra network call (route.points already IS the
+        // "already-computed polyline" reconstruction wants).
         val supportingPoints = route.points.map { it.toGeoPoint() }
-        if (supportingPoints.size < 2) {
-            planningError = "This route doesn't have enough points to navigate."
-            return@LaunchedEffect
-        }
         val routePlanningOptions = RoutePlanningOptions(
             itinerary = Itinerary(
                 origin = supportingPoints.first(),
@@ -153,42 +158,25 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
         )
     }
 
-    // Fires once both the embedded fragment and the reconstructed plan are
-    // ready, in whichever order they actually arrive (planning is a network
-    // call, fragment creation is a view-lifecycle callback -- no fixed order
-    // between them). navigationStarted guards against calling startNavigation
-    // twice on an unrelated recomposition.
-    LaunchedEffect(navigationFragment, routePlan) {
-        val fragment = navigationFragment
+    // Headless engine start -- exactly the call the spike already confirmed
+    // works, just triggered here instead of from a debug button. No Fragment
+    // involved; NavigationVisualization (in LiveNavigationMap below) draws
+    // whatever this session is actively navigating automatically.
+    LaunchedEffect(routePlan) {
         val plan = routePlan
-        if (fragment != null && plan != null && !navigationStarted) {
-            fragment.setTomTomNavigation(TomTomSdk.navigation)
-            fragment.startNavigation(plan)
+        if (plan != null && !navigationStarted) {
+            TomTomSdk.navigation.start(NavigationOptions(plan))
             navigationStarted = true
         }
     }
 
-    // Keyed on Unit, NOT navigationFragment -- onDispose still reads whatever
-    // navigationFragment's latest value is at actual teardown time (it's a
-    // live state read, not a captured snapshot), but keying on Unit means
-    // this only fires once, on this whole composable leaving composition.
-    // Keying on navigationFragment directly would have disposed-and-recreated
-    // this effect the moment the fragment first appeared (null -> real
-    // instance is itself a key change), calling stopNavigation() on a
-    // fragment that had just barely started navigating.
     DisposableEffect(Unit) {
         onDispose {
             try {
-                // Prefer the fragment's own stopNavigation() (it owns the
-                // guidance UI's teardown too, not just the underlying engine)
-                // -- fall back to the raw TomTomNavigation singleton only if
-                // exiting happened before a fragment ever existed (e.g. left
-                // during planning/reconstruction), in which case there's
-                // nothing for a fragment-level stop to do anyway.
-                navigationFragment?.stopNavigation() ?: TomTomSdk.navigation.stop()
+                TomTomSdk.navigation.stop()
             } catch (e: Exception) {
-                // Most likely just means navigation never actually started --
-                // not worth surfacing to the instructor, just noting it happened.
+                // Most likely just means navigation never actually started
+                // (e.g. exited during planning/reconstruction).
                 Log.w(LOG_TAG, "Stopping navigation on exit failed (probably wasn't running)", e)
             }
         }
@@ -204,74 +192,92 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
             )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                activity == null ->
-                    Text("Couldn't start navigation: no activity to host it.", modifier = Modifier.padding(16.dp))
                 planningError != null ->
                     Text(planningError.orEmpty(), modifier = Modifier.padding(16.dp))
-                routePlan == null ->
-                    Text("Preparing turn-by-turn guidance…", modifier = Modifier.padding(16.dp))
+                !hasEnoughPoints ->
+                    Text("This route doesn't have enough points to navigate.", modifier = Modifier.padding(16.dp))
                 else ->
-                    EmbeddedNavigationFragment(
-                        activity = activity,
-                        modifier = Modifier.fillMaxSize(),
-                        onFragmentReady = { navigationFragment = it },
-                    )
+                    LiveNavigationMap(route = route, isNavigating = navigationStarted)
             }
         }
     }
 }
 
-/** Hosts a real [NavigationFragment] inside Compose via the standard
- * AndroidView + FragmentContainerView interop pattern. [activity]'s
- * FragmentManager owns the fragment's lifecycle, not this composable directly
- * -- `update` re-checks `findFragmentById` on every recomposition rather than
- * gating on a `remember`, so a fragment that already exists in this container
- * (e.g. surviving a config change) isn't recreated. */
+/** The actual live map: real TomTom tiles, a chevron marker at the device's
+ * current position, and the active navigation session's route line --
+ * confirmed-real API surface, see this file's own top comment for where each
+ * piece came from. */
 @Composable
-private fun EmbeddedNavigationFragment(
-    activity: FragmentActivity,
-    modifier: Modifier = Modifier,
-    onFragmentReady: (NavigationFragment) -> Unit,
-) {
-    val containerId = remember { View.generateViewId() }
-    var fragment by remember { mutableStateOf<NavigationFragment?>(null) }
+private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
+    val styleMode = if (isSystemInDarkTheme()) StyleMode.DARK else StyleMode.MAIN
 
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx -> FragmentContainerView(ctx).apply { id = containerId } },
-        update = {
-            val fragmentManager = activity.supportFragmentManager
-            val existing = fragmentManager.findFragmentById(containerId) as? NavigationFragment
-            if (existing != null) {
-                if (fragment !== existing) fragment = existing
-                return@AndroidView
-            }
-            val created = NavigationFragment.newInstance(NavigationUiOptions(isSoundEnabled = false))
-            // commitNowAllowingStateLoss (synchronous), not the async
-            // fragment-ktx `commit {}` helper -- callers of this composable
-            // need `fragment` to actually be attached once this returns, not
-            // attached on some later main-thread loop iteration.
-            fragmentManager.beginTransaction()
-                .replace(containerId, created)
-                .commitNowAllowingStateLoss()
-            fragment = created
-        },
-    )
-
-    DisposableEffect(containerId) {
-        onDispose {
-            val existing = activity.supportFragmentManager.findFragmentById(containerId)
-            if (existing != null) {
-                activity.supportFragmentManager.beginTransaction()
-                    .remove(existing)
-                    .commitNowAllowingStateLoss()
+    val mapDisplayInfrastructure = remember {
+        MapDisplayInfrastructure(sdkContext = TomTomSdk.sdkContext) {
+            locationInfrastructure = MapLocationInfrastructure {
+                locationProvider = TomTomSdk.locationProvider
             }
         }
     }
+    // No route-alternatives/preview concept here (unlike the example app,
+    // which lets the driver pick among several planned routes before
+    // starting) -- we already have exactly one reconstructed route, so this
+    // is fed trivial empty flows. NavigationVisualizationDataProvider (tied
+    // to the same TomTomSdk.navigation engine started above) is what
+    // actually draws the active route once navigation.start() has run.
+    val navigationVisualizationInfrastructure = remember {
+        NavigationVisualizationInfrastructure(
+            routingVisualizationDataProvider = flowOf(
+                RoutingVisualizationDataProvider(
+                    routes = MutableStateFlow<List<Route>>(emptyList()),
+                    selectedRouteId = flowOf(null),
+                ),
+            ),
+            navigationVisualizationDataProvider = flowOf(
+                NavigationVisualizationDataProvider(tomtomNavigation = TomTomSdk.navigation),
+            ),
+        )
+    }
+    val initialCameraOptions = remember(route) {
+        InitialCameraOptions.LocationBased(position = route.points.first().toGeoPoint())
+    }
+    val mapViewState = rememberMapViewState(initialCameraOptions = initialCameraOptions) {
+        styleState.styleMode = styleMode
+    }
 
-    LaunchedEffect(fragment) {
-        fragment?.let(onFragmentReady)
+    // A freshly-constructed MapViewState has no visible tiles until a real
+    // style is loaded -- easy to miss (this is what silently produced a
+    // blank-but-otherwise-working map the first time around, in the *other*
+    // sense: NavigationFragment's map never existed at all; this loadStyle
+    // call is what makes an actual TomTomMap show real tiles).
+    LaunchedEffect(Unit) {
+        mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.DRIVING)
+    }
+
+    LaunchedEffect(isNavigating) {
+        if (isNavigating) {
+            mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
+        }
+    }
+
+    DisposableEffect(Unit) {
+        TomTomSdk.locationProvider.enable()
+        onDispose {
+            TomTomSdk.locationProvider.disable()
+        }
+    }
+
+    TomTomMap(
+        infrastructure = mapDisplayInfrastructure,
+        state = mapViewState,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        CurrentLocationMarker(
+            CurrentLocationMarkerProperties {
+                type = LocationMarkerOptions.Type.Chevron
+            },
+        )
+        NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
     }
 }

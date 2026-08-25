@@ -15,12 +15,6 @@ playServicesLocation = "21.3.0"
 coroutines = "1.8.1"
 navigationCompose = "2.9.8"
 okhttp = "4.12.0"
-# Matches the version TomTom's own ui-android-complete POM already pulls in
-# transitively (confirmed against Artifactory) -- declared explicitly rather
-# than relying on that transitive edge by accident, same reasoning as
-# buildSdkConfiguration/createRoutePlanner needing their own explicit
-# dependency elsewhere in this file.
-fragmentKtx = "1.8.9"
 # TomTom Navigation SDK -- confirmed live against docs.tomtom.com's current
 # (post my.tomtom.com migration) project-setup page. Check
 # docs.tomtom.com/navigation/android/getting-started/project-setup for a
@@ -49,11 +43,6 @@ play-services-location = { group = "com.google.android.gms", name = "play-servic
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
-
-# FragmentActivity/FragmentContainerView -- needed to host TomTom's
-# NavigationFragment (com.tomtom.sdk.navigation.ui) inside Compose. See
-# fragmentKtx's own comment above.
-androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragmentKtx" }
 
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
@@ -87,17 +76,29 @@ tomtom-sdk-routing-route-planner = { group = "com.tomtom.sdk.routing", name = "r
 # unlike navigation-android, and its own POM depends only on other 2.4.2
 # artifacts, so this should be the one release train, not two colliding ones.
 tomtom-sdk-navigation = { group = "com.tomtom.sdk.navigation", name = "navigation", version.ref = "tomtomSdk" }
-# Real turn-by-turn guidance UI (maneuver banner, live map, speed/speed-limit
-# display) -- NavigationFragment lives here (com.tomtom.sdk.navigation.ui).
-# "-android-complete" confirmed directly against Artifactory's own POM before
-# adding this (not guessed, unlike navigation-android's own "-android"-suffix
-# trap earlier in this project) -- its dependency list is sane real 2.4.2
-# artifacts (navigation core, tts, material, fragment-ktx), not a mismatched
-# version family. Voice is muted via NavigationUiOptions(isSoundEnabled =
-# false) at the call site, not by omitting this -- the module pulls in
-# com.tomtom.sdk:tts transitively regardless (its own POM depends on it), no
-# way around that short of not using this module's guidance UI at all.
-tomtom-sdk-navigation-ui = { group = "com.tomtom.sdk.navigation", name = "ui-android-complete", version.ref = "tomtomSdk" }
+# REAL, GPS-backed location provider for actual on-device navigation --
+# provider-simulation above is a fake GPS source, spike-only. Confirmed
+# against TomTom's own current example app (github.com/tomtom-international/
+# tomtom-example-app), which uses this exact artifact for the same purpose.
+tomtom-sdk-location-provider-default = { group = "com.tomtom.sdk.location", name = "provider-default", version.ref = "tomtomSdk" }
+# Real turn-by-turn map rendering + route/position visualization, Compose-
+# native. First attempt at this used com.tomtom.sdk.navigation:ui-android-
+# complete (NavigationFragment, a View/Fragment-based UI) -- confirmed live
+# on-device that it renders its guidance chrome (maneuver banner etc.) but NO
+# map at all, because that module has zero dependency on any map-rendering
+# module and there's no documented way to attach one to it. Replaced with
+# what TomTom's own current, actively-maintained example app actually uses
+# (confirmed by reading its real source, not guessed): a Compose-native map
+# (this artifact) + a route/position visualization layer (below), both driven
+# by the same headless TomTomNavigation engine the original spike already
+# proved works (TomTomSdk.navigation.start(NavigationOptions(routePlan))) --
+# no Fragment, no FragmentActivity host, involved at all. Deliberately pinned
+# to this project's existing 2.4.2 (not the example app's slightly newer
+# 2.4.3) to stay on the one already-confirmed-compatible release train --
+# mixing TomTom version families has caused real duplicate-class cascades in
+# this project before (see tomtom-sdk-navigation's own comment above).
+tomtom-sdk-maps-map-display-compose-standard = { group = "com.tomtom.sdk.maps", name = "map-display-compose-standard", version.ref = "tomtomSdk" }
+tomtom-sdk-maps-visualization-compose = { group = "com.tomtom.sdk.maps.visualization", name = "visualization-compose", version.ref = "tomtomSdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
