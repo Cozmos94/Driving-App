@@ -127,11 +127,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
             arguments = listOf(navArgument("routeId") { type = NavType.LongType }),
         ) { backStackEntry ->
             val routeId = backStackEntry.arguments?.getLong("routeId") ?: return@composable
-            RouteDetailScreen(
-                routeId = routeId,
-                dao = dao,
-                onFollowClick = { navController.navigate("follow/$it") },
-            )
+            RouteDetailScreen(routeId = routeId, dao = dao)
         }
         composable(
             route = ROUTE_FOLLOW,

@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -29,30 +28,51 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
 import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
+import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.instructor.lessonroutes.data.routegen.effectiveFilterSummary
 import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
+import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import org.maplibre.android.geometry.LatLng
 
 /**
- * Step 4 (list -> detail with polyline) plus step 7/8's "Follow" and "Open in nav app"
- * actions, since they're cheap additions to a screen that already exists.
+ * Step 4 (list -> detail with polyline) plus step 7/8's "Open in nav app" action
+ * (now "Navigate", opening real TomTom turn-by-turn guidance -- see
+ * TomTomNavigationScreen.kt -- rather than handing off to Google Maps). The
+ * "Follow" button/screen (FollowScreen.kt) was removed from this screen per
+ * Corey's request -- FollowScreen.kt and its nav destination are left in place,
+ * just unwired, same as CreateRouteScreen.kt's own precedent, in case that flow
+ * is ever wanted back.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Unit) {
-    val context = LocalContext.current
+fun RouteDetailScreen(routeId: Long, dao: RouteDao) {
     val routeWithPoints by dao.getRouteWithPoints(routeId).collectAsState(initial = null)
     val routeWithProfiles by dao.getRouteWithProfiles(routeId).collectAsState(initial = null)
     val current = routeWithPoints
+    val displayRoutePoints = rememberDisplayRoutePoints(current?.points ?: emptyList())
+    // Swaps the *whole* screen to real TomTom guidance, same early-return
+    // pattern GenerateRouteScreen.kt uses for its own "Navigate" button --
+    // TomTomNavigationScreen has its own Scaffold/TopAppBar, so this can't be
+    // nested inside RouteDetailScreen's own Scaffold below without stacking
+    // two top bars.
+    var isNavigating by remember { mutableStateOf(false) }
+    if (isNavigating) {
+        // durationSeconds/distanceMeters are only used for this screen's own
+        // diagnostic logging, not for planning itself -- a saved Route has no
+        // stored duration/distance to pass here (unlike a freshly generated
+        // one), so 0.0 is a harmless placeholder, not a real value used anywhere.
+        val route = GeneratedRoute(points = displayRoutePoints, durationSeconds = 0.0, distanceMeters = 0.0)
+        TomTomNavigationScreen(route = route, onExit = { isNavigating = false })
+        return
+    }
 
     // Phase 2 step 9: live hazards overlay, no caching (fetched fresh each time it's
     // switched on). Silently does nothing if no API key is configured.
@@ -86,7 +106,6 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
             }
         } else {
             val sortedPoints = current.points.sortedBy { it.sequenceOrder }
-            val displayRoutePoints = rememberDisplayRoutePoints(current.points)
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     RouteMapView(
@@ -145,19 +164,15 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao, onFollowClick: (Long) -> Uni
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Button(onClick = { onFollowClick(routeId) }, modifier = Modifier.weight(1f)) {
-                        Text("Follow")
-                    }
+                    // Was "Open in nav app" (handed off to Google Maps) --
+                    // now opens real TomTom turn-by-turn guidance instead,
+                    // same as GenerateRouteScreen.kt's "Navigate" button.
                     OutlinedButton(
-                        onClick = {
-                            if (displayRoutePoints.isNotEmpty()) {
-                                openInNavApp(context, displayRoutePoints)
-                            }
-                        },
+                        onClick = { isNavigating = true },
                         enabled = displayRoutePoints.isNotEmpty(),
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Open in nav app")
+                        Text("Navigate")
                     }
                 }
             }
