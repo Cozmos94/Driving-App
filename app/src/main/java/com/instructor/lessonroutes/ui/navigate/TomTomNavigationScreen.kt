@@ -50,6 +50,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -75,8 +78,11 @@ import com.tomtom.sdk.map.display.camera.CameraTrackingMode
 import com.tomtom.sdk.map.display.camera.InitialCameraOptions
 import com.tomtom.sdk.map.display.compose.TomTomMap
 import com.tomtom.sdk.map.display.compose.model.MapDisplayInfrastructure
+import com.tomtom.sdk.map.display.compose.model.PolylineData
 import com.tomtom.sdk.map.display.compose.nodes.CurrentLocationMarker
+import com.tomtom.sdk.map.display.compose.nodes.Polyline
 import com.tomtom.sdk.map.display.compose.properties.CurrentLocationMarkerProperties
+import com.tomtom.sdk.map.display.compose.properties.PolylineProperties
 import com.tomtom.sdk.map.display.compose.state.rememberMapViewState
 import com.tomtom.sdk.map.display.location.LocationMarkerOptions
 import com.tomtom.sdk.map.display.style.StandardStyles
@@ -120,6 +126,8 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 
@@ -185,6 +193,42 @@ private const val MAX_SUPPORTING_POINTS = 1000
 private const val SHAPE_WAYPOINT_COUNT = 20
 
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
+
+/** Equirectangular approximation -- fine at route-segment scale (tens of
+ * meters to a few km), same approach RouteGenerator.kt/OverpassApi.kt already
+ * use elsewhere in this project rather than a full geodesic calculation. */
+private fun approxDistanceMeters(a: LatLng, b: LatLng): Double {
+    val metersPerDegreeLat = 111_320.0
+    val metersPerDegreeLon = 111_320.0 * cos(Math.toRadians(a.latitude))
+    val dx = (b.longitude - a.longitude) * metersPerDegreeLon
+    val dy = (b.latitude - a.latitude) * metersPerDegreeLat
+    return hypot(dx, dy)
+}
+
+/** Running total distance (metres) from [points]'s first point to each of
+ * its own points in turn -- e.g. `[0.0, 12.4, 30.1, ...]`. Used to find where
+ * along the route's own dense polyline the "already driven" vs "still ahead"
+ * split falls (see splitIndexFor), since RouteProgress.distanceAlongRoute is
+ * a plain cumulative distance, not an index into this list. */
+private fun cumulativeDistancesMeters(points: List<LatLng>): List<Double> {
+    if (points.isEmpty()) return emptyList()
+    val result = ArrayList<Double>(points.size)
+    result.add(0.0)
+    for (i in 1 until points.size) {
+        result.add(result[i - 1] + approxDistanceMeters(points[i - 1], points[i]))
+    }
+    return result
+}
+
+/** Index of the first point in [cumulative] whose running distance has
+ * reached [traveledMeters] -- the split point between the "already driven"
+ * and "still ahead" segments of the route line (Corey's request: shade them
+ * differently). Falls back to the last index once [traveledMeters] exceeds
+ * the whole route's length (e.g. right at arrival). */
+private fun splitIndexFor(cumulative: List<Double>, traveledMeters: Double): Int {
+    val index = cumulative.indexOfFirst { it >= traveledMeters }
+    return if (index == -1) cumulative.lastIndex else index
+}
 
 /** Reduces [this] to at most [maxPoints] by even-stride sampling, always
  * keeping the first and last point (start/destination) intact. A no-op when
@@ -634,10 +678,25 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     var instructionIconVector by remember { mutableStateOf<ImageVector?>(null) }
     var distanceToManeuver by remember { mutableStateOf<Distance?>(null) }
 
+    // Two-tone route line (Corey's request: current-shade blue ahead, darker
+    // blue for the already-driven part behind) -- built ourselves via the
+    // Polyline composable (a plain, general-purpose line-drawing primitive,
+    // separate from the route-planning-specific visualization types) since
+    // RouteStyle -- the style config for NavigationVisualization's own
+    // built-in route line -- only exposes a single activeLineColor for the
+    // *whole* route, confirmed via its real, complete constructor (no
+    // separate traveled/driven color property exists there at all).
+    // distanceAlongRoute (RouteProgress) is the cumulative distance driven so
+    // far; cumulativeDistancesMeters/splitIndexFor turn that into a split
+    // point along route.points' own dense polyline.
+    val routeCumulativeDistances = remember(route) { cumulativeDistancesMeters(route.points) }
+    var traveledMeters by remember { mutableStateOf(0.0) }
+
     DisposableEffect(Unit) {
         val progressListener = ProgressUpdatedListener { progress ->
             remainingTime = progress.remainingTime
             remainingDistance = progress.remainingDistance
+            traveledMeters = progress.distanceAlongRoute.inMeters()
         }
         val guidanceListener = object : GuidanceUpdatedListener {
             override fun onAnnouncementGenerated(announcement: GuidanceAnnouncement, shouldPlay: Boolean) {
@@ -669,6 +728,22 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         }
     }
 
+    val routeSplitIndex = remember(traveledMeters, routeCumulativeDistances) {
+        splitIndexFor(routeCumulativeDistances, traveledMeters)
+    }
+    // Sharing the boundary point between both lists so the two segments
+    // connect without a visible gap where they meet.
+    val traveledPoints = remember(routeSplitIndex, route) {
+        route.points.subList(0, (routeSplitIndex + 1).coerceAtMost(route.points.size))
+    }
+    val remainingPoints = remember(routeSplitIndex, route) {
+        route.points.subList(routeSplitIndex.coerceAtMost(route.points.size - 1), route.points.size)
+    }
+    val remainingLineColor = MaterialTheme.colorScheme.primary
+    // A darker shade of the same hue, not a different color entirely --
+    // matches Corey's request ("darker blue", not grey/another color).
+    val traveledLineColor = lerp(remainingLineColor, Color.Black, 0.45f)
+
     Box(Modifier.fillMaxSize()) {
         TomTomMap(
             infrastructure = mapDisplayInfrastructure,
@@ -688,6 +763,23 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                 },
             )
             NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
+            // Drawn on top of NavigationVisualization's own (single-color)
+            // route line -- composed after it, so these should render above
+            // it. Each is only drawn once it has at least 2 points (a
+            // 0-or-1-point segment, e.g. before any progress has been made,
+            // isn't a valid line).
+            if (remainingPoints.size >= 2) {
+                Polyline(
+                    data = PolylineData(geoPoints = remainingPoints.map { it.toGeoPoint() }),
+                    properties = PolylineProperties { lineColor = remainingLineColor.toArgb() },
+                )
+            }
+            if (traveledPoints.size >= 2) {
+                Polyline(
+                    data = PolylineData(geoPoints = traveledPoints.map { it.toGeoPoint() }),
+                    properties = PolylineProperties { lineColor = traveledLineColor.toArgb() },
+                )
+            }
         }
 
         // Floating rounded card with margin, NOT edge-to-edge -- matches
