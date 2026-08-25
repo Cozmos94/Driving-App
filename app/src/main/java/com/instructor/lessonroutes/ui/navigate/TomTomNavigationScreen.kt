@@ -4,17 +4,33 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.RoundaboutLeft
+import androidx.compose.material.icons.filled.RoundaboutRight
+import androidx.compose.material.icons.filled.TurnLeft
+import androidx.compose.material.icons.filled.TurnRight
+import androidx.compose.material.icons.filled.TurnSharpLeft
+import androidx.compose.material.icons.filled.TurnSharpRight
+import androidx.compose.material.icons.filled.TurnSlightLeft
+import androidx.compose.material.icons.filled.TurnSlightRight
+import androidx.compose.material.icons.filled.UTurnLeft
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -33,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -239,6 +256,41 @@ private fun describeInstruction(instruction: GuidanceInstruction): String {
         is DepartureGuidanceInstruction -> "Head out$ontoRoad"
         is TurnAroundWhenPossibleGuidanceInstruction -> "Turn around when possible"
         else -> "Continue$ontoRoad"
+    }
+}
+
+/** A real directional arrow for the top instruction banner (Corey's
+ * reference: TomTom's own marketing screenshot shows a distinct turn-shaped
+ * arrow, not just text) -- matched by subtype first (roundabout/arrival need
+ * their own icons regardless of any turnDirection-shaped field), then by
+ * checking the readable direction text for known words ("sharp"/"slight"/
+ * "left"/"right"/"u turn") rather than matching against guessed exact enum
+ * constants, same defensive reasoning as readableName() itself. Falls back
+ * to a plain "continue straight" arrow for every other subclass. */
+private fun instructionIcon(instruction: GuidanceInstruction): ImageVector {
+    if (instruction is ArrivalGuidanceInstruction) return Icons.Default.Flag
+    val roundaboutDirection = when (instruction) {
+        is RoundaboutGuidanceInstruction -> instruction.roundaboutDirection.readableName()
+        is ExitRoundaboutGuidanceInstruction -> instruction.roundaboutDirection.readableName()
+        else -> null
+    }
+    if (roundaboutDirection != null) {
+        return if (roundaboutDirection.contains("left")) Icons.Default.RoundaboutLeft else Icons.Default.RoundaboutRight
+    }
+    val direction = when (instruction) {
+        is TurnGuidanceInstruction -> instruction.turnDirection.readableName()
+        is MandatoryTurnGuidanceInstruction -> instruction.turnDirection.readableName()
+        else -> null
+    } ?: return Icons.Default.ArrowUpward
+    return when {
+        direction.contains("sharp") && direction.contains("left") -> Icons.Default.TurnSharpLeft
+        direction.contains("sharp") && direction.contains("right") -> Icons.Default.TurnSharpRight
+        direction.contains("slight") && direction.contains("left") -> Icons.Default.TurnSlightLeft
+        direction.contains("slight") && direction.contains("right") -> Icons.Default.TurnSlightRight
+        direction.contains("u") && direction.contains("turn") -> Icons.Default.UTurnLeft
+        direction.contains("left") -> Icons.Default.TurnLeft
+        direction.contains("right") -> Icons.Default.TurnRight
+        else -> Icons.Default.ArrowUpward
     }
 }
 
@@ -555,6 +607,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     var remainingTime by remember { mutableStateOf<Duration?>(null) }
     var remainingDistance by remember { mutableStateOf<Distance?>(null) }
     var instructionText by remember { mutableStateOf<String?>(null) }
+    var instructionIconVector by remember { mutableStateOf<ImageVector?>(null) }
     var distanceToManeuver by remember { mutableStateOf<Distance?>(null) }
 
     DisposableEffect(Unit) {
@@ -573,11 +626,15 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                 currentPhase: InstructionPhase,
             ) {
                 distanceToManeuver = distance
-                instructionText = instructions.firstOrNull()?.let(::describeInstruction)
+                val next = instructions.firstOrNull()
+                instructionText = next?.let(::describeInstruction)
+                instructionIconVector = next?.let(::instructionIcon)
             }
 
             override fun onInstructionsChanged(instructions: List<GuidanceInstruction>) {
-                instructionText = instructions.firstOrNull()?.let(::describeInstruction)
+                val next = instructions.firstOrNull()
+                instructionText = next?.let(::describeInstruction)
+                instructionIconVector = next?.let(::instructionIcon)
             }
         }
         TomTomSdk.navigation.addProgressUpdatedListener(progressListener)
@@ -609,36 +666,52 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
             NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
         }
 
-        // Solid-color banner pinned to the very top edge (not floating with
-        // margin, and not sharing space with the ETA bar) -- the two-band
-        // layout (dark instruction banner up top, light ETA bar pinned to
-        // the bottom) is the actual structure Google Maps/Waze-style nav
-        // UIs use; the previous single small floating card read as a generic
-        // app notice rather than a driving instrument.
+        // Floating rounded card with margin, NOT edge-to-edge -- matches
+        // Corey's TomTom marketing-site reference screenshot, where the
+        // instruction panel is a distinct card sitting on top of the map
+        // (map visible around its edges), not a solid full-width instrument
+        // strip. Icon + big distance on one line (the single most important
+        // number, same visual weight the reference gives it), road/maneuver
+        // text below.
         if (instructionText != null) {
             Surface(
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.primary,
-                tonalElevation = 8.dp,
+                shadowElevation = 6.dp,
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-                    Text(
-                        distanceToManeuver?.let(::formatDistance) ?: "",
-                        style = MaterialTheme.typography.displaySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                    Text(
-                        instructionText.orEmpty(),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    instructionIconVector?.let {
+                        Icon(
+                            it,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(40.dp),
+                        )
+                        Spacer(Modifier.width(16.dp))
+                    }
+                    Column {
+                        Text(
+                            distanceToManeuver?.let(::formatDistance) ?: "",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Text(
+                            instructionText.orEmpty(),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
                 }
             }
         }
 
-        // Recenter FAB, Google-Maps-style -- placed just above the ETA bar so
-        // it doesn't overlap it. Panning drops the camera out of
+        // Recenter FAB, Google-Maps-style -- placed just above the ETA card
+        // so it doesn't overlap it. Panning drops the camera out of
         // FollowRouteDirection (see onMapPanningListener above); this is the
         // way back in, matching every real turn-by-turn app's own affordance
         // for "you panned away, tap here to resume following".
@@ -646,38 +719,56 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
             onClick = {
                 mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
             },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = if (remainingTime != null || remainingDistance != null) 88.dp else 16.dp, end = 16.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(
+                bottom = if (remainingTime != null || remainingDistance != null) 112.dp else 16.dp,
+                end = 16.dp,
+            ),
         ) {
             Icon(Icons.Default.MyLocation, contentDescription = "Recenter")
         }
 
+        // Bottom sheet-style card: rounded top corners only, a drag-handle
+        // bar for visual affordance (not actually draggable -- purely
+        // cosmetic, matching the reference's look without adding a real
+        // expand/collapse feature that isn't needed here), ETA/duration/
+        // distance in one row.
         if (remainingTime != null || remainingDistance != null) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp,
+                shadowElevation = 6.dp,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    remainingTime?.let {
-                        Text(formatDuration(it), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    }
-                    remainingDistance?.let {
-                        Text(
-                            formatDistance(it),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                    Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .size(width = 32.dp, height = 4.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)),
                         )
                     }
-                    remainingTime?.let {
-                        Text(
-                            "ETA ${formatArrivalTime(it)}",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        remainingTime?.let {
+                            Text(formatDuration(it), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        }
+                        remainingDistance?.let {
+                            Text(
+                                formatDistance(it),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        remainingTime?.let {
+                            Text(
+                                "ETA ${formatArrivalTime(it)}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
