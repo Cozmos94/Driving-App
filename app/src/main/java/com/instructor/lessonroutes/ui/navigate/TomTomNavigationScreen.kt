@@ -164,10 +164,15 @@ private fun <T> List<T>.downsampledTo(maxPoints: Int): List<T> {
     return (0 until maxPoints).map { i -> this[(i * stride).toInt().coerceAtMost(size - 1)] }
 }
 
-/** Turns an enum's raw name (e.g. "TURN_LEFT") into readable words ("turn
- * left") without needing to know its exact constant names ahead of time --
- * safer than hardcoding a guessed set of enum values that could be wrong. */
-private fun Enum<*>.readableName(): String = name.lowercase().replace('_', ' ')
+/** Turns a value's raw name (e.g. "TURN_LEFT", or "Left" if it's a sealed
+ * type rather than a plain enum) into readable words ("turn left") without
+ * needing to know its exact type shape or constant names ahead of time --
+ * receiver is `Any`, not `Enum<*>`, since TurnDirection/ForkDirection turned
+ * out not to be plain Kotlin enums (confirmed by a real compile error:
+ * "Enum<*>.readableName()" was unresolved against them) -- safer than
+ * hardcoding a guessed set of enum values, or a guessed type shape, that
+ * could be wrong either way. */
+private fun Any.readableName(): String = toString().lowercase().replace('_', ' ')
 
 /** Real, human-readable turn-by-turn text -- previously this screen only
  * showed the upcoming road name ("onto Bank Street"), never an actual
