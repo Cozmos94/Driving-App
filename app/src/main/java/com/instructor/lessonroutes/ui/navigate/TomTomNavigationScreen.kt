@@ -198,6 +198,20 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
                     Text(planningError.orEmpty(), modifier = Modifier.padding(16.dp))
                 !hasEnoughPoints ->
                     Text("This route doesn't have enough points to navigate.", modifier = Modifier.padding(16.dp))
+                // Real bug, confirmed via a crash: this branch used to be
+                // reached as soon as hasEnoughPoints was true -- which is
+                // true on the very first composition, before the
+                // LaunchedEffect above (which calls TomTomSdkInit.
+                // ensureInitialized) has actually had a chance to run (that's
+                // async; this `when` renders synchronously in the same initial
+                // composition pass). LiveNavigationMap reads TomTomSdk.
+                // sdkContext immediately, so it crashed with "TomTomSdk is
+                // not initialized" every time. Gating on routePlan != null
+                // guarantees the SDK-init LaunchedEffect above has already
+                // run to completion first (routePlan is only ever set later
+                // in that same coroutine, after ensureInitialized succeeded).
+                routePlan == null ->
+                    Text("Preparing turn-by-turn guidance…", modifier = Modifier.padding(16.dp))
                 else ->
                     LiveNavigationMap(route = route, isNavigating = navigationStarted)
             }
