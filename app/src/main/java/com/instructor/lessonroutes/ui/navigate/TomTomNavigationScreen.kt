@@ -55,9 +55,11 @@ import com.tomtom.sdk.map.display.visualization.navigation.compose.model.Navigat
 import com.tomtom.sdk.map.display.visualization.routing.RoutingVisualizationDataProvider
 import com.tomtom.sdk.navigation.NavigationOptions
 import com.tomtom.sdk.navigation.RoutePlan
+import com.tomtom.sdk.routing.RoutePlanner
 import com.tomtom.sdk.routing.RoutePlanningCallback
 import com.tomtom.sdk.routing.RoutePlanningResponse
 import com.tomtom.sdk.routing.RoutingFailure
+import com.tomtom.sdk.routing.buildRoutePlanningOptions
 import com.tomtom.sdk.routing.options.Itinerary
 import com.tomtom.sdk.routing.options.RouteLegOptions
 import com.tomtom.sdk.routing.options.RoutePlanningOptions
@@ -66,6 +68,7 @@ import com.tomtom.sdk.routing.route.Route
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.maplibre.android.geometry.LatLng
+import java.util.Locale
 
 // ---------------------------------------------------------------------------
 // Real turn-by-turn guidance for the "Navigate" button on GenerateRouteScreen.kt.
@@ -104,29 +107,82 @@ import org.maplibre.android.geometry.LatLng
 
 private const val LOG_TAG = "TomTomNavigationScreen"
 
-// TomTom's reconstruction has shown a real, repeatable size-related failure
-// mode -- confirmed live across three attempts in the same area: 1271
-// supportingPoints/56.4km reconstructed fine, both 1487/67.6km and
-// 1610/70.5km failed with CANNOT_RESTORE_BASEROUTE. Success below ~1300,
-// failure above ~1480 is a clean enough split to treat as a real point-count
-// ceiling worth staying under, not just Wollongong-area road-data gaps
-// (those may *also* be a factor, but this is the one lever that's actually
-// ours to pull). Reconstruction only needs enough points to snap to the
-// right roads, not the full GPS-trace-level density a generated route's
-// polyline naturally has, so downsampling well below the observed failure
-// point trades a little shape fidelity for staying clear of it.
+// TomTom's exact reconstruction has shown a real, repeatable failure mode in
+// live testing -- CANNOT_RESTORE_BASEROUTE recurred across several attempts
+// in the same area (Wollongong: coastal + escarpment, genuinely sparser road
+// coverage in some directions). Point count looked correlated at first
+// (1271 succeeded, 1487/1610 failed), but capping supportingPoints at 1000
+// -- well below that apparent threshold -- *still* failed, ruling out a
+// simple point-count ceiling as the (sole) cause. The more likely real
+// explanation: TomTom's own road data has gaps Geoapify's (OSM-based)
+// doesn't in this area, and exact reconstruction has zero tolerance for
+// that mismatch -- it demands a matching road for every segment of an
+// externally-computed path. Downsampling still helps keep individual
+// requests smaller/faster, so it's kept, but see planRouteWithFallback
+// below for the real fix: falling through to genuine route planning when
+// reconstruction can't be satisfied.
 private const val MAX_SUPPORTING_POINTS = 1000
+
+// Shape-defining waypoint count for the route-planning fallback (see
+// planRouteWithFallback) -- well under Google's 25-waypoint hard cap, one of
+// the original reasons this project chose TomTom over Google's own Nav SDK.
+// Real route planning through a few dozen waypoints is baseline
+// functionality for any navigation API; unlike exact reconstruction, it
+// doesn't need to match a specific external road, just pass near each
+// waypoint in order, so a modest count here still preserves the overall
+// backtracking/petal shape without the strict segment-matching that made
+// reconstruction fragile.
+private const val SHAPE_WAYPOINT_COUNT = 20
 
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
 
 /** Reduces [this] to at most [maxPoints] by even-stride sampling, always
- * keeping the first and last point (start/destination) intact -- see
- * [MAX_SUPPORTING_POINTS]'s own comment for why this exists. A no-op when
+ * keeping the first and last point (start/destination) intact. A no-op when
  * already at or under the cap. */
 private fun <T> List<T>.downsampledTo(maxPoints: Int): List<T> {
     if (size <= maxPoints || maxPoints < 2) return this
     val stride = (size - 1).toDouble() / (maxPoints - 1)
     return (0 until maxPoints).map { i -> this[(i * stride).toInt().coerceAtMost(size - 1)] }
+}
+
+/** Tries each of [attempts] (label to options) against [routePlanner] in
+ * order, calling [onSuccess] with the first one that actually returns a
+ * route, or [onAllFailed] if every attempt fails. See this file's own
+ * "THIRD APPROACH" comment (in [TomTomNavigationScreen]) for why this exists
+ * -- exact reconstruction and real route planning have very different
+ * failure modes, so trying reconstruction first (best fidelity) and falling
+ * through to real planning (best reliability) covers both. */
+private fun planRouteWithFallback(
+    routePlanner: RoutePlanner,
+    attempts: List<Pair<String, RoutePlanningOptions>>,
+    onSuccess: (Route, RoutePlanningOptions) -> Unit,
+    onAllFailed: () -> Unit,
+) {
+    if (attempts.isEmpty()) {
+        onAllFailed()
+        return
+    }
+    val (label, options) = attempts.first()
+    routePlanner.planRoute(
+        options,
+        object : RoutePlanningCallback {
+            override fun onSuccess(result: RoutePlanningResponse) {
+                val tomtomRoute = result.routes.firstOrNull()
+                if (tomtomRoute == null) {
+                    Log.w(LOG_TAG, "$label: planning succeeded but returned no routes, trying next")
+                    planRouteWithFallback(routePlanner, attempts.drop(1), onSuccess, onAllFailed)
+                    return
+                }
+                Log.d(LOG_TAG, "$label: succeeded")
+                onSuccess(tomtomRoute, options)
+            }
+
+            override fun onFailure(failure: RoutingFailure) {
+                Log.w(LOG_TAG, "$label: failed ($failure), trying next")
+                planRouteWithFallback(routePlanner, attempts.drop(1), onSuccess, onAllFailed)
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -153,48 +209,73 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
             planningError = "Couldn't start navigation: SDK init failed (${e.message})"
             return@LaunchedEffect
         }
-        // Reconstructs the already-generated route via TomTom -- confirmed
-        // live by TomTomNavSpikeScreen.kt that this preserves a backtracking
-        // route's real distance instead of collapsing it. One leg,
-        // supportingPoints = the route's own dense point list -- no separate
-        // waypoints, no extra network call (route.points already IS the
-        // "already-computed polyline" reconstruction wants).
-        val supportingPoints = route.points.downsampledTo(MAX_SUPPORTING_POINTS).map { it.toGeoPoint() }
-        Log.d(
-            LOG_TAG,
-            "Reconstructing: ${supportingPoints.size} supportingPoints (from ${route.points.size}), " +
-                "${"%.1f".format(route.distanceMeters / 1000.0)}km, ${"%.1f".format(route.durationSeconds / 60.0)}min",
-        )
-        val routePlanningOptions = RoutePlanningOptions(
+        // THIRD APPROACH, read before running: exact reconstruction
+        // (ReconstructionMode.Route + dense supportingPoints) turned out to
+        // be unreliable in real testing -- confirmed live across several
+        // attempts in the same area that reconstruction can fail with
+        // CANNOT_RESTORE_BASEROUTE regardless of point count (1271 points
+        // succeeded; 1000, 1487, and 1610 all failed at various times).
+        // Reconstruction demands TomTom's own road data match Geoapify's
+        // exact chosen path segment-for-segment -- an unreasonably strict
+        // bar in any area where TomTom's coverage is thinner than
+        // Geoapify's (OSM-based), which real testing showed is a real
+        // condition here, not a hypothetical one.
+        //
+        // Fixed by trying exact reconstruction first (best fidelity to the
+        // generated route when it works), then automatically falling
+        // through to a genuine TomTom *route-planning* call -- letting
+        // TomTom compute its own path using only roads it actually has,
+        // through a handful of shape-defining waypoints sampled from the
+        // generated route, rather than demanding an exact external match.
+        // This can't hit "no valid route" the same way real reconstruction
+        // can: TomTom is choosing its own roads throughout, not trying to
+        // snap onto someone else's. buildRoutePlanningOptions (not the raw
+        // RoutePlanningOptions constructor, and no reconstructionMode at
+        // all) is TomTom's own real, confirmed pattern for this -- read
+        // verbatim out of RoutesViewModel.kt in TomTom's current example
+        // app, the same one that already grounded the map-rendering
+        // rewrite. Only a modest waypoint count (SHAPE_WAYPOINT_COUNT) is
+        // used, well under Google's 25-waypoint hard cap that was one of
+        // the original reasons this project chose TomTom over Google's own
+        // Nav SDK in the first place -- real route planning through a few
+        // dozen waypoints is baseline functionality for any real
+        // navigation API, not the exotic capability exact reconstruction
+        // turned out to be.
+        val routePlanner = TomTomSdk.createRoutePlanner()
+        val reconstructionPoints = route.points.downsampledTo(MAX_SUPPORTING_POINTS).map { it.toGeoPoint() }
+        val reconstructionOptions = RoutePlanningOptions(
             itinerary = Itinerary(
-                origin = supportingPoints.first(),
-                destination = supportingPoints.last(),
+                origin = reconstructionPoints.first(),
+                destination = reconstructionPoints.last(),
                 waypoints = emptyList(),
             ),
-            routeLegOptions = listOf(RouteLegOptions(supportingPoints = supportingPoints)),
+            routeLegOptions = listOf(RouteLegOptions(supportingPoints = reconstructionPoints)),
             reconstructionMode = ReconstructionMode.Route,
         )
-        val routePlanner = TomTomSdk.createRoutePlanner()
-        routePlanner.planRoute(
-            routePlanningOptions,
-            object : RoutePlanningCallback {
-                override fun onSuccess(result: RoutePlanningResponse) {
-                    val tomtomRoute = result.routes.firstOrNull()
-                    if (tomtomRoute == null) {
-                        planningError = "Couldn't start navigation: reconstruction returned no route."
-                        return
-                    }
-                    Log.d(
-                        LOG_TAG,
-                        "Reconstructed: length=${tomtomRoute.summary.length} travelTime=${tomtomRoute.summary.travelTime}",
-                    )
-                    routePlan = RoutePlan(route = tomtomRoute, routePlanningOptions = routePlanningOptions)
-                }
-
-                override fun onFailure(failure: RoutingFailure) {
-                    Log.e(LOG_TAG, "Reconstruction failed: $failure")
-                    planningError = "Couldn't start navigation: $failure"
-                }
+        val shapePoints = route.points.downsampledTo(SHAPE_WAYPOINT_COUNT).map { it.toGeoPoint() }
+        val routePlanningOptionsFallback = buildRoutePlanningOptions(
+            itinerary = Itinerary(
+                origin = shapePoints.first(),
+                destination = shapePoints.last(),
+                waypoints = shapePoints.drop(1).dropLast(1),
+            ),
+            language = Locale.getDefault(),
+        )
+        Log.d(
+            LOG_TAG,
+            "Planning: ${reconstructionPoints.size} reconstruction supportingPoints " +
+                "(from ${route.points.size}), ${shapePoints.size} fallback shape waypoints, " +
+                "${"%.1f".format(route.distanceMeters / 1000.0)}km, ${"%.1f".format(route.durationSeconds / 60.0)}min",
+        )
+        planRouteWithFallback(
+            routePlanner = routePlanner,
+            attempts = listOf("exact reconstruction" to reconstructionOptions, "waypoint routing" to routePlanningOptionsFallback),
+            onSuccess = { tomtomRoute, options ->
+                Log.d(LOG_TAG, "Planned: length=${tomtomRoute.summary.length} travelTime=${tomtomRoute.summary.travelTime}")
+                routePlan = RoutePlan(route = tomtomRoute, routePlanningOptions = options)
+            },
+            onAllFailed = {
+                planningError = "Couldn't start navigation: TomTom couldn't plan a route for this trip."
             },
         )
     }
