@@ -9,6 +9,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,7 +51,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.location.LocationCallback
@@ -565,6 +568,27 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         styleState.styleMode = styleMode
     }
 
+    // safeArea (a real MapViewState property, confirmed via TomTom's own
+    // example app -- MapScreenContent.kt sets it from device safe-area
+    // insets the same way) tells the map to keep its own important content
+    // (camera framing, attribution) clear of whatever's overlaid on top of
+    // it. Without it the map itself doesn't know the top instruction card/
+    // bottom ETA card exist, so it can render "behind" them rather than
+    // treating that space as unavailable -- confirmed real gap (Corey:
+    // "the map stretches below the bottom border where eta is"). Measured
+    // dynamically from the actual card sizes (onGloballyPositioned below)
+    // rather than a guessed fixed dp value, since card height depends on
+    // their actual text content.
+    val density = LocalDensity.current
+    var topCardHeightPx by remember { mutableStateOf(0) }
+    var bottomCardHeightPx by remember { mutableStateOf(0) }
+    LaunchedEffect(topCardHeightPx, bottomCardHeightPx) {
+        mapViewState.safeArea = PaddingValues(
+            top = with(density) { topCardHeightPx.toDp() },
+            bottom = with(density) { bottomCardHeightPx.toDp() },
+        )
+    }
+
     // A freshly-constructed MapViewState has no visible tiles until a real
     // style is loaded -- easy to miss (this is what silently produced a
     // blank-but-otherwise-working map the first time around, in the *other*
@@ -675,7 +699,11 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         // text below.
         if (instructionText != null) {
             Surface(
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(12.dp),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .onGloballyPositioned { topCardHeightPx = it.size.height },
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.primary,
                 shadowElevation = 6.dp,
@@ -734,7 +762,10 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         // distance in one row.
         if (remainingTime != null || remainingDistance != null) {
             Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .onGloballyPositioned { bottomCardHeightPx = it.size.height },
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 6.dp,
