@@ -33,8 +33,12 @@ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 # Real icon glyphs (recenter/close) for TomTomNavigationScreen.kt's nav-style
 # buttons -- version comes from the same compose-bom platform already applied,
-# same pattern as androidx-ui/androidx-material3 above.
-androidx-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
+# same pattern as androidx-ui/androidx-material3 above. "-extended" (not
+# "-core"), confirmed by a real compile error: Icons.Default.MyLocation is
+# unresolved against material-icons-core, which only bundles a small ~50-icon
+# common set -- MyLocation (and most icons beyond the most basic ones) only
+# exists in the much larger extended set.
+androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
