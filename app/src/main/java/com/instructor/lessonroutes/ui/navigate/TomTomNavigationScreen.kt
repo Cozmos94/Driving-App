@@ -12,12 +12,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -45,6 +50,7 @@ import com.tomtom.sdk.init.TomTomSdk
 import com.tomtom.sdk.init.createRoutePlanner
 import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.map.display.MapLocationInfrastructure
+import com.tomtom.sdk.map.display.camera.CameraOptions
 import com.tomtom.sdk.map.display.camera.CameraTrackingMode
 import com.tomtom.sdk.map.display.camera.InitialCameraOptions
 import com.tomtom.sdk.map.display.compose.TomTomMap
@@ -90,7 +96,12 @@ import com.tomtom.sdk.routing.route.Route
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.maplibre.android.geometry.LatLng
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.Locale
+import kotlin.math.roundToInt
+import kotlin.time.Duration
 
 // ---------------------------------------------------------------------------
 // Real turn-by-turn guidance for the "Navigate" button on GenerateRouteScreen.kt.
@@ -163,6 +174,36 @@ private fun <T> List<T>.downsampledTo(maxPoints: Int): List<T> {
     val stride = (size - 1).toDouble() / (maxPoints - 1)
     return (0 until maxPoints).map { i -> this[(i * stride).toInt().coerceAtMost(size - 1)] }
 }
+
+/** "850m" below 1km, "12.3km" at or above -- Distance's own toString() gives
+ * a generic default format, not the km-with-one-decimal convention this
+ * project already uses elsewhere (e.g. GenerateRouteScreen.kt's
+ * formatDistance()). inMeters()/inKilometers() are confirmed-real Distance
+ * methods (com.tomtom.quantity.Distance), read off TomTom's own Dokka
+ * reference. */
+private fun formatDistance(distance: Distance): String {
+    val km = distance.inKilometers()
+    return if (km >= 1.0) "%.1fkm".format(km) else "${distance.inMeters().roundToInt()}m"
+}
+
+/** "1h 44m" / "44m" -- kotlin.time.Duration's own toString() ("1h 44m 26s")
+ * includes seconds, which is more precision than a remaining-drive-time
+ * display needs. RouteProgress.remainingTime is a plain kotlin.time.Duration
+ * (confirmed by ruling it out: com.tomtom.quantity has no Duration class at
+ * all, unlike Distance), not a TomTom-specific quantity type. */
+private fun formatDuration(duration: Duration): String {
+    val totalMinutes = duration.inWholeMinutes
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+}
+
+/** Wall-clock arrival estimate ("3:45 pm") -- computed fresh from
+ * LocalTime.now() at call time, not memoized, same "now needs to actually
+ * mean now" reasoning GenerateRouteScreen.kt's own start-time handling
+ * already uses. */
+private fun formatArrivalTime(remaining: Duration): String =
+    LocalTime.now().plusSeconds(remaining.inWholeSeconds).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
 
 /** Turns a value's raw name (e.g. "TURN_LEFT", or "Left" if it's a sealed
  * type rather than a plain enum) into readable words ("turn left") without
@@ -375,7 +416,11 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Navigate") },
-                actions = { TextButton(onClick = onExit) { Text("Close") } },
+                actions = {
+                    IconButton(onClick = onExit) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                },
             )
         },
     ) { padding ->
@@ -480,6 +525,12 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     LaunchedEffect(isNavigating) {
         if (isNavigating) {
             mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
+            // 45-degree perspective tilt (Corey's request) -- tracking mode
+            // only governs position/bearing (see onMapPanningListener's own
+            // comment below), tilt is a separate CameraOptions property that
+            // needs setting explicitly. 0 = straight down, 90 = horizon,
+            // confirmed via TomTom's own Dokka reference.
+            mapViewState.cameraState.animateCamera(CameraOptions(tilt = 45.0))
         }
     }
 
@@ -493,27 +544,23 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     // Guidance text overlay -- confirmed-real fields, read verbatim out of
     // TomTom's own example app's MapScreenViewModel.kt: RouteProgress.
     // remainingDistance/remainingTime (via ProgressUpdatedListener) for "time
-    // left"/"how far to go", and GuidanceUpdatedListener.
+    // left"/"how far to go"/ETA, and GuidanceUpdatedListener.
     // onDistanceToNextInstructionChanged's own distance param (NOT
     // GuidanceInstruction.routeOffset, which is distance-from-route-start,
-    // not distance-to-this-instruction) plus nextSignificantRoad?.name for
-    // "what street next". Stored as already-formatted strings (.toString())
-    // rather than chasing Distance/Duration's exact unit accessors -- same
-    // "don't need the exact meters/seconds, toString() is enough for display"
-    // approach already used for RoutedPath/Route summaries elsewhere in this
-    // project. Exact turn direction (left/right/roundabout exit etc.) isn't
-    // shown -- that lives on GuidanceInstruction subclasses (e.g.
-    // TurnGuidanceInstruction) this doesn't attempt to distinguish yet; the
-    // upcoming road name is what's shown instead.
-    var remainingTimeText by remember { mutableStateOf<String?>(null) }
-    var remainingDistanceText by remember { mutableStateOf<String?>(null) }
+    // not distance-to-this-instruction) plus describeInstruction() for the
+    // actual maneuver text. Raw Distance/Duration kept in state (not
+    // pre-formatted strings) so formatDistance/formatDuration/
+    // formatArrivalTime can apply this app's own km/m-below-1km + hh:mm
+    // conventions instead of TomTom's generic toString() output.
+    var remainingTime by remember { mutableStateOf<Duration?>(null) }
+    var remainingDistance by remember { mutableStateOf<Distance?>(null) }
     var instructionText by remember { mutableStateOf<String?>(null) }
-    var distanceToManeuverText by remember { mutableStateOf<String?>(null) }
+    var distanceToManeuver by remember { mutableStateOf<Distance?>(null) }
 
     DisposableEffect(Unit) {
         val progressListener = ProgressUpdatedListener { progress ->
-            remainingTimeText = progress.remainingTime.toString()
-            remainingDistanceText = progress.remainingDistance.toString()
+            remainingTime = progress.remainingTime
+            remainingDistance = progress.remainingDistance
         }
         val guidanceListener = object : GuidanceUpdatedListener {
             override fun onAnnouncementGenerated(announcement: GuidanceAnnouncement, shouldPlay: Boolean) {
@@ -525,7 +572,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                 instructions: List<GuidanceInstruction>,
                 currentPhase: InstructionPhase,
             ) {
-                distanceToManeuverText = distance.toString()
+                distanceToManeuver = distance
                 instructionText = instructions.firstOrNull()?.let(::describeInstruction)
             }
 
@@ -576,7 +623,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
                     Text(
-                        distanceToManeuverText ?: "",
+                        distanceToManeuver?.let(::formatDistance) ?: "",
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -590,7 +637,21 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
             }
         }
 
-        if (remainingTimeText != null || remainingDistanceText != null) {
+        // Recenter FAB, Google-Maps-style -- placed just above the ETA bar so
+        // it doesn't overlap it. Panning drops the camera out of
+        // FollowRouteDirection (see onMapPanningListener above); this is the
+        // way back in, matching every real turn-by-turn app's own affordance
+        // for "you panned away, tap here to resume following".
+        FloatingActionButton(
+            onClick = {
+                mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
+            },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = if (remainingTime != null || remainingDistance != null) 88.dp else 16.dp, end = 16.dp),
+        ) {
+            Icon(Icons.Default.MyLocation, contentDescription = "Recenter")
+        }
+
+        if (remainingTime != null || remainingDistance != null) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface,
@@ -601,12 +662,19 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.Bottom,
                 ) {
-                    remainingTimeText?.let {
-                        Text(it, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    remainingTime?.let {
+                        Text(formatDuration(it), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     }
-                    remainingDistanceText?.let {
+                    remainingDistance?.let {
                         Text(
-                            it,
+                            formatDistance(it),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    remainingTime?.let {
+                        Text(
+                            "ETA ${formatArrivalTime(it)}",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
