@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -22,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -53,8 +56,14 @@ import com.tomtom.sdk.map.display.visualization.navigation.NavigationVisualizati
 import com.tomtom.sdk.map.display.visualization.navigation.compose.NavigationVisualization
 import com.tomtom.sdk.map.display.visualization.navigation.compose.model.NavigationVisualizationInfrastructure
 import com.tomtom.sdk.map.display.visualization.routing.RoutingVisualizationDataProvider
+import com.tomtom.sdk.navigation.GuidanceUpdatedListener
 import com.tomtom.sdk.navigation.NavigationOptions
+import com.tomtom.sdk.navigation.ProgressUpdatedListener
 import com.tomtom.sdk.navigation.RoutePlan
+import com.tomtom.sdk.navigation.guidance.GuidanceAnnouncement
+import com.tomtom.sdk.navigation.guidance.InstructionPhase
+import com.tomtom.sdk.navigation.guidance.instruction.GuidanceInstruction
+import com.tomtom.quantity.Distance
 import com.tomtom.sdk.routing.RoutePlanner
 import com.tomtom.sdk.routing.RoutePlanningCallback
 import com.tomtom.sdk.routing.RoutePlanningResponse
@@ -429,17 +438,104 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
         }
     }
 
-    TomTomMap(
-        infrastructure = mapDisplayInfrastructure,
-        state = mapViewState,
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        CurrentLocationMarker(
-            CurrentLocationMarkerProperties {
-                type = LocationMarkerOptions.Type.Chevron
-            },
-        )
-        NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
+    // Guidance text overlay -- confirmed-real fields, read verbatim out of
+    // TomTom's own example app's MapScreenViewModel.kt: RouteProgress.
+    // remainingDistance/remainingTime (via ProgressUpdatedListener) for "time
+    // left"/"how far to go", and GuidanceUpdatedListener.
+    // onDistanceToNextInstructionChanged's own distance param (NOT
+    // GuidanceInstruction.routeOffset, which is distance-from-route-start,
+    // not distance-to-this-instruction) plus nextSignificantRoad?.name for
+    // "what street next". Stored as already-formatted strings (.toString())
+    // rather than chasing Distance/Duration's exact unit accessors -- same
+    // "don't need the exact meters/seconds, toString() is enough for display"
+    // approach already used for RoutedPath/Route summaries elsewhere in this
+    // project. Exact turn direction (left/right/roundabout exit etc.) isn't
+    // shown -- that lives on GuidanceInstruction subclasses (e.g.
+    // TurnGuidanceInstruction) this doesn't attempt to distinguish yet; the
+    // upcoming road name is what's shown instead.
+    var remainingTimeText by remember { mutableStateOf<String?>(null) }
+    var remainingDistanceText by remember { mutableStateOf<String?>(null) }
+    var nextRoadName by remember { mutableStateOf<String?>(null) }
+    var distanceToManeuverText by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        val progressListener = ProgressUpdatedListener { progress ->
+            remainingTimeText = progress.remainingTime.toString()
+            remainingDistanceText = progress.remainingDistance.toString()
+        }
+        val guidanceListener = object : GuidanceUpdatedListener {
+            override fun onAnnouncementGenerated(announcement: GuidanceAnnouncement, shouldPlay: Boolean) {
+                // Intentionally no-op -- no voice/TTS in this app (Corey's call).
+            }
+
+            override fun onDistanceToNextInstructionChanged(
+                distance: Distance,
+                instructions: List<GuidanceInstruction>,
+                currentPhase: InstructionPhase,
+            ) {
+                distanceToManeuverText = distance.toString()
+                nextRoadName = instructions.firstOrNull()?.nextSignificantRoad?.name
+            }
+
+            override fun onInstructionsChanged(instructions: List<GuidanceInstruction>) {
+                nextRoadName = instructions.firstOrNull()?.nextSignificantRoad?.name
+            }
+        }
+        TomTomSdk.navigation.addProgressUpdatedListener(progressListener)
+        TomTomSdk.navigation.addGuidanceUpdatedListener(guidanceListener)
+        onDispose {
+            TomTomSdk.navigation.removeProgressUpdatedListener(progressListener)
+            TomTomSdk.navigation.removeGuidanceUpdatedListener(guidanceListener)
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        TomTomMap(
+            infrastructure = mapDisplayInfrastructure,
+            state = mapViewState,
+            modifier = Modifier.fillMaxSize(),
+            // Real gap, confirmed against TomTom's own example app: FollowRouteDirection
+            // re-centers/re-orients the camera on every position update, which fights any
+            // manual pan gesture (zoom wasn't affected since tracking mode only overrides
+            // position/bearing, not zoom -- matches "can zoom but can't pan" exactly).
+            // Their MapView.kt wires onMapPanningListener to drop back to
+            // CameraTrackingMode.None the moment the user manually pans -- same fix here.
+            onMapPanningListener = { mapViewState.cameraState.trackingMode = CameraTrackingMode.None },
+        ) {
+            CurrentLocationMarker(
+                CurrentLocationMarkerProperties {
+                    type = LocationMarkerOptions.Type.Chevron
+                },
+            )
+            NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
+        }
+
+        if (nextRoadName != null || remainingTimeText != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(12.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 4.dp,
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    nextRoadName?.let { roadName ->
+                        Text(
+                            "Next: $roadName" + (distanceToManeuverText?.let { " ($it)" } ?: ""),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    if (remainingTimeText != null || remainingDistanceText != null) {
+                        Text(
+                            listOfNotNull(
+                                remainingTimeText?.let { "$it left" },
+                                remainingDistanceText?.let { "$it to go" },
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
