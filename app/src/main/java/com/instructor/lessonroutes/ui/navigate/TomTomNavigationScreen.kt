@@ -104,7 +104,30 @@ import org.maplibre.android.geometry.LatLng
 
 private const val LOG_TAG = "TomTomNavigationScreen"
 
+// TomTom's reconstruction has shown a real, repeatable size-related failure
+// mode -- confirmed live across three attempts in the same area: 1271
+// supportingPoints/56.4km reconstructed fine, both 1487/67.6km and
+// 1610/70.5km failed with CANNOT_RESTORE_BASEROUTE. Success below ~1300,
+// failure above ~1480 is a clean enough split to treat as a real point-count
+// ceiling worth staying under, not just Wollongong-area road-data gaps
+// (those may *also* be a factor, but this is the one lever that's actually
+// ours to pull). Reconstruction only needs enough points to snap to the
+// right roads, not the full GPS-trace-level density a generated route's
+// polyline naturally has, so downsampling well below the observed failure
+// point trades a little shape fidelity for staying clear of it.
+private const val MAX_SUPPORTING_POINTS = 1000
+
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
+
+/** Reduces [this] to at most [maxPoints] by even-stride sampling, always
+ * keeping the first and last point (start/destination) intact -- see
+ * [MAX_SUPPORTING_POINTS]'s own comment for why this exists. A no-op when
+ * already at or under the cap. */
+private fun <T> List<T>.downsampledTo(maxPoints: Int): List<T> {
+    if (size <= maxPoints || maxPoints < 2) return this
+    val stride = (size - 1).toDouble() / (maxPoints - 1)
+    return (0 until maxPoints).map { i -> this[(i * stride).toInt().coerceAtMost(size - 1)] }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,17 +159,10 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
         // supportingPoints = the route's own dense point list -- no separate
         // waypoints, no extra network call (route.points already IS the
         // "already-computed polyline" reconstruction wants).
-        val supportingPoints = route.points.map { it.toGeoPoint() }
-        // Diagnostic for CANNOT_RESTORE_BASEROUTE-type reconstruction
-        // failures -- one real hypothesis is a per-leg supportingPoints count
-        // limit (the spike's proven-working test was 2661 points/83km; a
-        // multi-hour, multi-petal generated route could easily be several
-        // times that). Logged unconditionally, not just on failure, so a
-        // *successful* reconstruction's point count is also visible for
-        // comparison.
+        val supportingPoints = route.points.downsampledTo(MAX_SUPPORTING_POINTS).map { it.toGeoPoint() }
         Log.d(
             LOG_TAG,
-            "Reconstructing: ${supportingPoints.size} supportingPoints, " +
+            "Reconstructing: ${supportingPoints.size} supportingPoints (from ${route.points.size}), " +
                 "${"%.1f".format(route.distanceMeters / 1000.0)}km, ${"%.1f".format(route.durationSeconds / 60.0)}min",
         )
         val routePlanningOptions = RoutePlanningOptions(
