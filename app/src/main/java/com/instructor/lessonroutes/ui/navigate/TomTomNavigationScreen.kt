@@ -797,7 +797,10 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                     .padding(12.dp)
                     .onGloballyPositioned { topCardHeightPx = it.size.height },
                 shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.primary,
+                // White background + black text (Corey's request), matching
+                // the bottom ETA card's own styling instead of a colored
+                // banner.
+                color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 6.dp,
             ) {
                 Row(
@@ -808,7 +811,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                         Icon(
                             it,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(40.dp),
                         )
                         Spacer(Modifier.width(16.dp))
@@ -818,12 +821,12 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                             distanceToManeuver?.let(::formatDistance) ?: "",
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
                             instructionText.orEmpty(),
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
