@@ -5,8 +5,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -510,27 +513,53 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
             NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
         }
 
-        if (nextRoadName != null || remainingTimeText != null) {
+        // Solid-color banner pinned to the very top edge (not floating with
+        // margin, and not sharing space with the ETA bar) -- the two-band
+        // layout (dark instruction banner up top, light ETA bar pinned to
+        // the bottom) is the actual structure Google Maps/Waze-style nav
+        // UIs use; the previous single small floating card read as a generic
+        // app notice rather than a driving instrument.
+        if (nextRoadName != null) {
             Surface(
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(12.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 4.dp,
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary,
+                tonalElevation = 8.dp,
             ) {
-                Column(Modifier.padding(12.dp)) {
-                    nextRoadName?.let { roadName ->
-                        Text(
-                            "Next: $roadName" + (distanceToManeuverText?.let { " ($it)" } ?: ""),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+                    Text(
+                        distanceToManeuverText ?: "",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                    Text(
+                        "onto $nextRoadName",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+        }
+
+        if (remainingTimeText != null || remainingDistanceText != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    remainingTimeText?.let {
+                        Text(it, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     }
-                    if (remainingTimeText != null || remainingDistanceText != null) {
+                    remainingDistanceText?.let {
                         Text(
-                            listOfNotNull(
-                                remainingTimeText?.let { "$it left" },
-                                remainingDistanceText?.let { "$it to go" },
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium,
+                            it,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
