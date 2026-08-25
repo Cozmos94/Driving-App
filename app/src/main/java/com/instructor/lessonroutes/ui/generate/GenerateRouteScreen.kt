@@ -103,6 +103,7 @@ import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
+import com.instructor.lessonroutes.ui.theme.PlanTripTheme
 import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -471,6 +472,13 @@ fun GenerateRouteScreen(
         return
     }
 
+    // Wrapped in the preserved blue theme (Corey's request: switch the main
+    // app back to black-and-white, but keep "Plan a trip" looking exactly as
+    // it does now) -- same technique AppTimePickerDialog already uses to opt
+    // itself back out of this app's custom theme, just applied to this whole
+    // screen instead of one dialog. See PlanTripTheme's own doc comment in
+    // Theme.kt for what it preserves and why.
+    PlanTripTheme {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -770,6 +778,7 @@ fun GenerateRouteScreen(
             },
         )
     }
+    } // end PlanTripTheme
 }
 
 /** Optional ceiling on the generated route's detour distance (see

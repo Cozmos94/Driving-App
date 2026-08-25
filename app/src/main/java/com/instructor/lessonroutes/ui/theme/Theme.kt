@@ -83,6 +83,50 @@ private val DarkColors = darkColorScheme(
     surfaceTint = Color.Transparent,
 )
 
+// Preserved exactly as the app's whole theme looked before Corey asked to
+// switch the *main* app back to black-and-white -- built directly from the
+// blue literal constants (SelectedBlue/UnselectedBlue/BackgroundWhite/
+// ClockAccentCyan/BorderNavy in Color.kt), not from PrimaryLight/
+// SecondaryLight/etc., since those role variables now point at the new
+// black-and-white palette instead. GenerateRouteScreen.kt ("Plan a trip")
+// and StudentProfilesScreen.kt wrap their whole screen content in
+// PlanTripTheme below to keep looking exactly as they did, per Corey's
+// explicit request -- same technique AppTimePickerDialog (in
+// GenerateRouteScreen.kt) already uses to opt the TimePicker back out of
+// this app's own custom theme, just applied to two whole screens instead of
+// one dialog.
+private val PlanTripColors = lightColorScheme(
+    primary = SelectedBlue,
+    onPrimary = BorderNavy,
+    primaryContainer = SelectedBlue,
+    onPrimaryContainer = BorderNavy,
+    inversePrimary = ClockAccentCyan,
+    secondary = UnselectedBlue,
+    onSecondary = BorderNavy,
+    secondaryContainer = UnselectedBlue,
+    onSecondaryContainer = BorderNavy,
+    tertiary = ClockAccentCyan,
+    onTertiary = BorderNavy,
+    tertiaryContainer = ClockAccentCyan,
+    onTertiaryContainer = BorderNavy,
+    background = BackgroundWhite,
+    surface = BackgroundWhite,
+    onSurface = OnBackgroundBlack,
+    surfaceVariant = BackgroundWhite,
+    onSurfaceVariant = OnBackgroundBlack,
+    outline = BorderNavy,
+    outlineVariant = BorderNavy,
+    inverseSurface = BorderNavy,
+    inverseOnSurface = ClockAccentCyan,
+    // See LightColors' own surfaceTint comment above -- same fix, same reason.
+    surfaceTint = Color.Transparent,
+)
+
+@Composable
+fun PlanTripTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = PlanTripColors, typography = Typography, content = content)
+}
+
 @Composable
 fun LessonRoutesTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),

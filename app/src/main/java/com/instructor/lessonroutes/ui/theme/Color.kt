@@ -2,32 +2,34 @@ package com.instructor.lessonroutes.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand colors (Corey's choice): a fixed blue palette used everywhere -- no
-// other shade is introduced anywhere in this file. Was a light grass-green
-// theme before this.
-//   SelectedBlue   #023E8A -- selected buttons; also reused (see
-//                             LiveMapScreen.kt/GenerateRouteScreen.kt) as the
-//                             border color for the Generate Route/Plan a
-//                             Trip/Student Profiles buttons, which are white
-//                             with a SelectedBlue outline rather than filled
-//                             (was filled #00B4D8/#0096C7/#90E0EF earlier,
-//                             before Corey settled on this look)
+// Brand colors (Corey's earlier choice): a fixed blue palette. The MAIN app
+// theme below no longer uses these directly (Corey's later request: switch
+// the main app back to black-and-white, basic colors, easy to read) -- they
+// stay defined here because two things still need them:
+//   1. PlanTripTheme in Theme.kt (GenerateRouteScreen.kt's "Plan a trip" and
+//      StudentProfilesScreen.kt keep this exact blue look, per Corey's
+//      explicit request, even though the rest of the app switched).
+//   2. A handful of individual buttons outside those two screens that Corey
+//      also wants to stay blue specifically (LiveMapScreen.kt's "Student
+//      Profiles"/"Plan a trip" buttons, RouteListScreen.kt's "Profiles"/
+//      "Overview" buttons, GenerateRouteScreen.kt's "Generate route" button)
+//      -- these already reference these constants directly rather than
+//      theme roles, so they're unaffected by the main theme change below.
+//   SelectedBlue   #023E8A -- selected buttons; also reused as the border
+//                             color for several white-fill buttons (see the
+//                             call sites above) rather than filled.
 //   UnselectedBlue #0077B6 -- unselected buttons
-//   BackgroundWhite plain white -- background/surface shade (was #CAF0F8,
-//                             then #90E0EF, before Corey settled on plain
-//                             white instead of any of the blue-family shades)
+//   BackgroundWhite plain white -- background/surface shade for the
+//                             preserved-blue screens
 //   ClockAccentCyan#ADE8F4 -- fallback role used by a couple of "extra" M3
-//                             roles below (tertiary) that Corey hasn't given
-//                             a specific instruction for -- NOT the TimePicker
-//                             any more, see AppTimePickerDialog in
-//                             GenerateRouteScreen.kt, which now deliberately
+//                             roles in PlanTripTheme (tertiary) that Corey
+//                             hasn't given a specific instruction for -- NOT
+//                             the TimePicker any more, see AppTimePickerDialog
+//                             in GenerateRouteScreen.kt, which deliberately
 //                             opts back out to the device's own default
 //                             (dynamic/Material You) colours instead.
 //   BorderNavy     #03045E -- border colour and button font (on top of
 //                             SelectedBlue/UnselectedBlue/ClockAccentCyan)
-// Font in front of BackgroundWhite is plain black instead, per Corey's spec --
-// everywhere else that needs a color but wasn't given one explicitly reuses
-// one of the colors above rather than introducing a new shade.
 val SelectedBlue = Color(0xFF023E8A)
 val UnselectedBlue = Color(0xFF0077B6)
 val BackgroundWhite = Color(0xFFFFFFFF)
@@ -35,64 +37,74 @@ val ClockAccentCyan = Color(0xFFADE8F4)
 val BorderNavy = Color(0xFF03045E)
 val OnBackgroundBlack = Color(0xFF000000)
 
-// Deliberately identical for light and dark: Corey specified one literal
-// five-color palette with no dark-mode alternates, so both schemes below use
-// exactly the same values rather than inventing brighter/darker variants that
-// aren't in that set.
-val PrimaryLight = SelectedBlue
-val OnPrimaryLight = BorderNavy
-val PrimaryContainerLight = SelectedBlue
-val OnPrimaryContainerLight = BorderNavy
-val SecondaryLight = UnselectedBlue
-val OnSecondaryLight = BorderNavy
-val SecondaryContainerLight = UnselectedBlue
-val OnSecondaryContainerLight = BorderNavy
+// The MAIN app theme (Corey's request): back to plain black-and-white, basic
+// colors, easy to read -- no blue, no other tint. AppBlack/AppWhite carry the
+// two "opposite extremes" (buttons/text vs. background), AppDarkGray/
+// AppMidGray/AppLightGray are the only other shades used, for secondary
+// elements/borders/subtle fills -- still just grayscale, nothing colored.
+// Red stays red regardless of all of this: anywhere in the app that shows an
+// explicit warning/error either uses a literal red Color (e.g.
+// GenerateRouteScreen.kt's "Set End time" text) or Material3's own default
+// error/onError roles, neither of which this file touches.
+val AppBlack = Color(0xFF000000)
+val AppWhite = Color(0xFFFFFFFF)
+val AppDarkGray = Color(0xFF424242)
+val AppMidGray = Color(0xFF9E9E9E)
+val AppLightGray = Color(0xFFE0E0E0)
 
-val PrimaryDark = SelectedBlue
-val OnPrimaryDark = BorderNavy
-val PrimaryContainerDark = SelectedBlue
-val OnPrimaryContainerDark = BorderNavy
-val SecondaryDark = UnselectedBlue
-val OnSecondaryDark = BorderNavy
-val SecondaryContainerDark = UnselectedBlue
-val OnSecondaryContainerDark = BorderNavy
+// Deliberately identical for light and dark, same convention this file
+// already used for the old blue palette -- one literal palette, no separate
+// dark-mode alternates.
+val PrimaryLight = AppBlack
+val OnPrimaryLight = AppWhite
+val PrimaryContainerLight = AppBlack
+val OnPrimaryContainerLight = AppWhite
+val SecondaryLight = AppDarkGray
+val OnSecondaryLight = AppWhite
+val SecondaryContainerLight = AppLightGray
+val OnSecondaryContainerLight = AppBlack
 
-val Neutral95 = BackgroundWhite
-val Neutral10 = BackgroundWhite
+val PrimaryDark = AppBlack
+val OnPrimaryDark = AppWhite
+val PrimaryContainerDark = AppBlack
+val OnPrimaryContainerDark = AppWhite
+val SecondaryDark = AppDarkGray
+val OnSecondaryDark = AppWhite
+val SecondaryContainerDark = AppLightGray
+val OnSecondaryContainerDark = AppBlack
+
+val Neutral95 = AppWhite
+val Neutral10 = AppWhite
 
 // Every other M3 color role (tertiary, surface[Variant], outline, inverse*)
 // falls through to Compose Material3's baseline default scheme (purple/violet-
 // seeded) when left unset -- confirmed as a real bug once already (ListItem
 // backgrounds, TimePicker's AM/PM selector). Every one of these is filled in
-// here too, reusing the five colors above so nothing outside primary/secondary
-// reverts to purple. Tertiary carries the AM/PM + clock-face role Corey asked
-// for (ClockAccentCyan, text on it in BorderNavy); surface roles carry the
-// background shade with black text, per Corey's "black for all other font in
-// front of the background shade" instruction.
-val TertiaryLight = ClockAccentCyan
-val OnTertiaryLight = BorderNavy
-val TertiaryContainerLight = ClockAccentCyan
-val OnTertiaryContainerLight = BorderNavy
-val SurfaceLight = BackgroundWhite
-val OnSurfaceLight = OnBackgroundBlack
-val SurfaceVariantLight = BackgroundWhite
-val OnSurfaceVariantLight = OnBackgroundBlack
-val OutlineLight = BorderNavy
-val OutlineVariantLight = BorderNavy
-val InverseSurfaceLight = BorderNavy
-val InverseOnSurfaceLight = ClockAccentCyan
-val InversePrimaryLight = ClockAccentCyan
+// here too, with grayscale only -- no color anywhere in the main theme.
+val TertiaryLight = AppDarkGray
+val OnTertiaryLight = AppWhite
+val TertiaryContainerLight = AppLightGray
+val OnTertiaryContainerLight = AppBlack
+val SurfaceLight = AppWhite
+val OnSurfaceLight = AppBlack
+val SurfaceVariantLight = AppLightGray
+val OnSurfaceVariantLight = AppBlack
+val OutlineLight = AppMidGray
+val OutlineVariantLight = AppLightGray
+val InverseSurfaceLight = AppBlack
+val InverseOnSurfaceLight = AppWhite
+val InversePrimaryLight = AppWhite
 
-val TertiaryDark = ClockAccentCyan
-val OnTertiaryDark = BorderNavy
-val TertiaryContainerDark = ClockAccentCyan
-val OnTertiaryContainerDark = BorderNavy
-val SurfaceDark = BackgroundWhite
-val OnSurfaceDark = OnBackgroundBlack
-val SurfaceVariantDark = BackgroundWhite
-val OnSurfaceVariantDark = OnBackgroundBlack
-val OutlineDark = BorderNavy
-val OutlineVariantDark = BorderNavy
-val InverseSurfaceDark = BorderNavy
-val InverseOnSurfaceDark = ClockAccentCyan
-val InversePrimaryDark = ClockAccentCyan
+val TertiaryDark = AppDarkGray
+val OnTertiaryDark = AppWhite
+val TertiaryContainerDark = AppLightGray
+val OnTertiaryContainerDark = AppBlack
+val SurfaceDark = AppWhite
+val OnSurfaceDark = AppBlack
+val SurfaceVariantDark = AppLightGray
+val OnSurfaceVariantDark = AppBlack
+val OutlineDark = AppMidGray
+val OutlineVariantDark = AppLightGray
+val InverseSurfaceDark = AppBlack
+val InverseOnSurfaceDark = AppWhite
+val InversePrimaryDark = AppWhite

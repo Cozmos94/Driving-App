@@ -1,5 +1,6 @@
 package com.instructor.lessonroutes.ui.routes
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
@@ -46,6 +48,8 @@ import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.data.routegen.ALL_FILTER_LABELS
 import com.instructor.lessonroutes.data.routegen.effectiveFilterSummary
+import com.instructor.lessonroutes.ui.theme.BorderNavy
+import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -115,8 +119,23 @@ fun RouteListScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedButton(onClick = onProfilesClick) { Text("Profiles") }
-                OutlinedButton(onClick = onOverviewClick) { Text("Overview") }
+                // Explicit blue override, not theme-derived: this whole screen
+                // switched to the main black-and-white theme, but Corey asked
+                // for "Profiles"/"Overview" specifically to stay looking blue
+                // like they always have -- same SelectedBlue/BorderNavy pair
+                // OutlinedButton used to pick up automatically from the old
+                // all-blue theme's primary/outline roles, just spelled out
+                // directly now that those roles point at gray instead.
+                OutlinedButton(
+                    onClick = onProfilesClick,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SelectedBlue),
+                    border = BorderStroke(1.dp, BorderNavy),
+                ) { Text("Profiles") }
+                OutlinedButton(
+                    onClick = onOverviewClick,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SelectedBlue),
+                    border = BorderStroke(1.dp, BorderNavy),
+                ) { Text("Overview") }
                 FloatingActionButton(onClick = onCreateClick) { Text("+") }
             }
         },

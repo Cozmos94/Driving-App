@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
+import com.instructor.lessonroutes.ui.theme.PlanTripTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -59,6 +60,11 @@ fun StudentProfilesScreen(
 
     var showCreateDialog by remember { mutableStateOf(false) }
 
+    // Wrapped in the preserved blue theme (Corey's request: switch the main
+    // app back to black-and-white, but keep Student Profiles looking exactly
+    // as it does now) -- same technique GenerateRouteScreen.kt uses for
+    // "Plan a trip", see PlanTripTheme's own doc comment in Theme.kt.
+    PlanTripTheme {
     Scaffold(
         topBar = { TopAppBar(title = { Text("Student profiles") }) },
         bottomBar = {
@@ -135,6 +141,7 @@ fun StudentProfilesScreen(
             },
         )
     }
+    } // end PlanTripTheme
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
