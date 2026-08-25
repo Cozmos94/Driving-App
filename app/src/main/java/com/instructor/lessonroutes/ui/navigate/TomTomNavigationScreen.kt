@@ -177,8 +177,17 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
     LaunchedEffect(routePlan) {
         val plan = routePlan
         if (plan != null && !navigationStarted) {
-            TomTomSdk.navigation.start(NavigationOptions(plan))
-            navigationStarted = true
+            try {
+                TomTomSdk.navigation.start(NavigationOptions(plan))
+                navigationStarted = true
+                Log.d(LOG_TAG, "navigation.start() succeeded")
+            } catch (e: Exception) {
+                // Previously uncaught -- a silent failure here would explain
+                // "map loads but no route/guidance ever appears" with zero
+                // trace of why, which is exactly the symptom being chased.
+                Log.e(LOG_TAG, "navigation.start() failed", e)
+                planningError = "Couldn't start navigation: ${e.message}"
+            }
         }
     }
 
@@ -265,8 +274,17 @@ private fun LiveNavigationMap(route: GeneratedRoute, isNavigating: Boolean) {
             ),
         )
     }
+    // zoom explicitly set -- confirmed real gap: TomTom's own example app
+    // always passes an explicit zoom to InitialCameraOptions.LocationBased
+    // (e.g. its FREE_DRIVING_CAMERA_ZOOM = 16.0); the version of this file
+    // that left zoom unset likely opened at whatever TomTom's own default
+    // is, which could easily be a country/region-wide view -- a real
+    // candidate for "map loads, position marker shows, but nothing else is
+    // visible" (a route line a few km long is imperceptible zoomed that far
+    // out). 16.0 matches the close, driving-style zoom this project already
+    // settled on for the old placeholder live-tracking view.
     val initialCameraOptions = remember(route) {
-        InitialCameraOptions.LocationBased(position = route.points.first().toGeoPoint())
+        InitialCameraOptions.LocationBased(position = route.points.first().toGeoPoint(), zoom = 16.0)
     }
     val mapViewState = rememberMapViewState(initialCameraOptions = initialCameraOptions) {
         styleState.styleMode = styleMode
