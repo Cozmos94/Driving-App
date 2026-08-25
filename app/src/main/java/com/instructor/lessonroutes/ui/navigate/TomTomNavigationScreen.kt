@@ -124,6 +124,18 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
         // waypoints, no extra network call (route.points already IS the
         // "already-computed polyline" reconstruction wants).
         val supportingPoints = route.points.map { it.toGeoPoint() }
+        // Diagnostic for CANNOT_RESTORE_BASEROUTE-type reconstruction
+        // failures -- one real hypothesis is a per-leg supportingPoints count
+        // limit (the spike's proven-working test was 2661 points/83km; a
+        // multi-hour, multi-petal generated route could easily be several
+        // times that). Logged unconditionally, not just on failure, so a
+        // *successful* reconstruction's point count is also visible for
+        // comparison.
+        Log.d(
+            LOG_TAG,
+            "Reconstructing: ${supportingPoints.size} supportingPoints, " +
+                "${"%.1f".format(route.distanceMeters / 1000.0)}km, ${"%.1f".format(route.durationSeconds / 60.0)}min",
+        )
         val routePlanningOptions = RoutePlanningOptions(
             itinerary = Itinerary(
                 origin = supportingPoints.first(),
