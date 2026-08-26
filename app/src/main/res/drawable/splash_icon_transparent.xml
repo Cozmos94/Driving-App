@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  A fully transparent 1x1 vector, deliberately empty. The AndroidX
+  A fully transparent vector, deliberately empty (no paths). The AndroidX
   core-splashscreen compat library's Theme.SplashScreen requires
   windowSplashScreenAnimatedIcon to be set to something specific: leaving it
   unset falls back to the app's real launcher icon (android:icon), which is
@@ -8,9 +8,22 @@
   instead means the splash screen shows nothing but its own flat background
   color (windowSplashScreenBackground in themes.xml), which is set to match
   the real full-screen design (SplashScreen.kt) that follows immediately after.
+
+  Sized 108x108dp, matching Android's own documented icon-slot convention
+  (an unmasked adaptive-icon-style splash icon is specified within a 108dp
+  canvas) rather than an arbitrary/degenerate size. A real, confirmed gotcha
+  (Corey: "it's still displaying the app icon/logo in full screen before the
+  actual full screen image appears"). An earlier version of this file was a
+  1x1dp vector, and at least one splash-screen implementation path (the
+  pre-Android-12 compat fallback in particular, confirmed as a known issue
+  for oddly-sized icon drawables generally, not guessed at) can end up
+  stretching a drawable that far outside the size it expects to fill much
+  more of the screen than intended, instead of just rendering it small and
+  centered. A conventionally-sized-but-still-empty drawable avoids that
+  edge case regardless of the exact mechanism on any one device.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="1dp"
-    android:height="1dp"
-    android:viewportWidth="1"
-    android:viewportHeight="1" />
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108" />
