@@ -1037,11 +1037,22 @@ private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 // highways query alone took ~9s even against a healthy Overpass instance, and a
 // separate merge-lanes query took ~10s even at a much smaller bbox -- Overpass
 // is just inherently heavier for these broader tag queries than a TfNSW call or
-// a local Room read. 8s was marking these "couldn't load" on every run even when
-// Overpass would have answered a couple of seconds later. Also see
-// OVERPASS_SCORING_RADIUS_CAP_DEGREES below -- the radius fix and this timeout
-// fix are both real contributors, confirmed independently.
-private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 20_000L
+// a local Room read. Also see OVERPASS_SCORING_RADIUS_CAP_DEGREES below -- the
+// radius fix and this timeout are both real contributors, confirmed independently.
+//
+// Was 20_000 -- right for when these three ran as three separate concurrent
+// fetches (worst case ~20s, bounded by whichever was slowest). Now that they
+// run sequentially in one shared queue (see buildScoringData's own comment --
+// Overpass's public instance enforces a real per-IP concurrent-request limit,
+// confirmed live, so three at once could get a genuine HTTP 429), the *sum* of
+// up to three of these bounds that sequential chain -- 20s x 3 = 60s would on
+// its own blow well past the 45s overall generation ceiling below, which is
+// almost certainly why generation started hanging and giving up outright after
+// this screen's Overpass fetches were serialized. 12s x 3 = 36s worst case,
+// comfortable under 45s with margin for the routing side and pickBestRoute
+// afterward, while still well above the ~9-10s genuinely-slow-but-succeeding
+// case documented above.
+private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 12_000L
 
 // Matches RouteGenerator's own DURATION_TOLERANCE_SECONDS (private there,
 // duplicated here rather than exposed just for this UI warning) -- Corey:
