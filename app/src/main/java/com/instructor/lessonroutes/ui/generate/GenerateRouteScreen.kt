@@ -478,19 +478,34 @@ fun GenerateRouteScreen(
                     // genuinely couldn't be stretched far enough, not that the
                     // cap stopped the generator from trying.
                     val radiusLimitedDuration = radiusKm != null && !radiusExceeded && durationErrorSeconds > DURATION_WARNING_THRESHOLD_SECONDS
-                    dataWarning = when {
-                        emptyScoringCategories.isNotEmpty() ->
-                            "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
-                                "those filters had no effect on this route. Try regenerating."
+                    // Every applicable one, not just the first match -- these are
+                    // genuinely independent problems (a filter's data failing to
+                    // load has nothing to do with the route exceeding the radius),
+                    // and picking only one used to silently hide the other. Real,
+                    // confirmed gap: Corey saw "couldn't load data for: Roundabouts"
+                    // and, separately, a route that clearly exceeded the radius --
+                    // but only the data-loading warning ever showed, since the old
+                    // single-branch `when` here stopped at the first true
+                    // condition and never surfaced the radius one underneath it.
+                    dataWarning = buildList {
+                        if (emptyScoringCategories.isNotEmpty()) {
+                            add(
+                                "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
+                                    "those filters had no effect on this route. Try regenerating.",
+                            )
+                        }
                         // pickBestRoute only ever falls back to an over-radius
                         // candidate when literally none of them stayed within
                         // it -- almost always because the destination itself is
                         // farther from the start than the chosen radius, so no
                         // possible route between them could have stayed inside
                         // it either way.
-                        radiusExceeded ->
-                            "This route goes beyond your ${radiusKm?.toInt()}km radius — no route to this " +
-                                "destination could stay within it. Try a larger radius or a closer destination."
+                        if (radiusExceeded) {
+                            add(
+                                "This route goes beyond your ${radiusKm?.toInt()}km radius — no route to this " +
+                                    "destination could stay within it. Try a larger radius or a closer destination.",
+                            )
+                        }
                         // Generation actively tries to fill the target duration
                         // within the radius (looping through several waypoints,
                         // not just one detour point -- see
@@ -498,23 +513,31 @@ fun GenerateRouteScreen(
                         // large remaining miss here means the road network
                         // genuinely confined to that ${radiusKm?.toInt()}km
                         // area couldn't be stretched far enough, not that the
-                        // radius stopped it from trying.
-                        radiusLimitedDuration ->
-                            "This route came in short of your target time even using the full " +
-                                "${radiusKm?.toInt()}km radius — there may not be enough road network in that " +
-                                "area to fill it. Try a larger radius."
+                        // radius stopped it from trying. Mutually exclusive with
+                        // radiusExceeded by construction (radiusLimitedDuration's
+                        // own condition requires !radiusExceeded), so no risk of
+                        // both firing together.
+                        if (radiusLimitedDuration) {
+                            add(
+                                "This route came in short of your target time even using the full " +
+                                    "${radiusKm?.toInt()}km radius — there may not be enough road network in that " +
+                                    "area to fill it. Try a larger radius.",
+                            )
+                        }
                         // No radius cap to blame this time -- a real, confirmed
                         // case (target 2h16m, generated 3h19m, no radius set)
                         // where the duration heuristic itself missed by a lot.
                         // Surfaced rather than left silent, since the generated
                         // number is otherwise indistinguishable from a
                         // well-converged one.
-                        radiusKm == null && durationErrorSeconds > DURATION_WARNING_THRESHOLD_SECONDS ->
-                            "This route's time missed your target by a fair bit (wanted " +
-                                "${formatDuration(minutes * 60.0)}, got ${formatDuration(result.durationSeconds)}) " +
-                                "— try Regenerate, or a different destination/time."
-                        else -> null
-                    }
+                        if (radiusKm == null && durationErrorSeconds > DURATION_WARNING_THRESHOLD_SECONDS) {
+                            add(
+                                "This route's time missed your target by a fair bit (wanted " +
+                                    "${formatDuration(minutes * 60.0)}, got ${formatDuration(result.durationSeconds)}) " +
+                                    "— try Regenerate, or a different destination/time.",
+                            )
+                        }
+                    }.joinToString("\n\n").ifBlank { null }
                 }
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Route generation failed", e)
@@ -1135,11 +1158,20 @@ private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 // we speed this up while allowing obstacle filtering to still work." Settled
 // on *paired* concurrency instead (buildScoringData below runs at most 2 of
 // these three at once, never 3) -- avoids the 429 (2 concurrent requests
-// succeeded in that same live test) while capping the real worst case at two
-// rounds of this value, not three: 9s x 2 = 18s, comfortably under the new
-// 30s overall ceiling with real margin left for the routing side and
-// pickBestRoute afterward.
-private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 9_000L
+// succeeded in that same live test).
+//
+// This value dropped to 9_000 briefly, then this whole timeout was revealed
+// to not even be the thing actually enforcing anything -- see OverpassApi.kt's
+// fastClient, whose own (much longer) client-level timeout is what genuinely
+// bounds a blocking call already in flight; this app-level withTimeoutOrNull
+// can't interrupt one. Once that was fixed at the real layer, fastClient's
+// timeout became the true ceiling here, and this constant is really just
+// documentation of what it's set to -- kept in sync at 12s (see fastClient's
+// own doc comment for why 12s specifically) rather than the two constants
+// silently drifting apart. Two paired rounds worst case: 12s x 2 = 24s,
+// still comfortably under the 30s overall ceiling with real margin for the
+// routing side and pickBestRoute afterward.
+private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 12_000L
 
 // Matches RouteGenerator's own DURATION_TOLERANCE_SECONDS (private there,
 // duplicated here rather than exposed just for this UI warning) -- Corey:

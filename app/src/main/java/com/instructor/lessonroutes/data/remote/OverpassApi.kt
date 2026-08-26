@@ -55,13 +55,13 @@ private val client = OkHttpClient.Builder()
 // Shares the same connection pool as `client` via newBuilder().
 //
 // Was 30s -- a real, confirmed bug, not a tuning nitpick. GenerateRouteScreen.kt
-// wraps every call through this client in its own withTimeoutOrNull (currently
-// 9s per category), which looks like it should cut a slow request short well
-// before this client's own timeout ever matters -- but `execute()` is a
-// blocking call, and Kotlin coroutine cancellation is cooperative: it cannot
-// interrupt a thread already blocked inside a synchronous OkHttp call, only
-// stop it from being *started*. This project already hit this exact lesson
-// once before (the address-search race condition, see GeoapifyGeocodingApi.kt/
+// wraps every call through this client in its own withTimeoutOrNull, which
+// looks like it should cut a slow request short well before this client's
+// own timeout ever matters -- but `execute()` is a blocking call, and Kotlin
+// coroutine cancellation is cooperative: it cannot interrupt a thread already
+// blocked inside a synchronous OkHttp call, only stop it from being
+// *started*. This project already hit this exact lesson once before (the
+// address-search race condition, see GeoapifyGeocodingApi.kt/
 // GenerateRouteScreen.kt's own history) and it recurred here because this
 // client's own timeout, not the app-level wrapper around it, is the thing
 // that actually bounds a call already in flight. Confirmed live via Corey's
@@ -69,14 +69,25 @@ private val client = OkHttpClient.Builder()
 // generation ceiling still fired -- scoring never got the chance to report
 // back at all, meaning some Overpass call was genuinely blocked for the
 // *entire* remaining budget, consistent with this 30s client-level timeout
-// being the real ceiling in effect, not the intended 9s one. Tightened to 8s
-// (just under GenerateRouteScreen's own 9s wrapper) so this client's own
-// timeout is now the one that actually fires first and gracefully returns
-// "no data for this category" instead of silently blocking a background
-// thread for up to 30 real seconds regardless of what the caller intended.
+// being the real ceiling in effect.
+//
+// First fix tightened this to 8s to make *some* real ceiling apply -- but
+// that overcorrected: Corey's next report was "couldn't load data for:
+// Roundabouts" (the filter had no data to work with at all) with the *only*
+// filter set being Roundabouts->Avoid, no pairing involved. This project's
+// own earlier session already measured this exact kind of scoring query
+// taking 9-12+ seconds to genuinely succeed at this screen's real search
+// radius -- 8s was cutting off a request that would have come back fine,
+// just a little slower, not one that was actually hung. Raised to 12s
+// (matching GenerateRouteScreen.kt's own OVERPASS_SCORING_FETCH_TIMEOUT_MS,
+// now that this client's timeout is confirmed to be the one that actually
+// matters) -- with routing finishing in ~2s and a paired-concurrency worst
+// case of two such rounds, that's ~24s for scoring, still comfortably under
+// the 30s overall ceiling with real margin, while giving a genuinely slow
+// (not hung) query enough room to actually succeed.
 private val fastClient = client.newBuilder()
-    .callTimeout(8, TimeUnit.SECONDS)
-    .readTimeout(8, TimeUnit.SECONDS)
+    .callTimeout(12, TimeUnit.SECONDS)
+    .readTimeout(12, TimeUnit.SECONDS)
     .connectTimeout(8, TimeUnit.SECONDS)
     .build()
 
