@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A fully transparent 1x1 vector, deliberately empty. The AndroidX
+  core-splashscreen compat library's Theme.SplashScreen requires
+  windowSplashScreenAnimatedIcon to be set to something specific: leaving it
+  unset falls back to the app's real launcher icon (android:icon), which is
+  exactly the "logo" Corey asked to never show at launch. Pointing it at this
+  instead means the splash screen shows nothing but its own flat background
+  color (windowSplashScreenBackground in themes.xml), which is set to match
+  the real full-screen design (SplashScreen.kt) that follows immediately after.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1dp"
+    android:height="1dp"
+    android:viewportWidth="1"
+    android:viewportHeight="1" />

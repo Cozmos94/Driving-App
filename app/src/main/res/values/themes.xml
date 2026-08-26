@@ -3,4 +3,23 @@
     <!-- Base theme just needs to exist for the manifest/activity; Compose (MaterialTheme in
          ui/theme/Theme.kt) owns the actual app styling. -->
     <style name="Theme.LessonRoutes" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      MainActivity's actual launch theme (see AndroidManifest.xml and MainActivity.kt's
+      installSplashScreen() call). Replaces Android's own unconfigured default cold
+      start splash (small app icon centered on plain white, confirmed as the real
+      source of Corey's "sits on the picture of the logo with white background" report)
+      with a flat screen in the exact same green SplashScreen.kt's own full design uses,
+      and no icon at all (windowSplashScreenAnimatedIcon points at an empty drawable,
+      see its own doc comment). postSplashScreenTheme swaps back to the real
+      Theme.LessonRoutes automatically once the first Compose frame is drawn, at which
+      point SplashScreen.kt (same background color, so the handoff is seamless) is
+      already what's on screen.
+    -->
+    <style name="Theme.LessonRoutes.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_transparent</item>
+        <item name="windowSplashScreenAnimationDuration">1</item>
+        <item name="postSplashScreenTheme">@style/Theme.LessonRoutes</item>
+    </style>
 </resources>

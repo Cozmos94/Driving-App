@@ -2,6 +2,7 @@ package com.instructor.lessonroutes.ui.splash
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -15,10 +16,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 
 // The launch screen's fixed design space -- matches Corey-supplied
@@ -106,6 +109,20 @@ private fun lGlyphPath(): Path = Path().apply {
  */
 @Composable
 fun SplashScreen(modifier: Modifier = Modifier) {
+    // Real bug, confirmed by working through the math (Corey: "text overlaying
+    // other text" / "the image looks too zoomed in"): every path/shape below is
+    // plain design-unit floats, scaled exactly once by this function's own
+    // `scale()` transform to fit the real device. TextStyle's fontSize/
+    // letterSpacing are `.sp` though, a density-aware unit -- rememberTextMeasurer()
+    // would otherwise measure them using the REAL device density first (its own,
+    // correct, sp-to-px conversion), and then the transform below scales that
+    // already-real-sized text a second time, compounding into text several times
+    // too large -- overlapping itself/the line below it, and reading as "too
+    // zoomed in" since nothing else on screen is affected the same way. Forcing
+    // density/fontScale to 1 here makes "34.sp" mean exactly "34 design units",
+    // the same units every path already uses, so text ends up scaled exactly
+    // once too, same as everything else.
+    CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 1f)) {
     val textMeasurer = rememberTextMeasurer()
     val squiggle = remember { squigglePath() }
     val flagWhite = remember { flagWhitePath() }
@@ -204,7 +221,14 @@ fun SplashScreen(modifier: Modifier = Modifier) {
             drawText(
                 textMeasurer = textMeasurer,
                 text = "FOR NSW DRIVING INSTRUCTORS",
-                topLeft = Offset(34f, 794f),
+                // A few design units lower than the SVG's own baseline math
+                // would put it (794) -- Compose's line-box metrics for a
+                // 34sp title run slightly taller than the source SVG's exact
+                // font-rendered glyph bounds, so the original gap left near-
+                // zero clearance before the title/subtitle overlap bug above
+                // was fixed. This is just a small safety margin on top of
+                // that real fix, not a second attempt at the same bug.
+                topLeft = Offset(34f, 800f),
                 style = TextStyle(
                     color = SubtitleColor,
                     fontSize = 9.sp,
@@ -213,5 +237,6 @@ fun SplashScreen(modifier: Modifier = Modifier) {
                 ),
             )
         }
+    }
     }
 }

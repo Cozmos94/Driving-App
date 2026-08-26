@@ -15,6 +15,9 @@ playServicesLocation = "21.3.0"
 coroutines = "1.8.1"
 navigationCompose = "2.9.8"
 okhttp = "4.12.0"
+# Confirmed current stable on Maven Central at the time of this change --
+# check before bumping, same as every other version in this file.
+coreSplashscreen = "1.2.0"
 # TomTom Navigation SDK -- confirmed live against docs.tomtom.com's current
 # (post my.tomtom.com migration) project-setup page. Check
 # docs.tomtom.com/navigation/android/getting-started/project-setup for a
@@ -23,6 +26,13 @@ tomtomSdk = "2.4.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+# Lets MainActivity control the OS's own cold-start splash screen (API 31+ --
+# pre-31 this compat library just applies postSplashScreenTheme immediately,
+# no separate icon phase to worry about) instead of leaving it at Android's
+# unconfigured default, which is what was rendering the small app-icon-on-
+# white-background flash Corey doesn't want -- see themes.xml's
+# Theme.LessonRoutes.Splash and MainActivity.kt's installSplashScreen() call.
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
