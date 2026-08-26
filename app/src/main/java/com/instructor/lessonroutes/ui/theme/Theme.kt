@@ -127,21 +127,52 @@ fun PlanTripTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = PlanTripColors, typography = Typography, content = content)
 }
 
-/** The app's own real black/white scheme (LightColors/DarkColors below),
- * without LessonRoutesTheme's own SideEffect that recolors the status bar --
- * that's the right thing for the app's actual root theme, but wrong for
- * something embedded inside a dialog that's already showing on top of
- * whatever root theme is active (GenerateRouteScreen.kt's clock, which needs
- * to opt out of PlanTripTheme's blue -- Corey: "just make the clock a black
- * and white theme" -- without also repainting the status bar out from under
- * the screen underneath it, which nothing would ever revert once the dialog
- * closes). Dynamic (Material You) color intentionally isn't an option here
- * at all, unlike LessonRoutesTheme -- tried once already for this same clock
- * and Corey reported a purple AM/PM selector regardless. */
+// GenerateRouteScreen.kt's clock, plain black/white -- Corey: "invert the
+// colours on the clock, it should be black font, with white background."
+// Reusing the app's own LightColors/DarkColors (as an earlier version of
+// this did) got the clock face/digits right (surface=white, onSurface=black
+// already) but NOT the selected hour/minute indicator, whose filled circle
+// reads its color from primary/onPrimary -- LightColors' primary is
+// AppBlack, so that one indicator rendered as a black circle with white
+// digits, backwards from what was asked. Every relevant role here is
+// deliberately flipped instead (white "primary" fill, black text/lines on
+// top of it) rather than reusing LightColors, and fixed to a single flat
+// scheme (not light/dark-aware) since Corey asked for one specific look,
+// not "whichever the app's/device's theme happens to be."
+private val ClockColors = lightColorScheme(
+    primary = AppWhite,
+    onPrimary = AppBlack,
+    primaryContainer = AppWhite,
+    onPrimaryContainer = AppBlack,
+    inversePrimary = AppBlack,
+    secondary = AppWhite,
+    onSecondary = AppBlack,
+    secondaryContainer = AppWhite,
+    onSecondaryContainer = AppBlack,
+    tertiary = AppWhite,
+    onTertiary = AppBlack,
+    tertiaryContainer = AppWhite,
+    onTertiaryContainer = AppBlack,
+    background = AppWhite,
+    surface = AppWhite,
+    onSurface = AppBlack,
+    surfaceVariant = AppWhite,
+    onSurfaceVariant = AppBlack,
+    outline = AppBlack,
+    outlineVariant = AppBlack,
+    inverseSurface = AppBlack,
+    inverseOnSurface = AppWhite,
+    surfaceTint = Color.Transparent,
+)
+
+/** No status-bar SideEffect (see the app's own root LessonRoutesTheme below
+ * for why that's fine there but wrong here) -- something embedded inside a
+ * dialog that's already showing on top of PlanTripTheme's blue shouldn't
+ * repaint the status bar out from under the screen underneath it, since
+ * nothing would revert that once the dialog closes. */
 @Composable
-fun BlackWhiteTheme(content: @Composable () -> Unit) {
-    val colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors
-    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+fun ClockTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = ClockColors, typography = Typography, content = content)
 }
 
 @Composable

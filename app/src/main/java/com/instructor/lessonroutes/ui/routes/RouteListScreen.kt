@@ -48,6 +48,7 @@ import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.data.routegen.ALL_FILTER_LABELS
 import com.instructor.lessonroutes.data.routegen.effectiveFilterSummary
+import com.instructor.lessonroutes.ui.theme.AppBlack
 import com.instructor.lessonroutes.ui.theme.BorderNavy
 import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import kotlinx.coroutines.launch
@@ -144,11 +145,19 @@ fun RouteListScreen(
             filterCoverage?.let {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                     if (it.hasAnyData) {
+                        // Explicit black -- Corey: "the 'obstacles covered'
+                        // text is hard to read". This Column isn't wrapped in
+                        // any preserved-blue theme, so it was falling through
+                        // to whatever the ambient content color resolves to
+                        // here (Scaffold's own contentColorFor(background),
+                        // not necessarily a clearly-dark tone) -- spelled out
+                        // directly instead of relying on that.
                         Text(
                             buildAnnotatedString {
                                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Obstacles covered: ") }
                                 append(it.covered.ifEmpty { listOf("none yet") }.joinToString(", "))
                             },
+                            color = AppBlack,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
@@ -156,6 +165,7 @@ fun RouteListScreen(
                                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Obstacles yet to cover: ") }
                                 append(it.notYetCovered.joinToString(", "))
                             },
+                            color = AppBlack,
                         )
                     } else {
                         Text("No generated-trip routes saved for ${it.studentName} yet, so nothing to show here.")

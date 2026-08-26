@@ -95,8 +95,8 @@ import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
-import com.instructor.lessonroutes.ui.theme.BlackWhiteTheme
 import com.instructor.lessonroutes.ui.theme.BorderNavy
+import com.instructor.lessonroutes.ui.theme.ClockTheme
 import com.instructor.lessonroutes.ui.theme.PlanTripTheme
 import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
@@ -176,6 +176,19 @@ fun GenerateRouteScreen(
     // start/destination midpoint (see generateCandidateRoutes' maxRadiusKm) --
     // null means no extra limit beyond whatever the target duration implies.
     var selectedRadiusKm by remember { mutableStateOf<Double?>(null) }
+    // Where the radius boundary -- and the trip's actual start point, since
+    // maxRadiusKm is enforced as distance from `start` (see
+    // RouteGenerator.routeExceedsRadius) -- is anchored. Defaults to the
+    // device's live location (null override, unchanged behavior); Corey:
+    // "have the option to move the radius around once the kms have been
+    // set" -- movingRadiusCenter puts the map's tap handler into "move this"
+    // mode instead of "set destination" for one tap, same pattern the
+    // existing destination-tap flow already uses. Moving the circle also
+    // moves the actual enforced boundary and where the generated route
+    // starts from, not just the visual -- a circle drawn somewhere the trip
+    // doesn't actually start from would be actively misleading.
+    var radiusAnchorOverride by remember { mutableStateOf<LatLng?>(null) }
+    var movingRadiusCenter by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
@@ -267,10 +280,16 @@ fun GenerateRouteScreen(
     // view of whatever's currently generated in memory.
     var isNavigating by remember { mutableStateOf(false) }
 
-    val canGenerate = currentLocation != null && effectiveDestination != null && targetDurationMinutes != null && targetDurationMinutes > 0
+    // Not just currentLocation -- if the instructor already picked a custom
+    // radius anchor (see radiusAnchorOverride above), generation must still
+    // work even if the live GPS fix is temporarily lost afterward (a real
+    // location callback can drop out briefly); the override alone is enough
+    // to start from.
+    val effectiveStart = radiusAnchorOverride ?: currentLocation
+    val canGenerate = effectiveStart != null && effectiveDestination != null && targetDurationMinutes != null && targetDurationMinutes > 0
 
     fun onGenerateClick() {
-        val start = currentLocation ?: return
+        val start = effectiveStart ?: return
         val end = effectiveDestination ?: return
         // Recomputed here (not read from the composable-scope value above) so a
         // blank start time really does mean "right now, at the moment Generate
@@ -529,11 +548,19 @@ fun GenerateRouteScreen(
                     // enforces it (distance from start, not from
                     // generateCandidateRoutes' internal search midpoint). Null
                     // while no radius is set or before a location fix exists.
-                    radiusCircleCenter = currentLocation,
+                    // effectiveStart (not currentLocation) so the circle
+                    // follows radiusAnchorOverride once the instructor's moved
+                    // it.
+                    radiusCircleCenter = effectiveStart,
                     radiusCircleKm = selectedRadiusKm,
                     onMapClick = { latLng ->
-                        destination = latLng
-                        searchResults = emptyList()
+                        if (movingRadiusCenter) {
+                            radiusAnchorOverride = latLng
+                            movingRadiusCenter = false
+                        } else {
+                            destination = latLng
+                            searchResults = emptyList()
+                        }
                     },
                 )
             }
@@ -596,6 +623,27 @@ fun GenerateRouteScreen(
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
                 Text("Destination", fontWeight = FontWeight.Bold)
                 RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
+                // Only offered once a radius is actually set -- moving an
+                // anchor point with no radius drawn around it wouldn't mean
+                // anything. Toggling this borrows the map's own tap handler
+                // for one tap (see onMapClick above), same as how the
+                // destination-tap flow already works, rather than adding a
+                // second simultaneous tap target that would be ambiguous.
+                if (selectedRadiusKm != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = { movingRadiusCenter = !movingRadiusCenter }) {
+                            Text(if (movingRadiusCenter) "Tap the map…" else "Move radius")
+                        }
+                        if (radiusAnchorOverride != null) {
+                            TextButton(onClick = { radiusAnchorOverride = null; movingRadiusCenter = false }) {
+                                Text("Reset to my location")
+                            }
+                        }
+                    }
+                    if (movingRadiusCenter) {
+                        Text("Tap the map to move the radius (and where the trip starts from).")
+                    }
+                }
                 Text(
                     if (destination != null) {
                         "Destination set — tap the map to change it, or search below."
@@ -888,20 +936,17 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
     AlertDialog(
         onDismissRequest = onDismiss,
         text = {
-            // Tried device-driven dynamic/Material You color here first (per
-            // an earlier request: "just whatever the device/plugin shows by
-            // default"), but Corey reported a purple AM/PM selector even with
-            // that in place -- either this device isn't on Android 12+ (falls
-            // back to Compose M3's own baseline scheme, which really is
-            // purple/pink-seeded, confirmed elsewhere in this project already)
-            // or its own wallpaper-derived tertiary color happens to land on
-            // purple. Simplest fix matching what was actually asked for now
-            // ("just make the clock a black and white theme"): BlackWhiteTheme
-            // reuses the app's own real black/white scheme (Theme.kt) with no
-            // device/wallpaper dependency and no separate palette to keep in
-            // sync -- see its own doc comment for why this isn't just
-            // LessonRoutesTheme directly.
-            BlackWhiteTheme {
+            // Went through two earlier attempts: device-driven dynamic/
+            // Material You color (Corey still reported a purple AM/PM
+            // selector), then the app's own real black/white scheme reused
+            // as-is (fixed the purple, but its selected-time indicator reads
+            // primary/onPrimary -- black fill, white digit -- which Corey
+            // then flagged as "invert the colours... it should be black
+            // font, with white background"). ClockTheme (Theme.kt) is a
+            // dedicated, deliberately-inverted scheme just for this --
+            // white fill, black text everywhere -- rather than reusing the
+            // app's own LightColors/DarkColors again.
+            ClockTheme {
                 TimePicker(state = state)
             }
         },

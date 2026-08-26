@@ -159,6 +159,19 @@ private const val MAX_UNROUTABLE_RETRIES = 3
 // huge -- a flat 10-minute window instead means the same real-world slack
 // regardless of target length, matching what was actually asked for.
 private const val DURATION_TOLERANCE_SECONDS = 10 * 60.0
+// A real, confirmed bug report: a 1-hour target generated a route reported
+// as 0 minutes. Root cause not pinned down live (several attempts to
+// reproduce it -- including deliberately avoiding a location right at a
+// bearing's own detour/via point, the newest thing this generator does --
+// all came back with sane, non-degenerate durations against the real
+// Geoapify endpoint), but whatever the actual trigger is, a routed response
+// this short can never legitimately be "the" answer for a real target
+// duration -- `best`'s own tracking (see its comment above) would otherwise
+// happily accept a single degenerate round as the final result if every
+// other round for that bearing failed outright, since any real number beats
+// the initial Double.MAX_VALUE. Treated the same as a routing failure below
+// (shrink+retry) rather than accepted, regardless of mechanism.
+private const val MIN_PLAUSIBLE_DURATION_SECONDS = 60.0
 // Floor for the petal ring's spread angle (see spokePoints' own doc comment) --
 // narrowed from a full 360 when a full-circle ring keeps failing to route, but
 // not narrowed all the way to a sliver: petals need some real angular spacing
@@ -406,6 +419,18 @@ private suspend fun refineCandidate(
             radiusKm *= 0.7
             return@repeat
         }
+        if (routed.durationSeconds < MIN_PLAUSIBLE_DURATION_SECONDS) {
+            // See MIN_PLAUSIBLE_DURATION_SECONDS' own comment -- a real bug
+            // report, mechanism not pinned down. Treated like routed == null
+            // above (shrink and retry) rather than ever accepted as `best`.
+            Log.e(
+                LOG_TAG,
+                "refineCandidate: rejecting implausibly short duration=${routed.durationSeconds}s " +
+                    "(bearing=$bearingDegrees, iteration=$iteration, radius=${"%.2f".format(radiusKm)}km)",
+            )
+            radiusKm *= 0.7
+            return@repeat
+        }
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
         val errorSeconds = abs(routed.durationSeconds - targetSeconds)
         if (errorSeconds < bestErrorSeconds) {
@@ -564,6 +589,17 @@ private suspend fun refineCandidateWithinRadius(
                     e,
                 )
                 null
+            }
+            // See MIN_PLAUSIBLE_DURATION_SECONDS' own comment -- treated the
+            // same as an outright routing failure below (reset to null so the
+            // while condition retries), never accepted as a real result.
+            if (routed != null && routed.durationSeconds < MIN_PLAUSIBLE_DURATION_SECONDS) {
+                Log.e(
+                    LOG_TAG,
+                    "refineCandidateWithinRadius: rejecting implausibly short duration=${routed.durationSeconds}s " +
+                        "(bearing=$currentBearingDegrees, iteration=$iteration, attempt=$attempt, spokes=$spokeCount)",
+                )
+                routed = null
             }
             if (routed == null) {
                 // At least one petal likely landed somewhere unroutable --
