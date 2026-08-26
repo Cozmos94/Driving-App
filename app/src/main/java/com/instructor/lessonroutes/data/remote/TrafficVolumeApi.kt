@@ -8,6 +8,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import org.maplibre.android.geometry.LatLng
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 data class HighVolumeRoad(
     val stationKey: Long,
@@ -28,7 +29,16 @@ private const val TRAFFIC_VOLUME_URL = "https://api.transport.nsw.gov.au/v1/traf
  * arterial road in Australian traffic planning. Easy to tune. */
 private const val HIGH_VOLUME_THRESHOLD = 20000
 
-private val client = OkHttpClient()
+// Explicit, tight timeout -- same real bug fixed in HazardsApi.kt/
+// OverpassApi.kt's own fastClient: GenerateRouteScreen.kt's app-level
+// withTimeoutOrNull wrapper (8s) can't actually interrupt a blocking OkHttp
+// call already in flight, only this client's own timeout genuinely bounds
+// one. Plain OkHttpClient()'s defaults were looser than that assumed 8s.
+private val client = OkHttpClient.Builder()
+    .callTimeout(6, TimeUnit.SECONDS)
+    .connectTimeout(6, TimeUnit.SECONDS)
+    .readTimeout(6, TimeUnit.SECONDS)
+    .build()
 
 /**
  * Roads carrying more than [HIGH_VOLUME_THRESHOLD] vehicles/day, from TfNSW's

@@ -53,10 +53,31 @@ private val client = OkHttpClient.Builder()
 // the route generator, which needs to leave time for its own OSRM calls
 // afterward within one overall deadline) waiting far longer than makes sense.
 // Shares the same connection pool as `client` via newBuilder().
+//
+// Was 30s -- a real, confirmed bug, not a tuning nitpick. GenerateRouteScreen.kt
+// wraps every call through this client in its own withTimeoutOrNull (currently
+// 9s per category), which looks like it should cut a slow request short well
+// before this client's own timeout ever matters -- but `execute()` is a
+// blocking call, and Kotlin coroutine cancellation is cooperative: it cannot
+// interrupt a thread already blocked inside a synchronous OkHttp call, only
+// stop it from being *started*. This project already hit this exact lesson
+// once before (the address-search race condition, see GeoapifyGeocodingApi.kt/
+// GenerateRouteScreen.kt's own history) and it recurred here because this
+// client's own timeout, not the app-level wrapper around it, is the thing
+// that actually bounds a call already in flight. Confirmed live via Corey's
+// own Logcat instrumentation: routing finished in 2.2s, but the whole 30s
+// generation ceiling still fired -- scoring never got the chance to report
+// back at all, meaning some Overpass call was genuinely blocked for the
+// *entire* remaining budget, consistent with this 30s client-level timeout
+// being the real ceiling in effect, not the intended 9s one. Tightened to 8s
+// (just under GenerateRouteScreen's own 9s wrapper) so this client's own
+// timeout is now the one that actually fires first and gracefully returns
+// "no data for this category" instead of silently blocking a background
+// thread for up to 30 real seconds regardless of what the caller intended.
 private val fastClient = client.newBuilder()
-    .callTimeout(30, TimeUnit.SECONDS)
-    .readTimeout(30, TimeUnit.SECONDS)
-    .connectTimeout(15, TimeUnit.SECONDS)
+    .callTimeout(8, TimeUnit.SECONDS)
+    .readTimeout(8, TimeUnit.SECONDS)
+    .connectTimeout(8, TimeUnit.SECONDS)
     .build()
 
 /**

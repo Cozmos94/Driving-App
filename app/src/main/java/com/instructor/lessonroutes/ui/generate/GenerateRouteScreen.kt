@@ -102,6 +102,7 @@ import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -247,6 +248,14 @@ fun GenerateRouteScreen(
                 searchResults = results
                 if (results.isEmpty()) searchError = "No matches found"
             }
+        } catch (e: CancellationException) {
+            // Real noise, not a bug: LeftCompositionCancellationException (or
+            // a plain debounce cancellation from a newer keystroke) showed up
+            // in Corey's own Logcat capture logged as "Address search failed"
+            // -- this is completely routine (this coroutine gets cancelled on
+            // every keystroke, by design) and swallowing it without rethrowing
+            // is a real anti-pattern for structured concurrency regardless.
+            throw e
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Address search failed", e)
             if (searchQuery == queryForThisSearch) searchError = "Couldn't search right now"

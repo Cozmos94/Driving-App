@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 enum class HazardCategory { INCIDENT, ROADWORK }
 
@@ -20,7 +21,19 @@ data class Hazard(
 
 private const val BASE_URL = "https://api.transport.nsw.gov.au/v1/live/hazards"
 
-private val client = OkHttpClient()
+// Explicit, tight timeout -- a real, confirmed bug elsewhere in this app
+// (OverpassApi.kt's own fastClient, see its doc comment) turned out to matter
+// here too: GenerateRouteScreen.kt wraps this call in its own app-level
+// withTimeoutOrNull (8s), but that can't actually interrupt a blocking OkHttp
+// call already in flight -- only this client's own timeout genuinely bounds
+// one. Plain OkHttpClient()'s defaults (10s connect/read, no callTimeout at
+// all) were both looser than the 8s the app-level wrapper assumed was
+// governing this call.
+private val client = OkHttpClient.Builder()
+    .callTimeout(6, TimeUnit.SECONDS)
+    .connectTimeout(6, TimeUnit.SECONDS)
+    .readTimeout(6, TimeUnit.SECONDS)
+    .build()
 
 /**
  * Phase 2 step 9 (overlay foundation): currently-open (active) traffic incidents.
