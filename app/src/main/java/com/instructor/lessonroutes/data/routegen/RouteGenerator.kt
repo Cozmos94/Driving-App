@@ -126,9 +126,11 @@ private const val AVG_SPEED_KMH = 40.0
 // sequential (each depends on the previous round's response) -- that per-
 // bearing round-trip chain, not the bearing count, is the dominant latency cost.
 // 3 directions x up to 3 rounds = up to 9 routing calls per generation (was
-// 4x3=12, 8x4=32 originally). A looser tolerance (25%, was 15%) means the
-// *common* case still converges in a single round -- the extra round below
-// only gets used when the first correction wasn't enough.
+// 4x3=12, 8x4=32 originally). Tightening DURATION_TOLERANCE_SECONDS below
+// (Corey: "lower the tolerance... within 10 minutes") means the common case
+// is more likely to need its extra round to actually land inside tolerance,
+// not just converge on the first guess -- accepted trade-off, since accuracy
+// was explicitly asked for over speed here.
 //
 // MAX_RADIUS_ITERATIONS was cut to 2 for speed in an earlier session, but that
 // leaves only ONE correction step: round 1 measures the initial guess, round 2
@@ -150,7 +152,13 @@ private const val MAX_RADIUS_ITERATIONS = 3
 // entire budget on retries alone, stranding `best` on an early, badly-off
 // result).
 private const val MAX_UNROUTABLE_RETRIES = 3
-private const val DURATION_TOLERANCE_RATIO = 0.25
+// Absolute, not a percentage of target -- Corey: "lower the tolerance of
+// generated route times to be within 10 minutes of the time frame set by the
+// user". A ratio-based tolerance (the old 25%) meant a short trip's
+// acceptable window was tiny in absolute minutes while a long trip's was
+// huge -- a flat 10-minute window instead means the same real-world slack
+// regardless of target length, matching what was actually asked for.
+private const val DURATION_TOLERANCE_SECONDS = 10 * 60.0
 // Floor for the petal ring's spread angle (see spokePoints' own doc comment) --
 // narrowed from a full 360 when a full-circle ring keeps failing to route, but
 // not narrowed all the way to a sliver: petals need some real angular spacing
@@ -232,6 +240,17 @@ private fun initialRadiusKm(targetDurationMinutes: Int): Double {
  * 10km from home"). Duration is still the real target either way; this changes
  * *how* the generator tries to hit it, not whether it keeps trying once the
  * boundary binds.
+ * @param avoidLocations Points to hard-exclude via Geoapify's real
+ * `avoid=location:lat,lon` constraint (confirmed live -- see
+ * GeoapifyRoutingApi.kt's own doc comment). Used by GenerateRouteScreen.kt to
+ * pass roundabouts specifically near [start]/[destination] when
+ * Roundabouts->Avoid is set -- everywhere else along the route, Roundabouts
+ * stays the soft proximity scoring [scoreRoute] already does (no free routing
+ * API supports hard-avoiding roundabouts generally), since only near the two
+ * fixed endpoints do every candidate bearing genuinely funnel through the
+ * exact same local streets with no way for scoring to prefer a candidate that
+ * doesn't -- confirmed as a real bug report (Corey: a Roundabouts->Avoid
+ * route's very first turn was a roundabout regardless).
  *
  * Returns every candidate that converged; empty if every attempt failed outright
  * (e.g. no network).
@@ -242,6 +261,7 @@ suspend fun generateCandidateRoutes(
     targetDurationMinutes: Int,
     avoidHighways: Boolean = false,
     maxRadiusKm: Double? = null,
+    avoidLocations: List<LatLng> = emptyList(),
 ): List<GeneratedRoute> = coroutineScope {
     val targetSeconds = targetDurationMinutes * 60.0
 
@@ -249,12 +269,13 @@ suspend fun generateCandidateRoutes(
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
-                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways",
+                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways, " +
+                "avoidLocations=${avoidLocations.size}",
         )
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways)
+                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, avoidLocations)
                 }
             }
             .awaitAll()
@@ -266,12 +287,12 @@ suspend fun generateCandidateRoutes(
             LOG_TAG,
             "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
                 "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
-                "avoidHighways=$avoidHighways",
+                "avoidHighways=$avoidHighways, avoidLocations=${avoidLocations.size}",
         )
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
+                    refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways, avoidLocations)
                 }
             }
             .awaitAll()
@@ -346,6 +367,7 @@ private suspend fun refineCandidate(
     initialRadiusKm: Double,
     targetSeconds: Double,
     avoidHighways: Boolean,
+    avoidLocations: List<LatLng> = emptyList(),
 ): GeneratedRoute? {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
@@ -365,7 +387,11 @@ private suspend fun refineCandidate(
         if (converged) return@repeat // already converged -- skip remaining rounds without another call
         val detourPoint = offset(base, bearingDegrees, radiusKm)
         val routed = try {
-            fetchRoutedPaths(listOf(start, detourPoint, destination), avoidHighways = avoidHighways).firstOrNull()
+            fetchRoutedPaths(
+                listOf(start, detourPoint, destination),
+                avoidHighways = avoidHighways,
+                avoidLocations = avoidLocations,
+            ).firstOrNull()
         } catch (e: Exception) {
             // Was silently swallowed before -- logged now since this is the one
             // place a routing failure (network, rate limit, no route found,
@@ -397,7 +423,7 @@ private suspend fun refineCandidate(
                 "duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
                 "target=${"%.1f".format(targetSeconds / 60.0)}min ratio=${"%.2f".format(ratio)}",
         )
-        if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) {
+        if (errorSeconds < DURATION_TOLERANCE_SECONDS) {
             converged = true
         } else {
             // Damped adjustment (not a straight multiply) so a wildly-off first
@@ -453,6 +479,7 @@ private suspend fun refineCandidateWithinRadius(
     maxRadiusKm: Double,
     targetSeconds: Double,
     avoidHighways: Boolean,
+    avoidLocations: List<LatLng> = emptyList(),
 ): GeneratedRoute? {
     val directLegKm = distanceKm(start, destination)
     val totalDistanceNeededKm = (AVG_SPEED_KMH * (targetSeconds / 3600.0) - directLegKm).coerceAtLeast(0.0)
@@ -527,7 +554,7 @@ private suspend fun refineCandidateWithinRadius(
                 add(destination)
             }
             routed = try {
-                fetchRoutedPaths(chain, avoidHighways = avoidHighways).firstOrNull()
+                fetchRoutedPaths(chain, avoidHighways = avoidHighways, avoidLocations = avoidLocations).firstOrNull()
             } catch (e: Exception) {
                 Log.e(
                     LOG_TAG,
@@ -576,7 +603,7 @@ private suspend fun refineCandidateWithinRadius(
                 "duration=${"%.1f".format(routed.durationSeconds / 60.0)}min " +
                 "target=${"%.1f".format(targetSeconds / 60.0)}min ratio=${"%.2f".format(ratio)}",
         )
-        if (abs(1.0 - ratio) < DURATION_TOLERANCE_RATIO) {
+        if (errorSeconds < DURATION_TOLERANCE_SECONDS) {
             converged = true
         } else if (spokeCount == 0) {
             // spokeCount * ratio can never climb back up from zero (0 * any

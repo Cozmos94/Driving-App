@@ -314,13 +314,29 @@ fun GenerateRouteScreen(
                     val scoringDataDeferred = async {
                         buildScoringData(filters, center, radiusDegrees, start, end, selectedRadiusKm, schoolZoneDao, speedCameraDao)
                     }
+                    // Small/fast (a ~3km-wide bbox each, not the wide scoring-
+                    // radius query above) -- awaited *before* candidate
+                    // generation starts rather than folded into
+                    // scoringDataDeferred, since generateCandidateRoutes needs
+                    // these points itself, not just something to score against
+                    // after the fact. See ROUNDABOUT_HARD_AVOID_RADIUS_KM's own
+                    // doc comment for why only near the endpoints, not the
+                    // whole route.
                     val candidatesDeferred = async {
+                        val avoidRoundabouts = if (filters.roundabouts == FilterPreference.AVOID) {
+                            val nearStart = async { fetchRoundaboutsNear(start) }
+                            val nearEnd = async { fetchRoundaboutsNear(end) }
+                            nearStart.await() + nearEnd.await()
+                        } else {
+                            emptyList()
+                        }
                         generateCandidateRoutes(
                             start,
                             end,
                             minutes,
                             avoidHighways = filters.highways == FilterPreference.AVOID,
                             maxRadiusKm = selectedRadiusKm,
+                            avoidLocations = avoidRoundabouts,
                         )
                     }
                     val candidates = candidatesDeferred.await()
@@ -376,12 +392,15 @@ fun GenerateRouteScreen(
                     // can't prove a delegated var won't change in between).
                     val radiusKm = selectedRadiusKm
                     val radiusExceeded = radiusKm != null && routeExceedsRadius(result, start, radiusKm)
-                    // How far the actual duration landed from the target -- see the
-                    // radiusLimitedDuration case below. Same 25% tolerance concept as
-                    // RouteGenerator's own DURATION_TOLERANCE_RATIO (not imported --
-                    // that constant is private, and duplicating one plain ratio check
-                    // here isn't worth exposing it just for this).
-                    val durationErrorRatio = abs(result.durationSeconds - minutes * 60.0) / (minutes * 60.0)
+                    // How far the actual duration landed from the target, in
+                    // absolute seconds -- same tolerance concept as
+                    // RouteGenerator's own DURATION_TOLERANCE_SECONDS (not
+                    // imported -- that constant is private, and duplicating one
+                    // plain comparison here isn't worth exposing it just for
+                    // this). Absolute, not a ratio of target, per Corey's
+                    // request: "within 10 minutes of the time frame" should mean
+                    // the same real-world slack whether the trip is short or long.
+                    val durationErrorSeconds = abs(result.durationSeconds - minutes * 60.0)
                     // Generation actively tries to fill the target duration within
                     // the radius now (RouteGenerator.refineCandidateWithinRadius
                     // loops through several waypoints, not just one detour point,
@@ -393,7 +412,7 @@ fun GenerateRouteScreen(
                     // now most likely means the road network within the radius
                     // genuinely couldn't be stretched far enough, not that the
                     // cap stopped the generator from trying.
-                    val radiusLimitedDuration = radiusKm != null && !radiusExceeded && durationErrorRatio > 0.25
+                    val radiusLimitedDuration = radiusKm != null && !radiusExceeded && durationErrorSeconds > DURATION_WARNING_THRESHOLD_SECONDS
                     dataWarning = when {
                         emptyScoringCategories.isNotEmpty() ->
                             "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
@@ -425,7 +444,7 @@ fun GenerateRouteScreen(
                         // Surfaced rather than left silent, since the generated
                         // number is otherwise indistinguishable from a
                         // well-converged one.
-                        radiusKm == null && durationErrorRatio > 0.25 ->
+                        radiusKm == null && durationErrorSeconds > DURATION_WARNING_THRESHOLD_SECONDS ->
                             "This route's time missed your target by a fair bit (wanted " +
                                 "${formatDuration(minutes * 60.0)}, got ${formatDuration(result.durationSeconds)}) " +
                                 "— try Regenerate, or a different destination/time."
@@ -990,6 +1009,15 @@ private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 // fix are both real contributors, confirmed independently.
 private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 20_000L
 
+// Matches RouteGenerator's own DURATION_TOLERANCE_SECONDS (private there,
+// duplicated here rather than exposed just for this UI warning) -- Corey:
+// "lower the tolerance of generated route times to be within 10 minutes of
+// the time frame set by the user". Keeping this the same value as what the
+// generator itself converges to means this warning only fires when the
+// generator's own best effort genuinely couldn't land inside its own target
+// window, not at some separate, looser UI-only threshold.
+private const val DURATION_WARNING_THRESHOLD_SECONDS = 10 * 60.0
+
 // Roundabouts/Merging lanes/Highways scoring doesn't meaningfully improve by
 // searching tens of km out -- candidate routes generated for even a long trip
 // stay much more localized than the naive duration-implied radius (which,
@@ -1035,6 +1063,35 @@ private fun coverageRadiusDegrees(center: LatLng, start: LatLng, end: LatLng, ma
     val petalReachKm = maxRadiusKm ?: 0.0
     val requiredKm = maxOf(toStart, toEnd) + petalReachKm + OVERPASS_SCORING_MARGIN_KM
     return requiredKm / KM_PER_DEGREE_LAT
+}
+
+// How close to a trip's start/destination a roundabout has to be before it's
+// hard-excluded via Geoapify's real avoid=location constraint, rather than
+// left to scoreRoute's ordinary soft proximity scoring -- see
+// generateCandidateRoutes' own doc comment on avoidLocations for why this
+// only applies near the two fixed endpoints. ~1.2km is roughly the detour
+// Geoapify's own avoid=location actually produced in a live test around a
+// chosen point (confirmed directly, not assumed) -- 1.5km gives a small
+// margin above that so a roundabout just inside the exclusion still gets
+// genuinely routed around, not left sitting right at the edge of it.
+private const val ROUNDABOUT_HARD_AVOID_RADIUS_KM = 1.5
+
+/** Roundabouts within [ROUNDABOUT_HARD_AVOID_RADIUS_KM] of [point], as the flat
+ * point list [generateCandidateRoutes]' avoidLocations expects (one point per
+ * roundabout, its first geometry vertex -- same convention buildScoringData's
+ * own roundabouts fetch already uses for soft scoring, good enough to anchor
+ * a hard-exclusion zone too since Geoapify's own avoid=location already
+ * clears a real margin around whatever point it's given). A small, fast
+ * query -- this bbox is a tiny fraction of the main scoring-radius fetch --
+ * so it's safe to await before candidate generation starts rather than
+ * folding it into buildScoringData's own (much larger, concurrently-run)
+ * roundabouts fetch. Falls back to empty on any failure -- a missed hard-
+ * avoid opportunity, not a generation failure, so this doesn't need the same
+ * emptyCategories warning buildScoringData's own fetches use. */
+private suspend fun fetchRoundaboutsNear(point: LatLng): List<LatLng> {
+    val radiusDegrees = ROUNDABOUT_HARD_AVOID_RADIUS_KM / KM_PER_DEGREE_LAT
+    return runCatching { fetchRoundabouts(point, radiusDegrees).mapNotNull { it.firstOrNull() } }
+        .getOrDefault(emptyList())
 }
 
 /** Fetches point-of-interest data only for the categories actually set to

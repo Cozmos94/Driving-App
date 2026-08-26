@@ -63,17 +63,36 @@ data class RoutedPath(
  * (which this app used for Highways/Roundabouts/Merging lanes to give scoring
  * more than one shape per bearing), there's no equivalent here. Removed rather
  * than guessed at.
+ *
+ * [avoidLocations] is a real, working hard constraint too -- `avoid=location:
+ * lat,lon` -- confirmed directly against the live Geoapify endpoint (not in
+ * their own docs beyond one bare example, so tested rather than guessed): a
+ * route that ran exactly through a chosen point detoured to pass ~1.2km clear
+ * of it once that point was added here, and several `location:` entries
+ * pipe-joined together (alongside `highways`/`tolls`) came back with no error
+ * either. That live test called the endpoint directly (not through this
+ * app's own OkHttp client), so the URL-building below hasn't itself been
+ * exercised on-device yet -- worth a real generation with Roundabouts->Avoid
+ * to confirm end to end. Used by RouteGenerator.kt to hard-avoid roundabouts
+ * specifically near a trip's start/destination -- see its own doc comment
+ * for why only there, not every roundabout across the whole route.
  */
 suspend fun fetchRoutedPaths(
     waypoints: List<LatLng>,
     avoidHighways: Boolean = false,
     avoidTolls: Boolean = false,
+    avoidLocations: List<LatLng> = emptyList(),
 ): List<RoutedPath> {
     require(waypoints.size >= 2) { "Need at least 2 waypoints to route between" }
 
     return withContext(Dispatchers.IO) {
         val waypointsParam = waypoints.joinToString("|") { "${it.latitude},${it.longitude}" }
-        val avoidValues = listOfNotNull("highways".takeIf { avoidHighways }, "tolls".takeIf { avoidTolls })
+        // Same unencoded pipe-join the highways/tolls values already used
+        // (confirmed live against the real endpoint) -- location: entries use
+        // the same `|`/`:`/`,` characters, which Geoapify's server already
+        // accepted raw in that same live test.
+        val avoidValues = listOfNotNull("highways".takeIf { avoidHighways }, "tolls".takeIf { avoidTolls }) +
+            avoidLocations.map { "location:${it.latitude},${it.longitude}" }
         val avoidParam = if (avoidValues.isNotEmpty()) "&avoid=${avoidValues.joinToString("|")}" else ""
         val url = "$ROUTING_URL?waypoints=${Uri.encode(waypointsParam)}&mode=drive&units=metric&format=json" +
             "$avoidParam&apiKey=${BuildConfig.GEOAPIFY_API_KEY}"
