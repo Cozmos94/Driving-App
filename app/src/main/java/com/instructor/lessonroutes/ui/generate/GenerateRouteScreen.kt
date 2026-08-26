@@ -179,16 +179,18 @@ fun GenerateRouteScreen(
     // Where the radius boundary -- and the trip's actual start point, since
     // maxRadiusKm is enforced as distance from `start` (see
     // RouteGenerator.routeExceedsRadius) -- is anchored. Defaults to the
-    // device's live location (null override, unchanged behavior); Corey:
+    // device's live location (null override, unchanged behavior). Corey:
     // "have the option to move the radius around once the kms have been
-    // set" -- movingRadiusCenter puts the map's tap handler into "move this"
-    // mode instead of "set destination" for one tap, same pattern the
-    // existing destination-tap flow already uses. Moving the circle also
-    // moves the actual enforced boundary and where the generated route
+    // set... I don't want them to have to press a button at all" -- moved
+    // via RouteMapView's own onRadiusCircleMove (tapping directly on the
+    // drawn circle's outline), not a separate mode toggle -- see that
+    // param's own doc comment for why a tap on the outline specifically,
+    // not "anywhere inside it" (which would swallow ordinary destination
+    // taps that land within the radius, the common case). Moving the circle
+    // also moves the actual enforced boundary and where the generated route
     // starts from, not just the visual -- a circle drawn somewhere the trip
     // doesn't actually start from would be actively misleading.
     var radiusAnchorOverride by remember { mutableStateOf<LatLng?>(null) }
-    var movingRadiusCenter by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
@@ -554,14 +556,14 @@ fun GenerateRouteScreen(
                     radiusCircleCenter = effectiveStart,
                     radiusCircleKm = selectedRadiusKm,
                     onMapClick = { latLng ->
-                        if (movingRadiusCenter) {
-                            radiusAnchorOverride = latLng
-                            movingRadiusCenter = false
-                        } else {
-                            destination = latLng
-                            searchResults = emptyList()
-                        }
+                        destination = latLng
+                        searchResults = emptyList()
                     },
+                    // Tapping the drawn circle's own outline moves it there --
+                    // RouteMapView hit-tests this separately from onMapClick
+                    // above (only one of the two ever fires for a given tap),
+                    // so this never fights ordinary destination-tapping.
+                    onRadiusCircleMove = { latLng -> radiusAnchorOverride = latLng },
                 )
             }
 
@@ -623,25 +625,18 @@ fun GenerateRouteScreen(
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
                 Text("Destination", fontWeight = FontWeight.Bold)
                 RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
-                // Only offered once a radius is actually set -- moving an
-                // anchor point with no radius drawn around it wouldn't mean
-                // anything. Toggling this borrows the map's own tap handler
-                // for one tap (see onMapClick above), same as how the
-                // destination-tap flow already works, rather than adding a
-                // second simultaneous tap target that would be ambiguous.
+                // No separate "move" button/mode -- Corey: "I don't want them
+                // to have to press a button at all". Tapping the circle's own
+                // outline on the map moves it directly (see
+                // onRadiusCircleMove above); this hint just explains that
+                // affordance, and "Reset" is the one control left, since
+                // there's no gesture equivalent for "put it back".
                 if (selectedRadiusKm != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { movingRadiusCenter = !movingRadiusCenter }) {
-                            Text(if (movingRadiusCenter) "Tap the map…" else "Move radius")
+                    Text("Tap the radius circle on the map to move it (and where the trip starts from).")
+                    if (radiusAnchorOverride != null) {
+                        TextButton(onClick = { radiusAnchorOverride = null }) {
+                            Text("Reset to my location")
                         }
-                        if (radiusAnchorOverride != null) {
-                            TextButton(onClick = { radiusAnchorOverride = null; movingRadiusCenter = false }) {
-                                Text("Reset to my location")
-                            }
-                        }
-                    }
-                    if (movingRadiusCenter) {
-                        Text("Tap the map to move the radius (and where the trip starts from).")
                     }
                 }
                 Text(

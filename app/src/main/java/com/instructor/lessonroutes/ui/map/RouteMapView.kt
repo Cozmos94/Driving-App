@@ -220,6 +220,15 @@ fun RouteMapView(
     onHazardClick: ((Hazard) -> Unit)? = null,
     onHighVolumeClick: ((HighVolumeRoad) -> Unit)? = null,
     onQuietRoadClick: (() -> Unit)? = null,
+    /** Fires instead of [onMapClick] when the tap lands on the drawn radius
+     * circle's own outline -- lets a caller (GenerateRouteScreen.kt) move the
+     * circle by tapping it directly, no separate "move" mode/button needed.
+     * Hit-tests against the *outline* specifically (same screen-space
+     * proximity check [onHazardClick]/[onQuietRoadClick] already use, not
+     * "anywhere inside the circle") so tapping a destination that happens to
+     * sit well within the radius -- the ordinary case -- still reaches
+     * [onMapClick] as normal; only a tap near the ring itself grabs it. */
+    onRadiusCircleMove: ((LatLng) -> Unit)? = null,
 ) {
     // Fails loud instead of silently: an empty/missing key means the style.json
     // request gets rejected and MapLibre's map.setStyle() callback never fires
@@ -248,9 +257,12 @@ fun RouteMapView(
     val onHazardClickState = rememberUpdatedState(onHazardClick)
     val onHighVolumeClickState = rememberUpdatedState(onHighVolumeClick)
     val onQuietRoadClickState = rememberUpdatedState(onQuietRoadClick)
+    val onRadiusCircleMoveState = rememberUpdatedState(onRadiusCircleMove)
     val hazardsState = rememberUpdatedState(hazards)
     val highVolumeRoadsState = rememberUpdatedState(highVolumeRoads)
     val quietRoadsState = rememberUpdatedState(quietRoads)
+    val radiusCircleCenterState = rememberUpdatedState(radiusCircleCenter)
+    val radiusCircleKmState = rememberUpdatedState(radiusCircleKm)
 
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -309,10 +321,20 @@ fun RouteMapView(
                             .minOrNull()
                             ?.takeIf { it <= TAP_HIT_RADIUS_PX }
 
+                        val radiusCenter = radiusCircleCenterState.value
+                        val radiusKm = radiusCircleKmState.value
+                        val radiusCircleDistance = if (radiusCenter != null && radiusKm != null && radiusKm > 0) {
+                            screenDistanceToPolyline(map, circlePolygonRing(radiusCenter, radiusKm), tapScreen)
+                                .takeIf { it <= TAP_HIT_RADIUS_PX }
+                        } else {
+                            null
+                        }
+
                         val bestDistance = minOf(
                             hazardHit?.second ?: Double.MAX_VALUE,
                             volumeHit?.second ?: Double.MAX_VALUE,
                             quietRoadDistance ?: Double.MAX_VALUE,
+                            radiusCircleDistance ?: Double.MAX_VALUE,
                         )
 
                         when {
@@ -327,6 +349,10 @@ fun RouteMapView(
                             quietRoadDistance != null && quietRoadDistance == bestDistance -> {
                                 onQuietRoadClickState.value?.invoke()
                                 true
+                            }
+                            radiusCircleDistance != null && radiusCircleDistance == bestDistance -> {
+                                onRadiusCircleMoveState.value?.invoke(point)
+                                onRadiusCircleMoveState.value != null
                             }
                             else -> {
                                 onMapClickState.value?.invoke(point)
