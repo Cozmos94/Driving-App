@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -191,6 +192,22 @@ private const val MAX_SUPPORTING_POINTS = 1000
 // backtracking/petal shape without the strict segment-matching that made
 // reconstruction fragile.
 private const val SHAPE_WAYPOINT_COUNT = 20
+
+// How far down the screen the followed "you are here" chevron sits during
+// CameraTrackingMode.FollowRouteDirection (Corey: "currently it's all the way
+// at the bottom... let's go 20% below center" -- i.e. ~70% down the screen,
+// not ~100%). TomTom doesn't expose a documented anchor/offset property for
+// this directly (confirmed against their own Dokka reference and guides --
+// CameraOptions only has location/zoom/tilt/rotation, nothing padding-
+// related); safeArea is the one property in this file already confirmed to
+// move real content on screen (it's what fixed "the map stretches below the
+// bottom border where ETA is" earlier this project), so it's the lever used
+// here too: bumping the safe area's bottom inset well past the ETA card's own
+// height pushes the tracked point up along with it. 30% of screen height is
+// a first estimate, not something confirmed live (there's no way to measure
+// the actual on-screen result without a device) -- if it lands short of or
+// past "20% below center" once Corey checks it, this is the number to retune.
+private const val FOLLOW_MARKER_MIN_BOTTOM_INSET_FRACTION = 0.30f
 
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
 
@@ -624,12 +641,19 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     // rather than a guessed fixed dp value, since card height depends on
     // their actual text content.
     val density = LocalDensity.current
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
     var topCardHeightPx by remember { mutableStateOf(0) }
     var bottomCardHeightPx by remember { mutableStateOf(0) }
-    LaunchedEffect(topCardHeightPx, bottomCardHeightPx) {
+    LaunchedEffect(topCardHeightPx, bottomCardHeightPx, screenHeightDp) {
+        val bottomCardHeightDp = with(density) { bottomCardHeightPx.toDp() }
+        // See FOLLOW_MARKER_MIN_BOTTOM_INSET_FRACTION's own comment -- the
+        // bottom inset needs to be at least this fraction of the screen to
+        // pull the followed position up off the very bottom edge, on top of
+        // whatever it already needs to clear the real ETA card underneath it.
+        val followMarkerInsetDp = screenHeightDp.dp * FOLLOW_MARKER_MIN_BOTTOM_INSET_FRACTION
         mapViewState.safeArea = PaddingValues(
             top = with(density) { topCardHeightPx.toDp() },
-            bottom = with(density) { bottomCardHeightPx.toDp() },
+            bottom = maxOf(bottomCardHeightDp, followMarkerInsetDp),
         )
     }
 
