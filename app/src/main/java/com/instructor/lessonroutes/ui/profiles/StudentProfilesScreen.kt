@@ -34,6 +34,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
+import com.instructor.lessonroutes.ui.theme.AppBlack
+import com.instructor.lessonroutes.ui.theme.AppWhite
 import com.instructor.lessonroutes.ui.theme.PlanTripTheme
 import kotlinx.coroutines.launch
 
@@ -75,7 +77,18 @@ fun StudentProfilesScreen(
             ) {
                 OutlinedButton(onClick = onAllRoutesClick) { Text("Routes") }
                 OutlinedButton(onClick = onOverviewClick) { Text("Overview") }
-                FloatingActionButton(onClick = { showCreateDialog = true }) { Text("+") }
+                // Explicit black/white override, not theme-derived: left to
+                // PlanTripTheme's default FAB colors (primaryContainer/
+                // onPrimaryContainer -- blue), this rendered blue like the
+                // rest of this preserved-blue screen. Corey asked for this
+                // one button specifically to be black background + white
+                // cross regardless -- spelled out directly rather than
+                // relying on a theme role.
+                FloatingActionButton(
+                    onClick = { showCreateDialog = true },
+                    containerColor = AppBlack,
+                    contentColor = AppWhite,
+                ) { Text("+") }
             }
         },
     ) { padding ->

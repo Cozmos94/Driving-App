@@ -108,3 +108,10 @@ val OutlineVariantDark = AppLightGray
 val InverseSurfaceDark = AppBlack
 val InverseOnSurfaceDark = AppWhite
 val InversePrimaryDark = AppWhite
+
+// Same red already used for GenerateRouteScreen.kt's "Set End time" warning
+// text -- reused here so a saved route's Avoid/Prefer pill-badge labels read
+// the same way: Avoid items in red, Prefer items in a matching green, on
+// RouteDetailScreen.
+val AvoidRed = Color(0xFFD21F3C)
+val PreferGreen = Color(0xFF2E7D32)

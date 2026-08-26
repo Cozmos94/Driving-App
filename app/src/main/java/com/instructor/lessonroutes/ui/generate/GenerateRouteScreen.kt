@@ -38,7 +38,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TimePickerDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -901,28 +900,13 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
                 lightColorScheme()
             }
             MaterialTheme(colorScheme = clockColorScheme) {
-                // The AM/PM selector's own default colors read from
-                // tertiary/tertiaryContainer, not primary -- and Material
-                // You's tertiary tonal palette is deliberately a different,
-                // often pink/purple-leaning hue family from primary/secondary
-                // (by design, for contrast), regardless of light/dark or
-                // which real device this runs on. Confirmed as the actual
-                // source of the "pink/purple behind the AM/PM" report, not a
-                // leftover from the app's own theme. Remapped to the
-                // primary/surface roles instead so it reads as a plain
-                // selected/unselected control, still fully derived from
-                // clockColorScheme above (dynamic-or-baseline), just not the
-                // one M3 role that happens to trend pink.
-                TimePicker(
-                    state = state,
-                    colors = TimePickerDefaults.colors(
-                        periodSelectorSelectedContainerColor = clockColorScheme.primary,
-                        periodSelectorSelectedContentColor = clockColorScheme.onPrimary,
-                        periodSelectorUnselectedContainerColor = clockColorScheme.surface,
-                        periodSelectorUnselectedContentColor = clockColorScheme.onSurface,
-                        periodSelectorBorderColor = clockColorScheme.outline,
-                    ),
-                )
+                // No color override here on purpose (Corey's request: no app
+                // colors on the clock at all, just whatever the device/plugin
+                // shows by default) -- TimePicker picks up its own default
+                // role colors (including the AM/PM period selector's
+                // tertiary/tertiaryContainer) straight from clockColorScheme
+                // above, dynamic-or-baseline, with nothing further remapped.
+                TimePicker(state = state)
             }
         },
         confirmButton = {

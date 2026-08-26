@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.instructor.lessonroutes.BuildConfig
 import com.instructor.lessonroutes.data.RouteDao
@@ -40,6 +41,8 @@ import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
 import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
+import com.instructor.lessonroutes.ui.theme.AvoidRed
+import com.instructor.lessonroutes.ui.theme.PreferGreen
 import org.maplibre.android.geometry.LatLng
 
 /**
@@ -139,8 +142,8 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao) {
                 // and hidden, for tap/recorded routes and for a generated route
                 // saved with nothing set to Avoid/Prefer.
                 val filterSummary = current.route.effectiveFilterSummary()
-                FilterBadgeSection("Avoid", filterSummary.avoid)
-                FilterBadgeSection("Prefer", filterSummary.prefer)
+                FilterBadgeSection("Avoid", filterSummary.avoid, textColor = AvoidRed)
+                FilterBadgeSection("Prefer", filterSummary.prefer, textColor = PreferGreen)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -183,10 +186,13 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao) {
 /** A labeled row of small pill badges (e.g. "Avoid" / Highways, Hazards) --
  * replaces what used to be one plain paragraph sentence. Hidden entirely if
  * [items] is empty, so a route with nothing set to Avoid (or nothing set to
- * Prefer) doesn't leave a blank labeled section behind. */
+ * Prefer) doesn't leave a blank labeled section behind. [textColor] is
+ * [AvoidRed] for the Avoid section and [PreferGreen] for Prefer, per Corey's
+ * request -- the pill's own background stays the neutral theme color, just
+ * the label text inside it is colored. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FilterBadgeSection(label: String, items: List<String>) {
+private fun FilterBadgeSection(label: String, items: List<String>, textColor: Color) {
     if (items.isEmpty()) return
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge)
@@ -201,6 +207,7 @@ private fun FilterBadgeSection(label: String, items: List<String>) {
                 ) {
                     Text(
                         text = item,
+                        color = textColor,
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     )
