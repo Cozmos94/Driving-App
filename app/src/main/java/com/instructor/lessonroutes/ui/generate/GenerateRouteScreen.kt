@@ -1121,15 +1121,25 @@ private suspend fun buildScoringData(
     // paired String is this category's display name if it ended up with zero
     // data (timeout OR a caught exception OR a genuinely empty result), null
     // otherwise.
+    //
+    // fetchBoundedSync is the plain suspend core, reused two ways below:
+    // fetchBounded wraps it in its own async{} for the TfNSW/Room-backed
+    // categories (fully independent APIs, fine to run genuinely concurrently),
+    // while the three Overpass-backed categories share one single async{}
+    // block and call this directly, one at a time -- see that block's own
+    // comment for why (a real, confirmed bug: Overpass's public instance
+    // enforces a per-IP concurrent-request limit, and firing Roundabouts/
+    // Merging lanes/Highways as three simultaneous requests tripped it).
+    suspend fun fetchBoundedSync(name: String, timeoutMs: Long, fetch: suspend () -> List<LatLng>): Pair<List<LatLng>, String?> {
+        val list = withTimeoutOrNull(timeoutMs) { runCatching { fetch() }.getOrDefault(emptyList()) }
+            ?: emptyList()
+        return list to (if (list.isEmpty()) name else null)
+    }
     fun fetchBounded(
         name: String,
         timeoutMs: Long = SCORING_FETCH_TIMEOUT_MS,
         fetch: suspend () -> List<LatLng>,
-    ): Deferred<Pair<List<LatLng>, String?>> = async {
-        val list = withTimeoutOrNull(timeoutMs) { runCatching { fetch() }.getOrDefault(emptyList()) }
-            ?: emptyList()
-        list to (if (list.isEmpty()) name else null)
-    }
+    ): Deferred<Pair<List<LatLng>, String?>> = async { fetchBoundedSync(name, timeoutMs, fetch) }
     val overpassRadiusDegrees = maxOf(
         minOf(radiusDegrees, OVERPASS_SCORING_RADIUS_CAP_DEGREES),
         coverageRadiusDegrees(center, start, end, maxRadiusKm),
@@ -1155,26 +1165,40 @@ private suspend fun buildScoringData(
     } else {
         null
     }
-    val roundabouts: Deferred<Pair<List<LatLng>, String?>>? = if (filters.roundabouts != FilterPreference.NONE) {
-        fetchBounded("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-            fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
+    // Roundabouts/Merging lanes/Highways all hit the same free, shared
+    // Overpass instance -- confirmed live (a direct test firing 3 requests
+    // at once got a genuine HTTP 429 "Too Many Requests" on the 3rd) that it
+    // enforces a real per-IP concurrent-request limit, and this is a real,
+    // confirmed bug report matching that exactly: "Couldn't load data for:
+    // Roundabouts, merging lanes, highways" -- all three failing together,
+    // not independently. One shared async block, awaited one at a time
+    // inside it (not three separate async{} calls), so at most one Overpass
+    // request from this screen is ever in flight -- still runs concurrently
+    // with every *other* category above/below (TfNSW/Room, an unrelated API
+    // with no shared limit to worry about).
+    val overpassCategoriesDeferred = async {
+        val roundaboutsResult = if (filters.roundabouts != FilterPreference.NONE) {
+            fetchBoundedSync("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+                fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
+            }
+        } else {
+            null
         }
-    } else {
-        null
-    }
-    val mergeLanes: Deferred<Pair<List<LatLng>, String?>>? = if (filters.mergingLanes != FilterPreference.NONE) {
-        fetchBounded("Merging lanes", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-            fetchMergeLaneProxies(center, overpassRadiusDegrees).sampleForScoring()
+        val mergeLanesResult = if (filters.mergingLanes != FilterPreference.NONE) {
+            fetchBoundedSync("Merging lanes", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+                fetchMergeLaneProxies(center, overpassRadiusDegrees).sampleForScoring()
+            }
+        } else {
+            null
         }
-    } else {
-        null
-    }
-    val majorRoads: Deferred<Pair<List<LatLng>, String?>>? = if (filters.highways != FilterPreference.NONE) {
-        fetchBounded("Highways", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-            fetchMajorRoads(center, overpassRadiusDegrees).sampleForScoring()
+        val majorRoadsResult = if (filters.highways != FilterPreference.NONE) {
+            fetchBoundedSync("Highways", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+                fetchMajorRoads(center, overpassRadiusDegrees).sampleForScoring()
+            }
+        } else {
+            null
         }
-    } else {
-        null
+        Triple(roundaboutsResult, mergeLanesResult, majorRoadsResult)
     }
     val highTraffic: Deferred<Pair<List<LatLng>, String?>>? = if (filters.highTraffic != FilterPreference.NONE) {
         fetchBounded("High traffic roads") { fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
@@ -1186,9 +1210,7 @@ private suspend fun buildScoringData(
     val constructionResult = construction?.await()
     val schoolZonesResult = schoolZones?.await()
     val speedCamerasResult = speedCameras?.await()
-    val roundaboutsResult = roundabouts?.await()
-    val mergeLanesResult = mergeLanes?.await()
-    val majorRoadsResult = majorRoads?.await()
+    val (roundaboutsResult, mergeLanesResult, majorRoadsResult) = overpassCategoriesDeferred.await()
     val highTrafficResult = highTraffic?.await()
 
     ScoringFetchResult(
