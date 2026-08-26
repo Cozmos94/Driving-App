@@ -628,6 +628,23 @@ fun GenerateRouteScreen(
                 HorizontalDivider()
             }
 
+            // Same fixed-sibling spot as the "Generated: ..." block above --
+            // mutually exclusive with it (generatedRoute and generationError
+            // are never both set), shown here for the same reason: a real
+            // gap where generationError was only ever rendered at the very
+            // bottom of the scrollable filters list, easy to scroll away
+            // from while waiting and never see at all (Corey: "no error
+            // text" -- it was there, just off-screen). Kept the original
+            // inline Text near the Generate button too (not worth removing,
+            // in case this one's somehow not visible either), so this is a
+            // second, harder-to-miss copy rather than a relocation.
+            if (generatedRoute == null) {
+                generationError?.let {
+                    Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp))
+                    HorizontalDivider()
+                }
+            }
+
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
                 Text("Destination", fontWeight = FontWeight.Bold)
                 RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
