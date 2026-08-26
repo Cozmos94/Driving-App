@@ -345,6 +345,13 @@ fun GenerateRouteScreen(
                 // concurrently below, so the real worst case is
                 // max(routing, scoring) + pickBestRoute's own CPU work, not
                 // their sum -- comfortably under 30s with real margin.
+                // Real elapsed-time instrumentation -- three straight rounds of
+                // guessing which phase (routing? scoring? pickBestRoute?) was
+                // actually eating the 30s budget didn't converge (Corey's own
+                // tests ruled out radius size as the variable), so this logs
+                // exactly where the time goes on the *next* attempt instead of
+                // guessing a fourth time. Check Logcat tag GenerateRouteScreen.
+                val overallStartMs = System.currentTimeMillis()
                 val result = withTimeoutOrNull(OVERALL_GENERATION_TIMEOUT_MS) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
@@ -368,8 +375,18 @@ fun GenerateRouteScreen(
                     }
                     val candidates = candidatesDeferred.await()
                     candidateCount = candidates.size
+                    Log.d(
+                        LOG_TAG,
+                        "routing finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
+                            "candidates=${candidates.size}",
+                    )
                     val scoringResult = scoringDataDeferred.await()
                     emptyScoringCategories = scoringResult.emptyCategories
+                    Log.d(
+                        LOG_TAG,
+                        "scoring finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
+                            "emptyCategories=${scoringResult.emptyCategories}",
+                    )
                     // pickBestRoute does a nested proximity-comparison loop over
                     // every scoring point x every route point -- for Highways/
                     // Roundabouts/Merging lanes, whose Overpass data is every
@@ -379,7 +396,7 @@ fun GenerateRouteScreen(
                     // default), so without this it was blocking the UI thread
                     // outright -- the reported "hangs and becomes unresponsive",
                     // not just a slow network wait.
-                    withContext(Dispatchers.Default) {
+                    val picked = withContext(Dispatchers.Default) {
                         pickBestRoute(
                             candidates,
                             filters,
@@ -389,7 +406,19 @@ fun GenerateRouteScreen(
                             maxRadiusKm = selectedRadiusKm,
                         )
                     }
+                    Log.d(
+                        LOG_TAG,
+                        "pickBestRoute finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
+                            "picked=${picked != null}",
+                    )
+                    picked
                 }
+                Log.d(
+                    LOG_TAG,
+                    "generation block returned at t=${System.currentTimeMillis() - overallStartMs}ms " +
+                        "(result=${result != null}) -- if this line never appears, the outer " +
+                        "${OVERALL_GENERATION_TIMEOUT_MS}ms ceiling fired first",
+                )
                 if (result == null) {
                     // Diagnose *why*, using whatever partial state was captured
                     // above before the ceiling fired, instead of one generic
