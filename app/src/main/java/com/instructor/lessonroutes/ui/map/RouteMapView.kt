@@ -1,6 +1,7 @@
 package com.instructor.lessonroutes.ui.map
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,6 +12,8 @@ import android.graphics.RectF
 import android.location.Location
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
+import android.widget.FrameLayout
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -83,6 +86,67 @@ private val FALLBACK_CENTER = LatLng(-33.8688, 151.2093)
 private const val DEFAULT_ZOOM = 11.0
 private const val BOUNDS_PADDING_PX = 96
 private const val TAP_HIT_RADIUS_PX = 40.0
+
+/**
+ * Wraps [MapView] as a single child, purely to let the radius circle be
+ * dragged (Corey: "I'm unable to drag the radius around" -- a plain tap on
+ * the circle's outline already worked via onMapClick's own hit-testing, but
+ * a real press-and-hold-and-follow-my-finger drag needs to claim the touch
+ * gesture before MapLibre's own pan/zoom handling sees it).
+ *
+ * Deliberately NOT done via MapLibre's own gesture-manager APIs
+ * (`AndroidGesturesManager`/`MoveGestureDetector`) -- confirmed via
+ * MapLibre's own official draggable-marker example that doing this "properly"
+ * their way needs overriding `Activity.dispatchTouchEvent()` app-wide to feed
+ * every touch event into a second, independent gesture manager, which is a
+ * much bigger and riskier change than this one feature justifies (it'd sit
+ * outside this composable entirely, in MainActivity, potentially affecting
+ * every other screen if gotten wrong -- and there's no way to verify any of
+ * this against a real device here).
+ *
+ * This uses plain, well-documented Android `ViewGroup` touch interception
+ * instead -- [onInterceptTouchEvent] returning true on a hit claims the
+ * *entire* gesture for [onTouchEvent] here, so [mapView] (the child) never
+ * sees it at all; returning false (the ordinary case -- not touching the
+ * circle) lets every event flow through to [mapView] completely normally,
+ * so ordinary pan/zoom/tap is unaffected regardless of whether the drag
+ * mechanism below works as intended.
+ */
+private class RadiusDragInterceptLayout(context: Context, mapView: MapView) : FrameLayout(context) {
+    /** Screen-space (px) hit test against the drawn circle's outline --
+     * true means "claim this gesture", set from RouteMapView once the real
+     * map/circle state is available. */
+    var hitTest: ((Float, Float) -> Boolean)? = null
+
+    /** Screen-space (px) touch position, called on the initial hit *and*
+     * every subsequent move while dragging -- covers both a plain tap (one
+     * call, from the down event) and a real continuous drag (one call per
+     * move event) with the same mechanism. */
+    var onDragTo: ((Float, Float) -> Unit)? = null
+
+    private var dragging = false
+
+    init {
+        addView(mapView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            dragging = hitTest?.invoke(ev.x, ev.y) == true
+            if (dragging) onDragTo?.invoke(ev.x, ev.y)
+        }
+        return dragging
+    }
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (!dragging) return false
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_MOVE -> onDragTo?.invoke(ev.x, ev.y)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> dragging = false
+        }
+        return true
+    }
+}
 
 private const val ROUTE_SOURCE_ID = "route-source"
 private const val ROUTE_LAYER_ID = "route-layer"
@@ -278,10 +342,11 @@ fun RouteMapView(
     AndroidView(
         modifier = modifier.fillMaxSize(),
         factory = { androidContext ->
-            MapView(androidContext).also { view ->
-                mapViewRef.value = view
-                view.onCreate(Bundle())
-                view.getMapAsync { map ->
+            val mapView = MapView(androidContext)
+            mapViewRef.value = mapView
+            mapView.onCreate(Bundle())
+            RadiusDragInterceptLayout(androidContext, mapView).also { dragLayout ->
+                mapView.getMapAsync { map ->
                     // Just the logo watermark -- no licensing requirement to keep it
                     // (unlike the separate attribution control, left on, which is how
                     // OpenStreetMap's ODbL-required "© OpenStreetMap contributors"
@@ -321,20 +386,15 @@ fun RouteMapView(
                             .minOrNull()
                             ?.takeIf { it <= TAP_HIT_RADIUS_PX }
 
-                        val radiusCenter = radiusCircleCenterState.value
-                        val radiusKm = radiusCircleKmState.value
-                        val radiusCircleDistance = if (radiusCenter != null && radiusKm != null && radiusKm > 0) {
-                            screenDistanceToPolyline(map, circlePolygonRing(radiusCenter, radiusKm), tapScreen)
-                                .takeIf { it <= TAP_HIT_RADIUS_PX }
-                        } else {
-                            null
-                        }
-
+                        // Radius-circle taps are no longer handled here --
+                        // RadiusDragInterceptLayout claims those touches
+                        // *before* they ever reach the map's own click
+                        // detection (see its own doc comment), covering both
+                        // a plain tap and a real drag in one mechanism.
                         val bestDistance = minOf(
                             hazardHit?.second ?: Double.MAX_VALUE,
                             volumeHit?.second ?: Double.MAX_VALUE,
                             quietRoadDistance ?: Double.MAX_VALUE,
-                            radiusCircleDistance ?: Double.MAX_VALUE,
                         )
 
                         when {
@@ -350,15 +410,20 @@ fun RouteMapView(
                                 onQuietRoadClickState.value?.invoke()
                                 true
                             }
-                            radiusCircleDistance != null && radiusCircleDistance == bestDistance -> {
-                                onRadiusCircleMoveState.value?.invoke(point)
-                                onRadiusCircleMoveState.value != null
-                            }
                             else -> {
                                 onMapClickState.value?.invoke(point)
                                 onMapClickState.value != null
                             }
                         }
+                    }
+                    dragLayout.hitTest = { x, y ->
+                        val radiusCenter = radiusCircleCenterState.value
+                        val radiusKm = radiusCircleKmState.value
+                        radiusCenter != null && radiusKm != null && radiusKm > 0 &&
+                            screenDistanceToPolyline(map, circlePolygonRing(radiusCenter, radiusKm), PointF(x, y)) <= TAP_HIT_RADIUS_PX
+                    }
+                    dragLayout.onDragTo = { x, y ->
+                        onRadiusCircleMoveState.value?.invoke(map.projection.fromScreenLocation(PointF(x, y)))
                     }
                     map.setStyle(styleUrl) { style ->
                         addSourcesAndLayers(style)
