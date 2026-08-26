@@ -127,6 +127,23 @@ fun PlanTripTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = PlanTripColors, typography = Typography, content = content)
 }
 
+/** The app's own real black/white scheme (LightColors/DarkColors below),
+ * without LessonRoutesTheme's own SideEffect that recolors the status bar --
+ * that's the right thing for the app's actual root theme, but wrong for
+ * something embedded inside a dialog that's already showing on top of
+ * whatever root theme is active (GenerateRouteScreen.kt's clock, which needs
+ * to opt out of PlanTripTheme's blue -- Corey: "just make the clock a black
+ * and white theme" -- without also repainting the status bar out from under
+ * the screen underneath it, which nothing would ever revert once the dialog
+ * closes). Dynamic (Material You) color intentionally isn't an option here
+ * at all, unlike LessonRoutesTheme -- tried once already for this same clock
+ * and Corey reported a purple AM/PM selector regardless. */
+@Composable
+fun BlackWhiteTheme(content: @Composable () -> Unit) {
+    val colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors
+    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+}
+
 @Composable
 fun LessonRoutesTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
