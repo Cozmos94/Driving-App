@@ -127,42 +127,27 @@ fun PlanTripTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = PlanTripColors, typography = Typography, content = content)
 }
 
-// GenerateRouteScreen.kt's clock, plain black/white -- Corey: "invert the
-// colours on the clock, it should be black font, with white background."
-// Reusing the app's own LightColors/DarkColors (as an earlier version of
-// this did) got the clock face/digits right (surface=white, onSurface=black
-// already) but NOT the selected hour/minute indicator, whose filled circle
-// reads its color from primary/onPrimary -- LightColors' primary is
-// AppBlack, so that one indicator rendered as a black circle with white
-// digits, backwards from what was asked. Every relevant role here is
-// deliberately flipped instead (white "primary" fill, black text/lines on
-// top of it) rather than reusing LightColors, and fixed to a single flat
-// scheme (not light/dark-aware) since Corey asked for one specific look,
-// not "whichever the app's/device's theme happens to be."
-private val ClockColors = lightColorScheme(
+// GenerateRouteScreen.kt's clock. History: reusing LightColors/DarkColors
+// as-is got the dial/digits right (surface=white, onSurface=black,
+// surfaceVariant=a real grey -- AppLightGray) but not the selected hour/
+// minute indicator, whose filled circle reads primary/onPrimary --
+// LightColors' primary is AppBlack, so that indicator rendered as a black
+// circle with white digits ("invert the colours... it should be black font,
+// with white background"). The first fix overcorrected: it flipped EVERY
+// role to white, including surfaceVariant -- the dial's own background --
+// which had been a real grey under LightColors and turned stark white,
+// prompting "remove the white colours, just leave it as the default grey
+// colour with the rest of the clock." Fixed properly this time: start from
+// LightColors itself (ColorScheme has a real copy() function -- confirmed
+// via its own source, not assumed -- that keeps every already-correct role,
+// grey surfaceVariant/outline included) and flip only the primary family,
+// the one role that actually needed inverting.
+private val ClockColors = LightColors.copy(
     primary = AppWhite,
     onPrimary = AppBlack,
     primaryContainer = AppWhite,
     onPrimaryContainer = AppBlack,
     inversePrimary = AppBlack,
-    secondary = AppWhite,
-    onSecondary = AppBlack,
-    secondaryContainer = AppWhite,
-    onSecondaryContainer = AppBlack,
-    tertiary = AppWhite,
-    onTertiary = AppBlack,
-    tertiaryContainer = AppWhite,
-    onTertiaryContainer = AppBlack,
-    background = AppWhite,
-    surface = AppWhite,
-    onSurface = AppBlack,
-    surfaceVariant = AppWhite,
-    onSurfaceVariant = AppBlack,
-    outline = AppBlack,
-    outlineVariant = AppBlack,
-    inverseSurface = AppBlack,
-    inverseOnSurface = AppWhite,
-    surfaceTint = Color.Transparent,
 )
 
 /** No status-bar SideEffect (see the app's own root LessonRoutesTheme below

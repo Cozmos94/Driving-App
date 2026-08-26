@@ -43,12 +43,24 @@ private val client = OkHttpClient.Builder()
  * "46-48 Queen Street" from its openaddresses source). Not a guarantee every
  * address resolves -- coverage gaps can still exist -- but a real, confirmed
  * improvement over OSM-only data for this specific complaint.
+ *
+ * @param biasLocation Soft-preferences results near this point (Geoapify's real
+ * `bias=proximity:lon,lat`, confirmed live) -- a genuine, confirmed bug, not
+ * theoretical: a live test of "1 evans st, wol" (a real Corey report -- typing
+ * that far into "1 Evans St, Wollongong" showed nothing) returned 5 results,
+ * *all* Victoria/Queensland, zero NSW -- every one discarded by the NSW-only
+ * filter below, leaving the search looking empty despite the correct NSW match
+ * existing (it just ranked outside Geoapify's own top 5 for that short,
+ * genuinely ambiguous prefix without more context). The same query with
+ * [biasLocation] set to a real NSW point came back with all 5 results as NSW,
+ * the correct Wollongong address first -- confirmed live, not assumed.
  */
-suspend fun searchAddress(query: String): List<GeocodeResult> {
+suspend fun searchAddress(query: String, biasLocation: LatLng? = null): List<GeocodeResult> {
     if (query.isBlank()) return emptyList()
 
     return withContext(Dispatchers.IO) {
-        val url = "$GEOCODE_URL?text=${Uri.encode(query)}&filter=$NSW_RECT_FILTER&limit=5&format=json" +
+        val biasParam = biasLocation?.let { "&bias=proximity:${it.longitude},${it.latitude}" } ?: ""
+        val url = "$GEOCODE_URL?text=${Uri.encode(query)}&filter=$NSW_RECT_FILTER$biasParam&limit=5&format=json" +
             "&apiKey=${BuildConfig.GEOAPIFY_API_KEY}"
         val request = Request.Builder().url(url).build()
 

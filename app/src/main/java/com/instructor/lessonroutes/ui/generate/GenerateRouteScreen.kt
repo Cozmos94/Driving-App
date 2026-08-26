@@ -219,7 +219,17 @@ fun GenerateRouteScreen(
         delay(500)
         searchError = null
         try {
-            val results = searchAddress(queryForThisSearch)
+            // Biases toward the device's own location -- see searchAddress's
+            // own doc comment for the real, confirmed bug this fixes (short/
+            // ambiguous prefixes ranking every NSW match outside Geoapify's
+            // own top 5, leaving the NSW-only filter below with nothing to
+            // show even though a correct match exists). currentLocation
+            // rather than effectiveStart (declared later in this function,
+            // not in scope yet here) -- close enough for a search bias
+            // either way, and this screen's search is about finding a
+            // *destination* near wherever the instructor actually is, not
+            // necessarily the radius anchor if that's been moved elsewhere.
+            val results = searchAddress(queryForThisSearch, biasLocation = currentLocation)
             // Guards against a real, confirmed race: LaunchedEffect cancels the
             // *coroutine* when searchQuery changes, but searchAddress()'s
             // underlying OkHttp call is a synchronous, non-cancellation-aware
@@ -335,29 +345,13 @@ fun GenerateRouteScreen(
                     val scoringDataDeferred = async {
                         buildScoringData(filters, center, radiusDegrees, start, end, selectedRadiusKm, schoolZoneDao, speedCameraDao)
                     }
-                    // Small/fast (a ~3km-wide bbox each, not the wide scoring-
-                    // radius query above) -- awaited *before* candidate
-                    // generation starts rather than folded into
-                    // scoringDataDeferred, since generateCandidateRoutes needs
-                    // these points itself, not just something to score against
-                    // after the fact. See ROUNDABOUT_HARD_AVOID_RADIUS_KM's own
-                    // doc comment for why only near the endpoints, not the
-                    // whole route.
                     val candidatesDeferred = async {
-                        val avoidRoundabouts = if (filters.roundabouts == FilterPreference.AVOID) {
-                            val nearStart = async { fetchRoundaboutsNear(start) }
-                            val nearEnd = async { fetchRoundaboutsNear(end) }
-                            nearStart.await() + nearEnd.await()
-                        } else {
-                            emptyList()
-                        }
                         generateCandidateRoutes(
                             start,
                             end,
                             minutes,
                             avoidHighways = filters.highways == FilterPreference.AVOID,
                             maxRadiusKm = selectedRadiusKm,
-                            avoidLocations = avoidRoundabouts,
                         )
                     }
                     val candidates = candidatesDeferred.await()
@@ -1103,35 +1097,6 @@ private fun coverageRadiusDegrees(center: LatLng, start: LatLng, end: LatLng, ma
     val petalReachKm = maxRadiusKm ?: 0.0
     val requiredKm = maxOf(toStart, toEnd) + petalReachKm + OVERPASS_SCORING_MARGIN_KM
     return requiredKm / KM_PER_DEGREE_LAT
-}
-
-// How close to a trip's start/destination a roundabout has to be before it's
-// hard-excluded via Geoapify's real avoid=location constraint, rather than
-// left to scoreRoute's ordinary soft proximity scoring -- see
-// generateCandidateRoutes' own doc comment on avoidLocations for why this
-// only applies near the two fixed endpoints. ~1.2km is roughly the detour
-// Geoapify's own avoid=location actually produced in a live test around a
-// chosen point (confirmed directly, not assumed) -- 1.5km gives a small
-// margin above that so a roundabout just inside the exclusion still gets
-// genuinely routed around, not left sitting right at the edge of it.
-private const val ROUNDABOUT_HARD_AVOID_RADIUS_KM = 1.5
-
-/** Roundabouts within [ROUNDABOUT_HARD_AVOID_RADIUS_KM] of [point], as the flat
- * point list [generateCandidateRoutes]' avoidLocations expects (one point per
- * roundabout, its first geometry vertex -- same convention buildScoringData's
- * own roundabouts fetch already uses for soft scoring, good enough to anchor
- * a hard-exclusion zone too since Geoapify's own avoid=location already
- * clears a real margin around whatever point it's given). A small, fast
- * query -- this bbox is a tiny fraction of the main scoring-radius fetch --
- * so it's safe to await before candidate generation starts rather than
- * folding it into buildScoringData's own (much larger, concurrently-run)
- * roundabouts fetch. Falls back to empty on any failure -- a missed hard-
- * avoid opportunity, not a generation failure, so this doesn't need the same
- * emptyCategories warning buildScoringData's own fetches use. */
-private suspend fun fetchRoundaboutsNear(point: LatLng): List<LatLng> {
-    val radiusDegrees = ROUNDABOUT_HARD_AVOID_RADIUS_KM / KM_PER_DEGREE_LAT
-    return runCatching { fetchRoundabouts(point, radiusDegrees).mapNotNull { it.firstOrNull() } }
-        .getOrDefault(emptyList())
 }
 
 /** Fetches point-of-interest data only for the categories actually set to

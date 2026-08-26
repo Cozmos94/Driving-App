@@ -253,18 +253,6 @@ private fun initialRadiusKm(targetDurationMinutes: Int): Double {
  * 10km from home"). Duration is still the real target either way; this changes
  * *how* the generator tries to hit it, not whether it keeps trying once the
  * boundary binds.
- * @param avoidLocations Points to hard-exclude via Geoapify's real
- * `avoid=location:lat,lon` constraint (confirmed live -- see
- * GeoapifyRoutingApi.kt's own doc comment). Used by GenerateRouteScreen.kt to
- * pass roundabouts specifically near [start]/[destination] when
- * Roundabouts->Avoid is set -- everywhere else along the route, Roundabouts
- * stays the soft proximity scoring [scoreRoute] already does (no free routing
- * API supports hard-avoiding roundabouts generally), since only near the two
- * fixed endpoints do every candidate bearing genuinely funnel through the
- * exact same local streets with no way for scoring to prefer a candidate that
- * doesn't -- confirmed as a real bug report (Corey: a Roundabouts->Avoid
- * route's very first turn was a roundabout regardless).
- *
  * Returns every candidate that converged; empty if every attempt failed outright
  * (e.g. no network).
  */
@@ -274,7 +262,6 @@ suspend fun generateCandidateRoutes(
     targetDurationMinutes: Int,
     avoidHighways: Boolean = false,
     maxRadiusKm: Double? = null,
-    avoidLocations: List<LatLng> = emptyList(),
 ): List<GeneratedRoute> = coroutineScope {
     val targetSeconds = targetDurationMinutes * 60.0
 
@@ -282,13 +269,12 @@ suspend fun generateCandidateRoutes(
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
-                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways, " +
-                "avoidLocations=${avoidLocations.size}",
+                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways",
         )
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, avoidLocations)
+                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways)
                 }
             }
             .awaitAll()
@@ -300,12 +286,12 @@ suspend fun generateCandidateRoutes(
             LOG_TAG,
             "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
                 "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
-                "avoidHighways=$avoidHighways, avoidLocations=${avoidLocations.size}",
+                "avoidHighways=$avoidHighways",
         )
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways, avoidLocations)
+                    refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
                 }
             }
             .awaitAll()
@@ -380,7 +366,6 @@ private suspend fun refineCandidate(
     initialRadiusKm: Double,
     targetSeconds: Double,
     avoidHighways: Boolean,
-    avoidLocations: List<LatLng> = emptyList(),
 ): GeneratedRoute? {
     var radiusKm = initialRadiusKm
     var best: GeneratedRoute? = null
@@ -400,11 +385,7 @@ private suspend fun refineCandidate(
         if (converged) return@repeat // already converged -- skip remaining rounds without another call
         val detourPoint = offset(base, bearingDegrees, radiusKm)
         val routed = try {
-            fetchRoutedPaths(
-                listOf(start, detourPoint, destination),
-                avoidHighways = avoidHighways,
-                avoidLocations = avoidLocations,
-            ).firstOrNull()
+            fetchRoutedPaths(listOf(start, detourPoint, destination), avoidHighways = avoidHighways).firstOrNull()
         } catch (e: Exception) {
             // Was silently swallowed before -- logged now since this is the one
             // place a routing failure (network, rate limit, no route found,
@@ -504,7 +485,6 @@ private suspend fun refineCandidateWithinRadius(
     maxRadiusKm: Double,
     targetSeconds: Double,
     avoidHighways: Boolean,
-    avoidLocations: List<LatLng> = emptyList(),
 ): GeneratedRoute? {
     val directLegKm = distanceKm(start, destination)
     val totalDistanceNeededKm = (AVG_SPEED_KMH * (targetSeconds / 3600.0) - directLegKm).coerceAtLeast(0.0)
@@ -579,7 +559,7 @@ private suspend fun refineCandidateWithinRadius(
                 add(destination)
             }
             routed = try {
-                fetchRoutedPaths(chain, avoidHighways = avoidHighways, avoidLocations = avoidLocations).firstOrNull()
+                fetchRoutedPaths(chain, avoidHighways = avoidHighways).firstOrNull()
             } catch (e: Exception) {
                 Log.e(
                     LOG_TAG,
