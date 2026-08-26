@@ -329,13 +329,23 @@ fun GenerateRouteScreen(
             try {
                 // Hard ceiling so a slow/stuck network call (Geoapify routing,
                 // Overpass, or TfNSW) can never leave the spinner running
-                // forever -- surfaces as a timeout error instead. Widened
-                // 20s->45s: the 20s budget
-                // left little slack once a slow-but-not-timed-out-itself Overpass
-                // response ate into it (see SCORING_FETCH_TIMEOUT_MS's own 8s
-                // per-category bound below), and typical-case generation is still
-                // well under 10s regardless of this ceiling.
-                val result = withTimeoutOrNull(45_000) {
+                // forever -- surfaces as a timeout error instead. Was 45s
+                // (before that, 20s) -- Corey: "I don't want the user waiting
+                // any longer than 30 seconds". This is a real ceiling now,
+                // not just a hopeful number: ROUTING_GENERATION_TIMEOUT_MS
+                // below independently bounds the routing side (candidate
+                // generation's own internal retry loops could otherwise run
+                // well past this on their own -- RouteGenerator.kt's radius-
+                // confined mode allows up to 3 outer iterations x 3 inner
+                // unroutable-petal retries x a 6s Geoapify call each, ~54s
+                // worst case for one bearing, never bounded by this screen's
+                // own ceiling before), and OVERPASS_SCORING_FETCH_TIMEOUT_MS's
+                // own doc comment covers the scoring side's ceiling (two
+                // paired rounds, not three sequential ones). Both run
+                // concurrently below, so the real worst case is
+                // max(routing, scoring) + pickBestRoute's own CPU work, not
+                // their sum -- comfortably under 30s with real margin.
+                val result = withTimeoutOrNull(OVERALL_GENERATION_TIMEOUT_MS) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
                     // Genuinely independent of each other -- run concurrently
@@ -346,13 +356,15 @@ fun GenerateRouteScreen(
                         buildScoringData(filters, center, radiusDegrees, start, end, selectedRadiusKm, schoolZoneDao, speedCameraDao)
                     }
                     val candidatesDeferred = async {
-                        generateCandidateRoutes(
-                            start,
-                            end,
-                            minutes,
-                            avoidHighways = filters.highways == FilterPreference.AVOID,
-                            maxRadiusKm = selectedRadiusKm,
-                        )
+                        withTimeoutOrNull(ROUTING_GENERATION_TIMEOUT_MS) {
+                            generateCandidateRoutes(
+                                start,
+                                end,
+                                minutes,
+                                avoidHighways = filters.highways == FilterPreference.AVOID,
+                                maxRadiusKm = selectedRadiusKm,
+                            )
+                        } ?: emptyList()
                     }
                     val candidates = candidatesDeferred.await()
                     candidateCount = candidates.size
@@ -1029,6 +1041,24 @@ private fun buildAutoDescription(route: GeneratedRoute, filterSummary: FilterSum
  * empty that run. Those look identical to the instructor without this. */
 private data class ScoringFetchResult(val data: ScoringData, val emptyCategories: List<String>)
 
+// The whole-generation ceiling, and routing's own independent share of it --
+// see onGenerateClick's own comment on the withTimeoutOrNull that uses this,
+// and OVERPASS_SCORING_FETCH_TIMEOUT_MS below for the scoring side's share.
+// Corey: "I don't want the user waiting any longer than 30 seconds."
+private const val OVERALL_GENERATION_TIMEOUT_MS = 30_000L
+
+// Bounds candidate generation independently of the overall ceiling above --
+// RouteGenerator.kt's own internal retry loops (radius-confined mode
+// especially) could otherwise run well past 30s on their own, e.g. a
+// pathological "every petal ring in a tight area keeps landing somewhere
+// unroutable" case, with no ceiling of their own catching it before the
+// *overall* one does (at which point routing's own partial progress, and
+// whatever scoring data had already loaded, would both be discarded
+// together). Bounding it here means a stuck routing attempt fails fast and
+// visibly on its own (the existing "routing service didn't return a route
+// in time" message) while leaving scoring however much of the 30s it needs.
+private const val ROUTING_GENERATION_TIMEOUT_MS = 20_000L
+
 private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 
 // Roundabouts/Merging lanes/Highways go through Overpass (OverpassApi.kt), which
@@ -1040,19 +1070,21 @@ private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 // a local Room read. Also see OVERPASS_SCORING_RADIUS_CAP_DEGREES below -- the
 // radius fix and this timeout are both real contributors, confirmed independently.
 //
-// Was 20_000 -- right for when these three ran as three separate concurrent
-// fetches (worst case ~20s, bounded by whichever was slowest). Now that they
-// run sequentially in one shared queue (see buildScoringData's own comment --
-// Overpass's public instance enforces a real per-IP concurrent-request limit,
-// confirmed live, so three at once could get a genuine HTTP 429), the *sum* of
-// up to three of these bounds that sequential chain -- 20s x 3 = 60s would on
-// its own blow well past the 45s overall generation ceiling below, which is
-// almost certainly why generation started hanging and giving up outright after
-// this screen's Overpass fetches were serialized. 12s x 3 = 36s worst case,
-// comfortable under 45s with margin for the routing side and pickBestRoute
-// afterward, while still well above the ~9-10s genuinely-slow-but-succeeding
-// case documented above.
-private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 12_000L
+// Was 20_000 with all three fully concurrent, then 12_000 with all three fully
+// sequential -- neither held up. Fully concurrent tripped Overpass's real
+// per-IP concurrent-request limit (confirmed live: a 3rd simultaneous request
+// got a genuine HTTP 429). Fully sequential fixed that but let the worst case
+// become a *sum* (up to 3x this value) instead of a max, which is almost
+// certainly why generation then started hanging and giving up outright --
+// Corey: "I don't want the user waiting any longer than 30 seconds... how can
+// we speed this up while allowing obstacle filtering to still work." Settled
+// on *paired* concurrency instead (buildScoringData below runs at most 2 of
+// these three at once, never 3) -- avoids the 429 (2 concurrent requests
+// succeeded in that same live test) while capping the real worst case at two
+// rounds of this value, not three: 9s x 2 = 18s, comfortably under the new
+// 30s overall ceiling with real margin left for the routing side and
+// pickBestRoute afterward.
+private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 9_000L
 
 // Matches RouteGenerator's own DURATION_TOLERANCE_SECONDS (private there,
 // duplicated here rather than exposed just for this UI warning) -- Corey:
@@ -1178,30 +1210,43 @@ private suspend fun buildScoringData(
     }
     // Roundabouts/Merging lanes/Highways all hit the same free, shared
     // Overpass instance -- confirmed live (a direct test firing 3 requests
-    // at once got a genuine HTTP 429 "Too Many Requests" on the 3rd) that it
-    // enforces a real per-IP concurrent-request limit, and this is a real,
-    // confirmed bug report matching that exactly: "Couldn't load data for:
-    // Roundabouts, merging lanes, highways" -- all three failing together,
-    // not independently. One shared async block, awaited one at a time
-    // inside it (not three separate async{} calls), so at most one Overpass
-    // request from this screen is ever in flight -- still runs concurrently
-    // with every *other* category above/below (TfNSW/Room, an unrelated API
-    // with no shared limit to worry about).
+    // at once got a genuine HTTP 429 "Too Many Requests" on the 3rd, but 2
+    // at once both succeeded) that it enforces a real per-IP concurrent-
+    // request limit around 2. Fully serializing all three (tried once
+    // already) avoided the 429 but let the worst case become a sum of all
+    // three timeouts instead of a max, which then caused generation to hang
+    // and give up outright -- Corey flagged both problems in turn. Paired
+    // concurrency instead: round 1 fires Roundabouts + Merging lanes
+    // together (2, the confirmed-safe number), round 2 fires Highways
+    // alone once round 1 finishes -- never more than 2 Overpass requests
+    // from this screen in flight at once, and the real worst case is two
+    // rounds of OVERPASS_SCORING_FETCH_TIMEOUT_MS, not three. Still runs
+    // concurrently with every *other* category above/below (TfNSW/Room, an
+    // unrelated API with no shared limit to worry about).
     val overpassCategoriesDeferred = async {
-        val roundaboutsResult = if (filters.roundabouts != FilterPreference.NONE) {
-            fetchBoundedSync("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-                fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
+        val roundaboutsDeferred = if (filters.roundabouts != FilterPreference.NONE) {
+            async {
+                fetchBoundedSync("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+                    fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
+                }
             }
         } else {
             null
         }
-        val mergeLanesResult = if (filters.mergingLanes != FilterPreference.NONE) {
-            fetchBoundedSync("Merging lanes", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-                fetchMergeLaneProxies(center, overpassRadiusDegrees).sampleForScoring()
+        val mergeLanesDeferred = if (filters.mergingLanes != FilterPreference.NONE) {
+            async {
+                fetchBoundedSync("Merging lanes", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+                    fetchMergeLaneProxies(center, overpassRadiusDegrees).sampleForScoring()
+                }
             }
         } else {
             null
         }
+        // Round 1's own two await() calls -- not started until *after* round
+        // 1 finishes, since majorRoadsResult below is a plain sequential
+        // fetchBoundedSync call, not another async{}.
+        val roundaboutsResult = roundaboutsDeferred?.await()
+        val mergeLanesResult = mergeLanesDeferred?.await()
         val majorRoadsResult = if (filters.highways != FilterPreference.NONE) {
             fetchBoundedSync("Highways", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
                 fetchMajorRoads(center, overpassRadiusDegrees).sampleForScoring()
