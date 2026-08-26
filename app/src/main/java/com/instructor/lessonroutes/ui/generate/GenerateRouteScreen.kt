@@ -517,11 +517,33 @@ fun GenerateRouteScreen(
                         // radiusExceeded by construction (radiusLimitedDuration's
                         // own condition requires !radiusExceeded), so no risk of
                         // both firing together.
+                        //
+                        // Real, confirmed bug fixed here: durationErrorSeconds is
+                        // abs(actual - target), so this used to fire (and always
+                        // say "came in short") for a big miss in *either*
+                        // direction -- Corey's report (1h2m target, 15km radius,
+                        // generated 4h19m -- a massive *overshoot*, not a
+                        // shortfall) got the old undershoot-only wording anyway.
+                        // A route can genuinely overshoot while staying inside
+                        // the radius too: petals sit at the *full* radius every
+                        // time (spokeCount can't go negative), so if even the
+                        // smallest option (0 or 1 petals) already covers more
+                        // distance/time than the target needs -- plausible in
+                        // slow, winding terrain where AVG_SPEED_KMH's flat 40km/h
+                        // assumption badly underestimates real travel time -- the
+                        // generator has no way left to trim it down further.
                         if (radiusLimitedDuration) {
                             add(
-                                "This route came in short of your target time even using the full " +
-                                    "${radiusKm?.toInt()}km radius — there may not be enough road network in that " +
-                                    "area to fill it. Try a larger radius.",
+                                if (result.durationSeconds > minutes * 60.0) {
+                                    "This route came in over your target time even with the shortest option " +
+                                        "inside your ${radiusKm?.toInt()}km radius — the road network there may " +
+                                        "need a longer detour than expected to stay within it. Try a smaller " +
+                                        "radius, or a longer target time."
+                                } else {
+                                    "This route came in short of your target time even using the full " +
+                                        "${radiusKm?.toInt()}km radius — there may not be enough road network in " +
+                                        "that area to fill it. Try a larger radius."
+                                },
                             )
                         }
                         // No radius cap to blame this time -- a real, confirmed
