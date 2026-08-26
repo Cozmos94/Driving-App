@@ -1122,19 +1122,29 @@ private const val DURATION_WARNING_THRESHOLD_SECONDS = 10 * 60.0
 // smaller, already-fast) TfNSW/Room-backed categories' search area.
 //
 // Real bug found from this cap alone (Corey report: "couldn't load data for:
-// roundabouts" on a route that visibly has plenty of them): this flat 0.15°
-// (~16.7km) radius is centered on the start/destination *midpoint*
-// (see `center` above), with zero regard for how far apart start and
-// destination actually are, or how far a radius-confined generation's petal
-// loops range from `start` specifically (see RouteGenerator.refineCandidateWithinRadius).
-// A one-way trip whose two ends are more than ~33km apart already leaves both
+// roundabouts" on a route that visibly has plenty of them): this flat radius
+// is centered on the start/destination *midpoint* (see `center` above), with
+// zero regard for how far apart start and destination actually are, or how
+// far a radius-confined generation's petal loops range from `start`
+// specifically (see RouteGenerator.refineCandidateWithinRadius). A one-way
+// trip whose two ends are more than ~33km apart already leaves both
 // endpoints outside this box; a petal loop can range even farther from
 // `start` than from the midpoint. The Overpass query then legitimately finds
 // nothing in that (wrong) box and reports "no data", indistinguishable from a
 // real absence -- see coverageRadiusDegrees below, which now floors the box at
 // whatever's actually needed to contain start, destination, and any petal
 // reach, only falling back to this flat cap when that's already enough.
-private const val OVERPASS_SCORING_RADIUS_CAP_DEGREES = 0.15
+//
+// Tightened 0.15deg (~16.7km) -> 0.1deg (~11.1km) for speed -- Corey:
+// "needs to work in a moderately fast manner of time". This only ever
+// *shrinks* the box below what coverageRadiusDegrees says is actually needed
+// to cover start/destination/petal-reach (that floor still wins via maxOf
+// below regardless of this cap's value), so it only bites in exactly the
+// case this cap exists for: a naive duration-implied box that's bigger than
+// the route will actually range -- a smaller box there means less data for
+// Overpass to search/return/parse, genuinely faster, not just a tighter
+// timeout hoping for the same query to finish quicker.
+private const val OVERPASS_SCORING_RADIUS_CAP_DEGREES = 0.1
 
 // Equirectangular approximation, same one RouteGenerator.kt uses internally --
 // fine at this scale, just needed here to convert a km floor into degrees for

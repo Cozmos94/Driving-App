@@ -141,17 +141,41 @@ private const val AVG_SPEED_KMH = 40.0
 // speed, so the single correction can itself overshoot (or still undershoot)
 // by a lot with no further round to walk it back. Restored to 3 so a bad
 // single correction gets a second chance to converge instead of being final
-// by construction.
-private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
+// by construction. Left at 3 here too -- this is the duration-convergence
+// accuracy lever, kept separate on purpose from MAX_UNROUTABLE_RETRIES below,
+// which is the one actually cut for speed this round.
+//
+// Bearings cut 3->2 -- Corey: "needs to work in a moderately fast manner of
+// time" after generation kept landing close to (or past) the 30s ceiling.
+// Bearings run in parallel with each other, so this doesn't shorten any one
+// bearing's own sequential chain -- it cuts total Geoapify request *volume*
+// per generation instead (fewer simultaneous + fewer overall calls), the
+// same lever already flagged as the next one to pull in this project's own
+// prior speed-tuning round ("the next lever is probably fewer bearings
+// still, down to 2").
+private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 180.0)
 private const val MAX_RADIUS_ITERATIONS = 3
 // How many shrink+rotate retries an unroutable petal ring gets *within* one
 // outer duration-convergence iteration before that iteration gives up -- see
 // refineCandidateWithinRadius's own comment on why this needs to be separate
 // from MAX_RADIUS_ITERATIONS (a routing failure used to cost a whole
-// convergence round, which -- with only 3 of those total -- could exhaust the
-// entire budget on retries alone, stranding `best` on an early, badly-off
-// result).
-private const val MAX_UNROUTABLE_RETRIES = 3
+// convergence round, which -- with only MAX_RADIUS_ITERATIONS of those total
+// -- could exhaust the entire budget on retries alone, stranding `best` on
+// an early, badly-off result).
+//
+// Cut 3->2 for speed -- a real, confirmed contributor to slow generation in
+// tight geography (Wollongong's coastline+escarpment, already a documented
+// hard case for this generator): a Logcat trace showed a bearing rotated
+// past 616 degrees before giving up, meaning it had already burned through
+// well over 10 shrink+rotate retries across multiple outer iterations, each
+// one a real 6s-capped Geoapify call, on a petal ring that kept landing
+// somewhere unroutable. Worst case per bearing drops from
+// MAX_RADIUS_ITERATIONS x 3 x 6s = 54s to x2 x 6s = 36s -- still not
+// nothing, but a real cut, and this loop already backs off (shrinks the
+// radius, rotates the ring, narrows the spread) on every failed attempt, so
+// 2 tries at a *different* placement each time covers a similar amount of
+// the search space per outer iteration as 3 did.
+private const val MAX_UNROUTABLE_RETRIES = 2
 // Absolute, not a percentage of target -- Corey: "lower the tolerance of
 // generated route times to be within 10 minutes of the time frame set by the
 // user". A ratio-based tolerance (the old 25%) meant a short trip's
