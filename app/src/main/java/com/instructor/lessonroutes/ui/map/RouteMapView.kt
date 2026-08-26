@@ -419,8 +419,24 @@ fun RouteMapView(
                     dragLayout.hitTest = { x, y ->
                         val radiusCenter = radiusCircleCenterState.value
                         val radiusKm = radiusCircleKmState.value
-                        radiusCenter != null && radiusKm != null && radiusKm > 0 &&
-                            screenDistanceToPolyline(map, circlePolygonRing(radiusCenter, radiusKm), PointF(x, y)) <= TAP_HIT_RADIUS_PX
+                        if (radiusCenter != null && radiusKm != null && radiusKm > 0) {
+                            // Anywhere inside the filled disc, not just near its
+                            // outline -- Corey: "move the radius if I hold and
+                            // drag anywhere in the radius circle, and move the
+                            // map if I hold and drag anywhere outside the
+                            // circle." Screen-space radius derived from one
+                            // point on the drawn ring's own distance from the
+                            // center (a flat, non-tilted 2D map, so that ring
+                            // is a real circle in screen space too) -- a tap's
+                            // screen distance from the center at or under that
+                            // counts as inside.
+                            val centerScreen = map.projection.toScreenLocation(radiusCenter)
+                            val edgePoint = circlePolygonRing(radiusCenter, radiusKm).first()
+                            val screenRadiusPx = screenDistance(map, edgePoint.latitude, edgePoint.longitude, centerScreen)
+                            screenDistance(map, radiusCenter.latitude, radiusCenter.longitude, PointF(x, y)) <= screenRadiusPx
+                        } else {
+                            false
+                        }
                     }
                     dragLayout.onDragTo = { x, y ->
                         onRadiusCircleMoveState.value?.invoke(map.projection.fromScreenLocation(PointF(x, y)))
