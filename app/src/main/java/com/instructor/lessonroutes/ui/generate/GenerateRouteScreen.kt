@@ -26,6 +26,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -94,10 +95,13 @@ import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
+import com.instructor.lessonroutes.ui.theme.AppBlack
+import com.instructor.lessonroutes.ui.theme.AvoidLightRed
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
 import com.instructor.lessonroutes.ui.theme.ClockTheme
 import com.instructor.lessonroutes.ui.theme.PlanTripTheme
+import com.instructor.lessonroutes.ui.theme.PreferLightGreen
 import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -999,11 +1003,19 @@ private fun FilterRow(label: String, preference: FilterPreference, onChange: (Fi
             onClick = { onChange(if (preference == FilterPreference.AVOID) FilterPreference.NONE else FilterPreference.AVOID) },
             label = { Text("Avoid") },
             modifier = Modifier.padding(end = 4.dp),
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = AvoidLightRed,
+                selectedLabelColor = AppBlack,
+            ),
         )
         FilterChip(
             selected = preference == FilterPreference.PREFER,
             onClick = { onChange(if (preference == FilterPreference.PREFER) FilterPreference.NONE else FilterPreference.PREFER) },
             label = { Text("Prefer") },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = PreferLightGreen,
+                selectedLabelColor = AppBlack,
+            ),
         )
     }
 }

@@ -115,3 +115,13 @@ val InversePrimaryDark = AppWhite
 // RouteDetailScreen.
 val AvoidRed = Color(0xFFD21F3C)
 val PreferGreen = Color(0xFF2E7D32)
+
+// Lighter tints of the above, specifically for the selected-state FILL of the
+// Avoid/Prefer FilterChips on "Plan a trip" (GenerateRouteScreen.kt's
+// FilterRow) -- Corey wanted these chips' own selected fill to read as
+// light green/light red with black text, distinct from AvoidRed/PreferGreen
+// above (which are dark, paired with white or theme-driven text on the pill
+// badges elsewhere) -- a dark fill would need light text to stay readable,
+// not the black text asked for here.
+val AvoidLightRed = Color(0xFFEF9A9A)
+val PreferLightGreen = Color(0xFFA5D6A7)
