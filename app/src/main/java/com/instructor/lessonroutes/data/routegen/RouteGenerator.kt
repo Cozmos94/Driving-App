@@ -145,15 +145,21 @@ private const val AVG_SPEED_KMH = 40.0
 // accuracy lever, kept separate on purpose from MAX_UNROUTABLE_RETRIES below,
 // which is the one actually cut for speed this round.
 //
-// Bearings cut 3->2 -- Corey: "needs to work in a moderately fast manner of
-// time" after generation kept landing close to (or past) the 30s ceiling.
-// Bearings run in parallel with each other, so this doesn't shorten any one
-// bearing's own sequential chain -- it cuts total Geoapify request *volume*
-// per generation instead (fewer simultaneous + fewer overall calls), the
-// same lever already flagged as the next one to pull in this project's own
-// prior speed-tuning round ("the next lever is probably fewer bearings
-// still, down to 2").
-private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 180.0)
+// Bearings cut 3->2 (0/180) for speed, then REVERTED back to 3 (0/120/240)
+// -- confirmed live to be a real regression, not a neutral speed trade.
+// Routing has consistently finished in well under 5s in every live test this
+// session (as low as 399ms) regardless of bearing count -- it was never the
+// actual bottleneck (Overpass scoring was, see GenerateRouteScreen.kt). The
+// 2-bearing set also put both remaining bearings on the *same* axis (0/180),
+// which in constrained/coastal geography can mean both point toward the same
+// kind of unroutable terrain. Live-tested directly against Geoapify at
+// Corey's real 35km-radius Wollongong case: bearings 0, 120, and 180 all
+// failed ("No suitable edges near location"), but bearing 240 -- present in
+// the old 3-bearing set, dropped by the 2-bearing cut -- succeeded with a
+// real ~80min route. With only [0, 180], that generation had zero working
+// candidates; with [0, 120, 240] it has one. Restored to 3 for reliability;
+// there was no real speed to trade away in the first place.
+private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
 private const val MAX_RADIUS_ITERATIONS = 3
 // How many shrink+rotate retries an unroutable petal ring gets *within* one
 // outer duration-convergence iteration before that iteration gives up -- see
@@ -163,19 +169,20 @@ private const val MAX_RADIUS_ITERATIONS = 3
 // -- could exhaust the entire budget on retries alone, stranding `best` on
 // an early, badly-off result).
 //
-// Cut 3->2 for speed -- a real, confirmed contributor to slow generation in
-// tight geography (Wollongong's coastline+escarpment, already a documented
-// hard case for this generator): a Logcat trace showed a bearing rotated
-// past 616 degrees before giving up, meaning it had already burned through
-// well over 10 shrink+rotate retries across multiple outer iterations, each
-// one a real 6s-capped Geoapify call, on a petal ring that kept landing
-// somewhere unroutable. Worst case per bearing drops from
-// MAX_RADIUS_ITERATIONS x 3 x 6s = 54s to x2 x 6s = 36s -- still not
-// nothing, but a real cut, and this loop already backs off (shrinks the
-// radius, rotates the ring, narrows the spread) on every failed attempt, so
-// 2 tries at a *different* placement each time covers a similar amount of
-// the search space per outer iteration as 3 did.
-private const val MAX_UNROUTABLE_RETRIES = 2
+// Cut 3->2 for speed, then REVERTED back to 3 -- confirmed live (alongside
+// the CANDIDATE_BEARINGS_DEGREES revert above) that routing itself was never
+// the actual speed bottleneck (399ms-5s in every live test this session,
+// Overpass scoring was the real bottleneck). Fewer retries only means less
+// budget to rotate away from a bad direction or decay spokeCount down to the
+// simple direct-route fallback within MAX_RADIUS_ITERATIONS's outer budget --
+// a real reliability cost for a speed benefit that was never actually there.
+// Worst case per bearing goes back up from x2 x 6s = 36s to
+// MAX_RADIUS_ITERATIONS x 3 x 6s = 54s, but this loop already backs off
+// (shrinks the radius, rotates the ring 47 degrees, narrows the spread) on
+// every failed attempt, so the extra try is a genuinely different placement,
+// not wasted repetition -- and it's still bounded by the independent
+// ROUTING_GENERATION_TIMEOUT_MS ceiling regardless.
+private const val MAX_UNROUTABLE_RETRIES = 3
 // Absolute, not a percentage of target -- Corey: "lower the tolerance of
 // generated route times to be within 10 minutes of the time frame set by the
 // user". A ratio-based tolerance (the old 25%) meant a short trip's

@@ -1236,7 +1236,36 @@ private const val DURATION_WARNING_THRESHOLD_SECONDS = 10 * 60.0
 // the route will actually range -- a smaller box there means less data for
 // Overpass to search/return/parse, genuinely faster, not just a tighter
 // timeout hoping for the same query to finish quicker.
+//
+// CONFIRMED LIVE BUG: this cap was completely ineffective for any radius-set
+// trip above ~11km, because coverageRadiusDegrees's own floor (which bakes in
+// the *entire* maxRadiusKm as petalReachKm, e.g. the full 35km for a 35km-
+// radius trip, plus a 5km margin) always won the maxOf below once maxRadiusKm
+// alone exceeds this cap. A real Logcat trace on a 35km-radius trip showed
+// all 3 Overpass categories (roundabouts/merging lanes/highways) still empty
+// at the full 12s timeout each -- the actual query box was ~80km wide, not
+// the ~22km this cap implies, because the floor was the only thing setting
+// it. See OVERPASS_SCORING_RADIUS_HARD_CEILING_DEGREES below, which now
+// bounds the *final* value (after coverageRadiusDegrees) instead of just one
+// of the two inputs feeding into it -- this constant alone was never a real
+// ceiling on its own.
 private const val OVERPASS_SCORING_RADIUS_CAP_DEGREES = 0.1
+
+// A genuine hard ceiling on the box actually sent to Overpass, applied AFTER
+// coverageRadiusDegrees's floor -- unlike OVERPASS_SCORING_RADIUS_CAP_DEGREES
+// above (which the floor could always override), nothing overrides this one.
+// Trades completeness for a large-radius trip (roundabouts/merge lanes/major
+// roads far from `center` won't be scored) against actually getting an
+// answer back inside OVERPASS_SCORING_FETCH_TIMEOUT_MS -- an accepted
+// trade-off, since the alternative (confirmed live) is all 3 categories
+// coming back empty anyway once the box is too large to answer in time, which
+// is strictly worse than scoring against a smaller-but-real area.
+// Value chosen from this session's own live evidence: a ~65km-wide bbox
+// (~0.29deg radius) was confirmed to answer a highways query in ~9s, inside
+// the 12s budget -- 0.25deg (~55.6km-wide box) sits comfortably under that
+// already-proven-working size, keeping real margin against the timeout
+// rather than cutting it as close as the confirmed-working case did.
+private const val OVERPASS_SCORING_RADIUS_HARD_CEILING_DEGREES = 0.25
 
 // Equirectangular approximation, same one RouteGenerator.kt uses internally --
 // fine at this scale, just needed here to convert a km floor into degrees for
@@ -1302,9 +1331,12 @@ private suspend fun buildScoringData(
         timeoutMs: Long = SCORING_FETCH_TIMEOUT_MS,
         fetch: suspend () -> List<LatLng>,
     ): Deferred<Pair<List<LatLng>, String?>> = async { fetchBoundedSync(name, timeoutMs, fetch) }
-    val overpassRadiusDegrees = maxOf(
-        minOf(radiusDegrees, OVERPASS_SCORING_RADIUS_CAP_DEGREES),
-        coverageRadiusDegrees(center, start, end, maxRadiusKm),
+    val overpassRadiusDegrees = minOf(
+        maxOf(
+            minOf(radiusDegrees, OVERPASS_SCORING_RADIUS_CAP_DEGREES),
+            coverageRadiusDegrees(center, start, end, maxRadiusKm),
+        ),
+        OVERPASS_SCORING_RADIUS_HARD_CEILING_DEGREES,
     )
 
     val incidents: Deferred<Pair<List<LatLng>, String?>>? = if (filters.incidents != FilterPreference.NONE) {
