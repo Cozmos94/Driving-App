@@ -193,8 +193,8 @@ private const val MAX_SUPPORTING_POINTS = 1000
 // reconstruction fragile.
 private const val SHAPE_WAYPOINT_COUNT = 20
 
-// How far down the screen the followed "you are here" chevron sits during
-// CameraTrackingMode.FollowRouteDirection (Corey: "currently it's all the way
+// How far down the screen the followed "you are here" chevron sits while
+// tracking is active (Corey: "currently it's all the way
 // at the bottom... let's go 20% below center" -- i.e. ~70% down the screen,
 // not ~100%). TomTom doesn't expose a documented anchor/offset property for
 // this directly (confirmed against their own Dokka reference and guides --
@@ -668,7 +668,20 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
 
     LaunchedEffect(isNavigating) {
         if (isNavigating) {
-            mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
+            // Was CameraTrackingMode.FollowRouteDirection -- real, confirmed
+            // bug: Corey reported that physically turning around (a
+            // stationary 360, not driving) left the map facing the same way
+            // the whole time. Per TomTom's own Dokka reference,
+            // FollowRouteDirection points the camera toward "the upcoming
+            // instruction or part of the route" -- geometry-derived from
+            // progress along the *planned route*, not the device's own
+            // heading -- while FollowDirection tracks "current position
+            // heading" (the device/GPS bearing) directly, independent of
+            // route geometry. FollowDirection is the one that actually
+            // answers "which way am I facing right now", which is what a
+            // driver expects the map to always reflect, including while
+            // stopped or turning around before continuing.
+            mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowDirection
             // 45-degree perspective tilt (Corey's request) -- tracking mode
             // only governs position/bearing (see onMapPanningListener's own
             // comment below), tilt is a separate CameraOptions property that
@@ -859,12 +872,16 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
 
         // Recenter FAB, Google-Maps-style -- placed just above the ETA card
         // so it doesn't overlap it. Panning drops the camera out of
-        // FollowRouteDirection (see onMapPanningListener above); this is the
-        // way back in, matching every real turn-by-turn app's own affordance
-        // for "you panned away, tap here to resume following".
+        // FollowDirection (see onMapPanningListener above); this is the way
+        // back in, matching every real turn-by-turn app's own affordance for
+        // "you panned away, tap here to resume following". Kept in sync with
+        // the initial tracking mode set above (FollowDirection, not
+        // FollowRouteDirection) -- recentering should restore the same
+        // device-heading-following behaviour navigation started with, not a
+        // different mode.
         FloatingActionButton(
             onClick = {
-                mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
+                mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowDirection
             },
             modifier = Modifier.align(Alignment.BottomEnd).padding(
                 bottom = if (remainingTime != null || remainingDistance != null) 112.dp else 16.dp,
