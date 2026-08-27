@@ -1,7 +1,10 @@
 package com.instructor.lessonroutes.data.routegen
 
 import android.util.Log
+import com.instructor.lessonroutes.data.remote.ReachableArea
 import com.instructor.lessonroutes.data.remote.RoutedPath
+import com.instructor.lessonroutes.data.remote.contains
+import com.instructor.lessonroutes.data.remote.fetchReachableArea
 import com.instructor.lessonroutes.data.remote.fetchRoutedPaths
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -302,10 +305,28 @@ suspend fun generateCandidateRoutes(
             "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
                 "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways",
         )
+        // Fetched ONCE per generation (shared across every bearing, since
+        // they all place petals relative to the same `start`) rather than
+        // per-bearing or per-retry -- confirmed live this is a real, single
+        // ~2-4s call even at a 35km range. Everything downstream (spokePoints,
+        // via refineCandidateWithinRadius) uses this to place petals on
+        // ground actually reachable by road instead of guessing a raw
+        // bearing+radius point and finding out via a failed routing call --
+        // see fetchReachableArea's own doc comment for why. Null on any
+        // failure (network, timeout, bad response) -- refineCandidateWithinRadius
+        // falls back to the pre-existing blind-guess+shrink+rotate-retry
+        // behaviour in that case, so a stuck isoline fetch degrades this
+        // generation's reliability back to what it was before, not below it.
+        val reachableArea = fetchReachableArea(start, maxRadiusKm)
+        Log.d(
+            LOG_TAG,
+            "generateCandidateRoutes: isoline reachable-area fetch " +
+                if (reachableArea != null) "succeeded" else "failed/timed out -- falling back to blind bearing guesses",
+        )
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways)
+                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
                 }
             }
             .awaitAll()
@@ -516,6 +537,7 @@ private suspend fun refineCandidateWithinRadius(
     maxRadiusKm: Double,
     targetSeconds: Double,
     avoidHighways: Boolean,
+    reachableArea: ReachableArea?,
 ): GeneratedRoute? {
     val directLegKm = distanceKm(start, destination)
     val totalDistanceNeededKm = (AVG_SPEED_KMH * (targetSeconds / 3600.0) - directLegKm).coerceAtLeast(0.0)
@@ -586,7 +608,7 @@ private suspend fun refineCandidateWithinRadius(
         while (routed == null && attempt < MAX_UNROUTABLE_RETRIES) {
             val chain = buildList {
                 add(start)
-                addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm, spreadDegrees))
+                addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm, spreadDegrees, reachableArea))
                 add(destination)
             }
             routed = try {
@@ -683,12 +705,86 @@ private suspend fun refineCandidateWithinRadius(
  * network at all within [radiusKm], no matter how the ring is rotated -- evenly
  * spacing petals around the *full* circle then guarantees some of them land in
  * that dead zone. A narrower fan gives every petal a real chance to land within
- * whatever arc actually has roads. */
-private fun spokePoints(anchor: LatLng, seedBearing: Double, count: Int, radiusKm: Double, spreadDegrees: Double = 360.0): List<LatLng> {
+ * whatever arc actually has roads.
+ *
+ * [reachableArea], when supplied, replaces the blind "always place at exactly
+ * [radiusKm]" behaviour with a per-petal reachability check (see
+ * [maxReachableDistanceKm]): each petal is placed at whatever distance along
+ * its own bearing is actually confirmed reachable by road, capped at
+ * [radiusKm] and pulled in slightly for margin, instead of guessing
+ * [radiusKm] uniformly for every petal regardless of what's actually out
+ * there in that direction. Falls back to the old uniform-radius behaviour
+ * when null (e.g. the isoline fetch failed) -- this is a placement
+ * *enhancement*, the existing shrink+rotate retry loop in
+ * [refineCandidateWithinRadius] remains the fallback safety net either way. */
+private fun spokePoints(
+    anchor: LatLng,
+    seedBearing: Double,
+    count: Int,
+    radiusKm: Double,
+    spreadDegrees: Double = 360.0,
+    reachableArea: ReachableArea? = null,
+): List<LatLng> {
     if (count <= 0) return emptyList()
-    if (count == 1) return listOf(offset(anchor, seedBearing, radiusKm))
+    fun petalAt(bearingDegrees: Double): LatLng {
+        val effectiveRadiusKm = if (reachableArea != null) {
+            (reachableArea.maxReachableDistanceKm(anchor, bearingDegrees, radiusKm) * PETAL_REACHABILITY_MARGIN)
+                .coerceIn(MIN_PETAL_RADIUS_KM, radiusKm)
+        } else {
+            radiusKm
+        }
+        return offset(anchor, bearingDegrees, effectiveRadiusKm)
+    }
+    if (count == 1) return listOf(petalAt(seedBearing))
     val stepDegrees = spreadDegrees / count
-    return (0 until count).map { i -> offset(anchor, seedBearing + i * stepDegrees, radiusKm) }
+    return (0 until count).map { i -> petalAt(seedBearing + i * stepDegrees) }
+}
+
+// Pulled in from the isoline's own reachable boundary, not placed exactly on
+// it -- a petal placed right at the edge can still occasionally fail to route
+// (isoline precision, the ring decimation in GeoapifyIsolineApi.kt, or a real
+// road that ends just short of where the reachable polygon's edge falls).
+private const val PETAL_REACHABILITY_MARGIN = 0.9
+
+// Floor so a bearing that's almost entirely unreachable (e.g. it points
+// straight into a harbour right next to `start`) still gets a petal a short,
+// real distance out rather than one placed essentially on top of `start`
+// itself (which would add nothing to the route and waste a waypoint slot).
+private const val MIN_PETAL_RADIUS_KM = 1.0
+
+// How many binary-search steps maxReachableDistanceKm takes to home in on the
+// true reachable distance along a bearing -- 14 steps roughly halves a
+// starting range of tens of km down to sub-10m precision, far finer than
+// this needs (petal placement, not final route verification), while staying
+// cheap: each step is one ReachableArea.contains() call, itself O(ring size)
+// per ring (a few thousand points post-decimation, see
+// GeoapifyIsolineApi.kt's DECIMATION_STRIDE) -- trivial for a phone CPU even
+// at ~14 steps x a handful of rings.
+private const val REACHABILITY_SEARCH_STEPS = 14
+
+/** The largest distance (km, capped at [maxKm]) along [bearingDegrees] from
+ * [anchor] that's still inside this [ReachableArea] -- used by [spokePoints]
+ * to place a petal waypoint on ground actually reachable by road instead of
+ * guessing blind. Binary search assumes reachability is roughly monotonic
+ * outward along a single straight bearing (true for the overwhelming
+ * majority of real isochrones -- the reachable area grows outward from the
+ * query point; it doesn't typically have a reachable ring further out with
+ * an unreachable gap closer in along the exact same ray) -- an accepted
+ * approximation given this is choosing a *candidate* waypoint, not verifying
+ * a final route; the routing call afterward still confirms the result is
+ * real, and the existing retry logic in [refineCandidateWithinRadius] is
+ * still there for the rare case this approximation is wrong. Returns 0.0 if
+ * even a short distance out along this bearing isn't reachable at all. */
+private fun ReachableArea.maxReachableDistanceKm(anchor: LatLng, bearingDegrees: Double, maxKm: Double): Double {
+    if (maxKm <= 0.0) return 0.0
+    if (!contains(offset(anchor, bearingDegrees, maxKm * 0.02))) return 0.0
+    var lo = 0.0
+    var hi = maxKm
+    repeat(REACHABILITY_SEARCH_STEPS) {
+        val mid = (lo + hi) / 2.0
+        if (contains(offset(anchor, bearingDegrees, mid))) lo = mid else hi = mid
+    }
+    return lo
 }
 
 /** Duration-closeness is weighted heavily enough to dominate typical filter

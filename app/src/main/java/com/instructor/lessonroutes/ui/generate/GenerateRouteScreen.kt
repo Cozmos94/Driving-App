@@ -1157,7 +1157,20 @@ private const val OVERALL_GENERATION_TIMEOUT_MS = 30_000L
 // together). Bounding it here means a stuck routing attempt fails fast and
 // visibly on its own (the existing "routing service didn't return a route
 // in time" message) while leaving scoring however much of the 30s it needs.
-private const val ROUTING_GENERATION_TIMEOUT_MS = 20_000L
+//
+// Bumped 20s -> 25s: radius-confined generation now fetches Geoapify's
+// Isoline API once up front (RouteGenerator.kt's generateCandidateRoutes,
+// via GeoapifyIsolineApi.kt) to place petals on ground actually reachable by
+// road, instead of blind bearing+radius guessing -- confirmed live to
+// genuinely fix most "No suitable edges near location" failures at the root,
+// rather than just retrying around them, but it adds a real up-front call
+// (confirmed live: ~2-4s typically, up to a 12s client timeout worst case)
+// before the per-bearing routing loop even starts. 25s keeps real margin
+// under the 30s overall ceiling (routing and scoring run concurrently, not
+// summed -- scoring's own worst case is ~24s, see
+// OVERPASS_SCORING_FETCH_TIMEOUT_MS below) while accommodating that new
+// up-front cost.
+private const val ROUTING_GENERATION_TIMEOUT_MS = 25_000L
 
 private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 
