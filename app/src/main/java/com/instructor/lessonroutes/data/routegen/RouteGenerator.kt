@@ -300,10 +300,19 @@ suspend fun generateCandidateRoutes(
     val targetSeconds = targetDurationMinutes * 60.0
 
     val candidates = if (maxRadiusKm != null) {
+        // start/destination logged explicitly here -- confirmed needed live:
+        // the actual failing routing request is the full [start, petal(s),
+        // destination] chain, not just the petal in isolation. A petal that
+        // routes fine on its own (start->petal) can still make the *whole*
+        // chain fail if start->petal or petal->destination doesn't, and
+        // without these coordinates a live reproduction can only guess at
+        // where destination actually is instead of testing the exact
+        // failing request.
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
-                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways",
+                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways, " +
+                "start=${start.latitude},${start.longitude}, destination=${destination.latitude},${destination.longitude}",
         )
         // Fetched ONCE per generation (shared across every bearing, since
         // they all place petals relative to the same `start`) rather than
@@ -633,11 +642,20 @@ private suspend fun refineCandidateWithinRadius(
             routed = try {
                 fetchRoutedPaths(chain, avoidHighways = avoidHighways).firstOrNull()
             } catch (e: Exception) {
+                // Full chain logged verbatim -- confirmed needed live: the
+                // failing request is [start, petal(s), destination] as one
+                // call, and Geoapify's error never says which waypoint (or
+                // which segment between two of them) is the actual problem.
+                // Without the exact coordinates that were sent, a live
+                // reproduction can only guess at the petal in isolation,
+                // which doesn't necessarily reproduce a failure that's really
+                // about the destination or a segment, not the petal alone.
                 Log.e(
                     LOG_TAG,
                     "Radius-confined routing call failed (bearing=$currentBearingDegrees, iteration=$iteration, " +
                         "attempt=$attempt, spokes=$spokeCount, spokeRadius=${"%.2f".format(spokeRadiusKm)}km, " +
-                        "spread=${"%.0f".format(spreadDegrees)}deg)",
+                        "spread=${"%.0f".format(spreadDegrees)}deg, avoidHighways=$avoidHighways) " +
+                        "chain=${chain.joinToString(" | ") { "${it.latitude},${it.longitude}" }}",
                     e,
                 )
                 null
