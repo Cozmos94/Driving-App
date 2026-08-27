@@ -668,20 +668,25 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
 
     LaunchedEffect(isNavigating) {
         if (isNavigating) {
-            // Was CameraTrackingMode.FollowRouteDirection -- real, confirmed
-            // bug: Corey reported that physically turning around (a
-            // stationary 360, not driving) left the map facing the same way
-            // the whole time. Per TomTom's own Dokka reference,
-            // FollowRouteDirection points the camera toward "the upcoming
-            // instruction or part of the route" -- geometry-derived from
-            // progress along the *planned route*, not the device's own
-            // heading -- while FollowDirection tracks "current position
-            // heading" (the device/GPS bearing) directly, independent of
-            // route geometry. FollowDirection is the one that actually
-            // answers "which way am I facing right now", which is what a
-            // driver expects the map to always reflect, including while
-            // stopped or turning around before continuing.
-            mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowDirection
+            // Briefly switched to CameraTrackingMode.FollowDirection (tracks
+            // raw device compass/GPS heading) to fix a real, confirmed bug --
+            // FollowRouteDirection didn't respond to physically turning
+            // around while stationary. That trade turned out worse in
+            // practice: Corey's on-device driving test showed real jitter
+            // (the camera spun with no movement, overshot on a real turn,
+            // then stopped responding while still moving) -- a known,
+            // physical limitation of phone magnetometers, not a bug in this
+            // code: a car's metal body/engine/any magnetic phone mount
+            // genuinely disrupts compass-based heading, which TomTom's
+            // FollowDirection tracks directly with no GPS-course blending.
+            // Reverted back to FollowRouteDirection (progress-along-the-
+            // route-derived heading, effectively equivalent to GPS course)
+            // -- Corey's explicit choice, prioritizing smooth/reliable
+            // rotation while actually driving over responsiveness while
+            // stationary, matching how Google Maps/Waze/Apple Maps all
+            // behave in a moving vehicle (GPS course while driving, compass
+            // heading mostly ignored -- for this exact reason).
+            mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
             // 45-degree perspective tilt (Corey's request) -- tracking mode
             // only governs position/bearing (see onMapPanningListener's own
             // comment below), tilt is a separate CameraOptions property that
@@ -872,16 +877,24 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
 
         // Recenter FAB, Google-Maps-style -- placed just above the ETA card
         // so it doesn't overlap it. Panning drops the camera out of
-        // FollowDirection (see onMapPanningListener above); this is the way
-        // back in, matching every real turn-by-turn app's own affordance for
-        // "you panned away, tap here to resume following". Kept in sync with
-        // the initial tracking mode set above (FollowDirection, not
-        // FollowRouteDirection) -- recentering should restore the same
-        // device-heading-following behaviour navigation started with, not a
-        // different mode.
+        // FollowRouteDirection (see onMapPanningListener above); this is the
+        // way back in, matching every real turn-by-turn app's own affordance
+        // for "you panned away, tap here to resume following". Kept in sync
+        // with the initial tracking mode set above.
+        //
+        // Also restores the 45-degree tilt -- Corey: "I also would like it
+        // to always default to that 45 degree close angled view upon
+        // starting". A manual pinch/two-finger gesture can tilt the camera
+        // away from that (TomTomMap's own built-in gesture handling, not
+        // something this file drives), and previously nothing ever set it
+        // back -- only the very first navigation-start LaunchedEffect above
+        // ever applied it, once. Recenter is the natural place to restore
+        // it too, matching how it already restores tracking mode after a
+        // manual pan.
         FloatingActionButton(
             onClick = {
-                mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowDirection
+                mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
+                mapViewState.cameraState.animateCamera(CameraOptions(tilt = 45.0))
             },
             modifier = Modifier.align(Alignment.BottomEnd).padding(
                 bottom = if (remainingTime != null || remainingDistance != null) 112.dp else 16.dp,
