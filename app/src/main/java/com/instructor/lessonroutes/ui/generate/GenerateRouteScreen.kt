@@ -124,6 +124,16 @@ import java.time.format.FormatStyle
 
 private const val LOG_TAG = "GenerateRouteScreen"
 
+// See the location callback's own comment for the real bug this guards
+// against (a coarse first fix landing ~15km from the instructor's actual
+// position). 100m is generous relative to typical GPS accuracy (single-digit
+// to a few tens of meters in open sky, tens of meters under tree canopy) --
+// comfortably tight enough to reject a rough network/cell-tower-based
+// estimate (which self-reports a much larger accuracy radius, easily in the
+// hundreds to thousands of meters) while not being so strict that a normal,
+// slightly-noisy GPS fix gets rejected too.
+private const val MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS = 100f
+
 /**
  * Plans a route to actually go drive, rather than record/tap one by hand: pick a
  * destination (tap the map or search an address), a
@@ -165,7 +175,26 @@ fun GenerateRouteScreen(
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).build()
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                result.lastLocation?.let { currentLocation = LatLng(it.latitude, it.longitude) }
+                val location = result.lastLocation ?: return
+                // Confirmed live as a real, serious bug: the device's very
+                // first location fix after starting updates is often a rough
+                // network/cell-tower-based estimate (before GPS satellites
+                // lock in, which can take a while longer under tree canopy or
+                // indoors), NOT the high-accuracy GPS fix this request asked
+                // for -- accepting it unconditionally let a generation run
+                // with a `start` up to ~15km away from where the instructor
+                // actually was (a real report: routing failed outright,
+                // "No suitable edges near location" for every attempt,
+                // because the accepted fix landed in a roadless forest/
+                // escarpment area nowhere near the coastal address the trip
+                // was actually meant to start from). Discarding any fix
+                // worse than this threshold means a bad early fix just gets
+                // skipped -- currentLocation stays null (still shows the
+                // existing "Waiting for your location" message) until a
+                // genuinely usable one arrives, rather than locking in a
+                // wildly wrong starting point for the whole generation.
+                if (location.hasAccuracy() && location.accuracy > MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS) return
+                currentLocation = LatLng(location.latitude, location.longitude)
             }
         }
         fusedClient.startLocationUpdates(request, callback)
