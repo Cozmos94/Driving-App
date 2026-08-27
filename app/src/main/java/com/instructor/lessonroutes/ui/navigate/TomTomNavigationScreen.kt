@@ -211,6 +211,12 @@ private const val SHAPE_WAYPOINT_COUNT = 20
 // past "20% below center" once Corey checks it, this is the number to retune.
 private const val FOLLOW_MARKER_MIN_BOTTOM_INSET_FRACTION = 0.30f
 
+// See the progress listener's own comment (LiveNavigationMap) for the real
+// ANR this fixes -- only apply a new traveledMeters value (which drives a
+// full re-slice/redraw of the two-tone route line) once it's moved at least
+// this far since the last applied value.
+private const val TRAVELED_METERS_UPDATE_THRESHOLD = 15.0
+
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
 
 /** Equirectangular approximation -- fine at route-segment scale (tens of
@@ -243,10 +249,29 @@ private fun cumulativeDistancesMeters(points: List<LatLng>): List<Double> {
  * reached [traveledMeters] -- the split point between the "already driven"
  * and "still ahead" segments of the route line (Corey's request: shade them
  * differently). Falls back to the last index once [traveledMeters] exceeds
- * the whole route's length (e.g. right at arrival). */
+ * the whole route's length (e.g. right at arrival).
+ *
+ * Binary search, not a linear scan -- [cumulative] is monotonically
+ * non-decreasing by construction (running totals of non-negative segment
+ * lengths), so this is a real O(log n) lower-bound search, not just a
+ * micro-optimization. Matters for a long generated route: this is called on
+ * every progress update while navigating (see LiveNavigationMap's own
+ * DisposableEffect), and a route with thousands of points (a real generated
+ * radius-confined trip can have many, e.g. a long backtracking petal loop)
+ * made this genuinely expensive per call once combined with how often
+ * progress updates can fire -- a real, confirmed contributor to an ANR
+ * ("Input dispatching timed out", the app's own process pegged near 100%
+ * CPU for the preceding 29s) reported on this exact screen. See
+ * TRAVELED_METERS_UPDATE_THRESHOLD below for the other half of that fix. */
 private fun splitIndexFor(cumulative: List<Double>, traveledMeters: Double): Int {
-    val index = cumulative.indexOfFirst { it >= traveledMeters }
-    return if (index == -1) cumulative.lastIndex else index
+    if (cumulative.isEmpty()) return 0
+    var low = 0
+    var high = cumulative.lastIndex
+    while (low < high) {
+        val mid = (low + high) / 2
+        if (cumulative[mid] >= traveledMeters) high = mid else low = mid + 1
+    }
+    return if (cumulative[low] >= traveledMeters) low else cumulative.lastIndex
 }
 
 /** Reduces [this] to at most [maxPoints] by even-stride sampling, always
@@ -745,7 +770,25 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         val progressListener = ProgressUpdatedListener { progress ->
             remainingTime = progress.remainingTime
             remainingDistance = progress.remainingDistance
-            traveledMeters = progress.distanceAlongRoute.inMeters()
+            // Throttled separately from remainingTime/remainingDistance
+            // above (cheap plain-text updates, fine on every tick) --
+            // traveledMeters drives the two-tone route-line recompute
+            // (routeSplitIndex/traveledPoints/remainingPoints below), which
+            // re-slices route.points and rebuilds fresh Polyline data for
+            // the native map engine to redraw. Confirmed live as a real
+            // contributor to an ANR on this screen ("Input dispatching
+            // timed out", the app's own process pegged near 100% CPU,
+            // heavily kernel-time -- consistent with the native renderer's
+            // own draw calls) -- progress updates can fire multiple times a
+            // second, and redoing that work on every single one for a route
+            // with thousands of points adds up fast. A driver can't
+            // perceive the route line updating more often than every ~15m
+            // of travel anyway, so skipping updates smaller than that costs
+            // nothing visually while cutting the redraw rate dramatically.
+            val newTraveledMeters = progress.distanceAlongRoute.inMeters()
+            if (kotlin.math.abs(newTraveledMeters - traveledMeters) >= TRAVELED_METERS_UPDATE_THRESHOLD) {
+                traveledMeters = newTraveledMeters
+            }
         }
         val guidanceListener = object : GuidanceUpdatedListener {
             override fun onAnnouncementGenerated(announcement: GuidanceAnnouncement, shouldPlay: Boolean) {
