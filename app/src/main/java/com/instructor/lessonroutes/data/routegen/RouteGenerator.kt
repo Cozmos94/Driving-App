@@ -317,11 +317,30 @@ suspend fun generateCandidateRoutes(
         // falls back to the pre-existing blind-guess+shrink+rotate-retry
         // behaviour in that case, so a stuck isoline fetch degrades this
         // generation's reliability back to what it was before, not below it.
-        val reachableArea = fetchReachableArea(start, maxRadiusKm)
+        // Self-consistency check: `start` is geometrically guaranteed to be
+        // reachable from itself (it's literally the isoline's own query
+        // origin) -- if it comes back as NOT contained, something about the
+        // fetch/parse/decimation pipeline produced a corrupted shape, not a
+        // real geographic finding. Confirmed live as a real, serious bug:
+        // one generation had every single bearing fail at every retry, all
+        // the way down to an 8km search radius, immediately after this
+        // feature shipped -- a decimated hole ring (see ReachableArea's own
+        // doc comment) had almost certainly distorted enough to wrongly
+        // swallow ground right next to `start` itself. Rather than trust a
+        // reachable-area result that fails this basic sanity check, discard
+        // it entirely and fall back to the pre-existing blind-guess behaviour
+        // -- a known-working (if less precise) baseline beats acting on data
+        // that's already proven internally inconsistent.
+        val fetchedArea = fetchReachableArea(start, maxRadiusKm)
+        val reachableArea = fetchedArea?.takeIf { it.contains(start) }
         Log.d(
             LOG_TAG,
-            "generateCandidateRoutes: isoline reachable-area fetch " +
-                if (reachableArea != null) "succeeded" else "failed/timed out -- falling back to blind bearing guesses",
+            "generateCandidateRoutes: isoline reachable-area fetch " + when {
+                fetchedArea == null -> "failed/timed out -- falling back to blind bearing guesses"
+                reachableArea == null -> "succeeded but failed self-consistency check (start not contained in its own " +
+                    "isoline) -- discarding it, falling back to blind bearing guesses"
+                else -> "succeeded"
+            },
         )
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->

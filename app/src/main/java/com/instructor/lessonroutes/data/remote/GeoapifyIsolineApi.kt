@@ -17,10 +17,11 @@ private const val ISOLINE_URL = "https://api.geoapify.com/v1/isoline"
 /** A drive-reachable area boundary (Geoapify's Isoline API, `type=distance`,
  * confirmed live) -- [exteriorRings] are the outer boundary/boundaries of what's
  * actually reachable by road within the queried range (normally just one, but a
- * genuinely disconnected road network could produce more than one blob),
- * [holeRings] are real gaps *inside* that boundary that aren't reachable (a
- * harbour, a park with no through-road, etc.) -- both matter for an accurate
- * "is this point really reachable" test, not just the outer shape alone.
+ * genuinely disconnected road network could produce more than one blob).
+ * [holeRings] are real gaps *inside* that boundary that genuinely aren't
+ * reachable (a harbour, a park with no through-road, etc.) -- parsed and kept
+ * for completeness, but deliberately NOT used by [contains] any more (see its
+ * own doc comment for the real, confirmed bug that caused).
  *
  * Ring points are decimated (see [DECIMATION_STRIDE]) -- Geoapify's raw response
  * carries far more precision than placing a handful of petal waypoints needs
@@ -153,9 +154,22 @@ private fun isInsideRing(point: LatLng, ring: List<LatLng>): Boolean {
     return inside
 }
 
-/** True if [point] is genuinely drive-reachable per this [ReachableArea] --
- * inside at least one exterior boundary and not inside any hole within it. */
-fun ReachableArea.contains(point: LatLng): Boolean {
-    if (exteriorRings.none { isInsideRing(point, it) }) return false
-    return holeRings.none { isInsideRing(point, it) }
-}
+/** True if [point] is inside at least one exterior boundary of this
+ * [ReachableArea].
+ *
+ * Deliberately does NOT also exclude points inside [holeRings] -- confirmed
+ * live to be a real, serious bug: a fixed-stride decimation pass (see
+ * [DECIMATION_STRIDE]) applied to a hole ring near the query origin can
+ * distort that hole's shape enough to wrongly swallow genuinely-reachable
+ * ground, including (confirmed live, a real generation that failed every
+ * single petal placement even after shrinking all the way down to 8km) the
+ * *start point itself* -- geometrically guaranteed to be reachable, since
+ * it's literally where the isoline was queried from. Excluding holes trades
+ * a small precision cost (a petal can occasionally land inside a genuinely
+ * unreachable enclave, e.g. a park with no through-road) for eliminating an
+ * entire class of false-negative that poisoned every bearing at once --
+ * asymmetric risk, since a false "reachable" here is still caught by the
+ * real routing call afterward (and the existing shrink+rotate retry loop in
+ * RouteGenerator.kt), while a false "unreachable" silently discards
+ * perfectly good ground with nothing left to catch it. */
+fun ReachableArea.contains(point: LatLng): Boolean = exteriorRings.any { isInsideRing(point, it) }
