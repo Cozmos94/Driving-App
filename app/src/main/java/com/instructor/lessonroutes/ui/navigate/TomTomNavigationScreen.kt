@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -122,6 +123,7 @@ import com.tomtom.sdk.routing.options.calculation.ReconstructionMode
 import com.tomtom.sdk.routing.route.Route
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import org.maplibre.android.geometry.LatLng
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -582,6 +584,11 @@ fun TomTomNavigationScreen(route: GeneratedRoute, onExit: () -> Unit) {
 @Composable
 private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavigating: Boolean) {
     val styleMode = if (isSystemInDarkTheme()) StyleMode.DARK else StyleMode.MAIN
+    // animateCamera is a suspend function (confirmed by a real compile
+    // error when it was called directly from the Recenter FAB's plain,
+    // non-suspend onClick below) -- needs a real coroutine to launch into,
+    // same reasoning as any other suspend call from a Compose click handler.
+    val coroutineScope = rememberCoroutineScope()
 
     val mapDisplayInfrastructure = remember {
         MapDisplayInfrastructure(sdkContext = TomTomSdk.sdkContext) {
@@ -894,7 +901,7 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         FloatingActionButton(
             onClick = {
                 mapViewState.cameraState.trackingMode = CameraTrackingMode.FollowRouteDirection
-                mapViewState.cameraState.animateCamera(CameraOptions(tilt = 45.0))
+                coroutineScope.launch { mapViewState.cameraState.animateCamera(CameraOptions(tilt = 45.0)) }
             },
             modifier = Modifier.align(Alignment.BottomEnd).padding(
                 bottom = if (remainingTime != null || remainingDistance != null) 112.dp else 16.dp,
