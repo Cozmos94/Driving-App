@@ -299,6 +299,22 @@ suspend fun generateCandidateRoutes(
 ): List<GeneratedRoute> = coroutineScope {
     val targetSeconds = targetDurationMinutes * 60.0
 
+    // Confirmed live as a real, root-level failure mode, distinct from every
+    // other bug found this session: `start` can be close to a real road
+    // (within ~1km, confirmed live -- not remote/roadless like this
+    // generator's own established hard cases) yet Geoapify's routing API
+    // still rejects it outright with "No suitable edges near location" if
+    // it's not close enough to snap cleanly onto that road. Because `start`
+    // is the one waypoint every single candidate chain shares, this fails
+    // *every* bearing at once regardless of how well petals are placed --
+    // no amount of petal-placement cleverness (isoline-informed or not)
+    // matters if the chain's own first point can't route anywhere. A live
+    // device's GPS fix can easily drift this far off a road (inside a
+    // building, a wide road's far lane, dense tree cover), so this isn't
+    // just a test-environment quirk. See snapStartToRoutableGround's own
+    // doc comment for the fix.
+    val effectiveStart = snapStartToRoutableGround(start, destination, avoidHighways)
+
     val candidates = if (maxRadiusKm != null) {
         // start/destination logged explicitly here -- confirmed needed live:
         // the actual failing routing request is the full [start, petal(s),
@@ -312,7 +328,8 @@ suspend fun generateCandidateRoutes(
             LOG_TAG,
             "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
                 "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways, " +
-                "start=${start.latitude},${start.longitude}, destination=${destination.latitude},${destination.longitude}",
+                "start=${effectiveStart.latitude},${effectiveStart.longitude} (originally ${start.latitude},${start.longitude}), " +
+                "destination=${destination.latitude},${destination.longitude}",
         )
         // Fetched ONCE per generation (shared across every bearing, since
         // they all place petals relative to the same `start`) rather than
@@ -340,8 +357,8 @@ suspend fun generateCandidateRoutes(
         // it entirely and fall back to the pre-existing blind-guess behaviour
         // -- a known-working (if less precise) baseline beats acting on data
         // that's already proven internally inconsistent.
-        val fetchedArea = fetchReachableArea(start, maxRadiusKm)
-        val reachableArea = fetchedArea?.takeIf { it.contains(start) }
+        val fetchedArea = fetchReachableArea(effectiveStart, maxRadiusKm)
+        val reachableArea = fetchedArea?.takeIf { it.contains(effectiveStart) }
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: isoline reachable-area fetch " + when {
@@ -354,13 +371,13 @@ suspend fun generateCandidateRoutes(
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidateWithinRadius(start, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
+                    refineCandidateWithinRadius(effectiveStart, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
                 }
             }
             .awaitAll()
             .filterNotNull()
     } else {
-        val base = midpoint(start, destination)
+        val base = midpoint(effectiveStart, destination)
         val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
         Log.d(
             LOG_TAG,
@@ -371,7 +388,7 @@ suspend fun generateCandidateRoutes(
         CANDIDATE_BEARINGS_DEGREES
             .map { bearing ->
                 async {
-                    refineCandidate(start, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
+                    refineCandidate(effectiveStart, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
                 }
             }
             .awaitAll()
@@ -380,6 +397,90 @@ suspend fun generateCandidateRoutes(
 
     Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size} candidate route(s) from ${CANDIDATE_BEARINGS_DEGREES.size} bearings")
     candidates
+}
+
+// Tried in increasing order -- confirmed live that a real failing case had
+// usable road within 1km in most directions, so two tiers already covers
+// the realistic "close but not quite on a road" case (GPS drift, a
+// manually-set test location) well. Deliberately kept to just two rather
+// than searching further out: each tier costs up to a full
+// GeoapifyRoutingApi client timeout (6s) in the worst case (every candidate
+// in that ring fails), and this whole check sits inside
+// ROUTING_GENERATION_TIMEOUT_MS's budget in GenerateRouteScreen.kt -- a
+// third tier would risk this check alone consuming most of that budget
+// before the real bearing search even starts. Past ~1km, "not quite on a
+// road" is blurring into "genuinely remote" anyway (this generator's own
+// established hard case, e.g. deep in a national park), where expanding the
+// search only delays an outcome that's going to fail regardless.
+private val START_SNAP_DISTANCE_TIERS_KM = listOf(0.3, 1.0)
+
+// A full compass rose per tier -- cheap to check (each is a single 2-point
+// routing call, not a full chain) and run concurrently, so testing all 8
+// costs about the same wall-clock time as testing 1.
+private val START_SNAP_BEARINGS_DEGREES = listOf(0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)
+
+/**
+ * Confirms [start] is close enough to a real road for Geoapify's routing API
+ * to actually accept it, returning a nearby point that does route if it
+ * isn't -- see [generateCandidateRoutes]'s own comment on why this matters:
+ * `start` is shared by every candidate chain, so a `start` that can't route
+ * at all fails the *entire* generation regardless of how well anything else
+ * (petal placement, bearing choice) is done.
+ *
+ * Tries [start] unmodified first -- a single cheap check, and the common
+ * case (a real GPS fix or address search result is normally already close
+ * enough) pays no further cost. Only on failure does it search outward in
+ * [START_SNAP_DISTANCE_TIERS_KM] rings, testing all
+ * [START_SNAP_BEARINGS_DEGREES] at each ring concurrently and stopping at
+ * the first ring where anything succeeds (returns whichever candidate in
+ * that ring is closest to the original [start], to distort the intended
+ * starting point as little as possible). Falls back to the original,
+ * unmodified [start] if nothing within the full search succeeds -- the
+ * existing per-bearing failure handling downstream surfaces that the same
+ * way it always has, so this is a pure reliability improvement, never a
+ * regression: it can only turn a would-be total failure into a success, not
+ * the reverse.
+ */
+private suspend fun snapStartToRoutableGround(start: LatLng, destination: LatLng, avoidHighways: Boolean): LatLng = coroutineScope {
+    suspend fun isRoutable(point: LatLng): Boolean =
+        try {
+            fetchRoutedPaths(listOf(point, destination), avoidHighways = avoidHighways).firstOrNull() != null
+        } catch (e: Exception) {
+            false
+        }
+
+    if (isRoutable(start)) return@coroutineScope start
+
+    Log.w(
+        LOG_TAG,
+        "snapStartToRoutableGround: start=${start.latitude},${start.longitude} isn't directly routable to " +
+            "destination=${destination.latitude},${destination.longitude} -- searching nearby for usable ground",
+    )
+    for (distanceKm in START_SNAP_DISTANCE_TIERS_KM) {
+        val ringResults = START_SNAP_BEARINGS_DEGREES.map { bearing ->
+            val candidate = offset(start, bearing, distanceKm)
+            async { candidate.takeIf { isRoutable(it) } }
+        }.awaitAll().filterNotNull()
+        if (ringResults.isNotEmpty()) {
+            // All candidates in a ring are equidistant from `start` by
+            // construction, so any of them is an equally good pick -- just
+            // take the first that succeeded.
+            val chosen = ringResults.first()
+            Log.w(
+                LOG_TAG,
+                "snapStartToRoutableGround: found routable ground ${"%.2f".format(distanceKm)}km from the original " +
+                    "start (${chosen.latitude},${chosen.longitude}) -- using it instead",
+            )
+            return@coroutineScope chosen
+        }
+    }
+    Log.e(
+        LOG_TAG,
+        "snapStartToRoutableGround: no routable ground found within " +
+            "${"%.2f".format(START_SNAP_DISTANCE_TIERS_KM.last())}km of start -- falling back to the original, " +
+            "unmodified start (generation will likely fail the same way it would have without this check)",
+    )
+    start
 }
 
 /** Picks whichever of [candidates] best matches [filters] (proximity-scored
