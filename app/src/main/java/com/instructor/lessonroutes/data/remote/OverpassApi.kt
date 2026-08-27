@@ -19,6 +19,24 @@ import kotlin.math.hypot
 // instance, which needs an explicit Accept header or it 406s (also confirmed
 // live) -- see [overpassHeaders].
 private const val OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+
+// Real, live-confirmed fallback for the roundabouts/merge-lane-proxy/major-
+// roads scoring queries (fetchRoundabouts/fetchWaysByHighwayTag) -- Corey
+// report: "couldn't load data for: Roundabouts, Merging lanes, Highways" on
+// a physical device (not the emulator-location saga this session also
+// worked through). This server is shared/free/rate-limited, so an outright
+// outage or a slow patch is a real, recurring risk, not hypothetical -- see
+// this project's own history of overpass.kumi.systems going down entirely.
+// Tested live against the real APIs, same real query, same real area:
+// overpass-api.de (primary, above) and overpass.openstreetmap.fr both
+// answered successfully with identical result counts in ~1.6-2.4s;
+// overpass.kumi.systems, overpass.openstreetmap.ru, and maps.mail.ru's
+// overpass endpoint were all unreachable or timed out in that same test --
+// not included here since they'd add latency without adding real
+// redundancy. See [postToOverpass], which tries these in order.
+private const val OVERPASS_FALLBACK_URL = "https://overpass.openstreetmap.fr/api/interpreter"
+private val OVERPASS_URLS = listOf(OVERPASS_URL, OVERPASS_FALLBACK_URL)
+
 private const val SEARCH_RADIUS_METERS = 50
 
 /** Overpass's main instance 406s a request with no Accept header at all --
@@ -54,42 +72,78 @@ private val client = OkHttpClient.Builder()
 // afterward within one overall deadline) waiting far longer than makes sense.
 // Shares the same connection pool as `client` via newBuilder().
 //
-// Was 30s -- a real, confirmed bug, not a tuning nitpick. GenerateRouteScreen.kt
-// wraps every call through this client in its own withTimeoutOrNull, which
-// looks like it should cut a slow request short well before this client's
-// own timeout ever matters -- but `execute()` is a blocking call, and Kotlin
-// coroutine cancellation is cooperative: it cannot interrupt a thread already
-// blocked inside a synchronous OkHttp call, only stop it from being
-// *started*. This project already hit this exact lesson once before (the
-// address-search race condition, see GeoapifyGeocodingApi.kt/
-// GenerateRouteScreen.kt's own history) and it recurred here because this
-// client's own timeout, not the app-level wrapper around it, is the thing
-// that actually bounds a call already in flight. Confirmed live via Corey's
-// own Logcat instrumentation: routing finished in 2.2s, but the whole 30s
-// generation ceiling still fired -- scoring never got the chance to report
-// back at all, meaning some Overpass call was genuinely blocked for the
-// *entire* remaining budget, consistent with this 30s client-level timeout
-// being the real ceiling in effect.
+// This used to be a single client (`fastClient`) shared across every mirror
+// attempt, tuned through a real, confirmed saga worth keeping the history
+// of: was 30s -- GenerateRouteScreen.kt wraps every call through this client
+// in its own withTimeoutOrNull, which looks like it should cut a slow
+// request short well before this client's own timeout ever matters -- but
+// `execute()` is a blocking call, and Kotlin coroutine cancellation is
+// cooperative: it cannot interrupt a thread already blocked inside a
+// synchronous OkHttp call, only stop it from being *started*. This project
+// already hit this exact lesson once before (the address-search race
+// condition, see GeoapifyGeocodingApi.kt/GenerateRouteScreen.kt's own
+// history) and it recurred here because this client's own timeout, not the
+// app-level wrapper around it, is the thing that actually bounds a call
+// already in flight. Confirmed live via Corey's own Logcat instrumentation:
+// routing finished in 2.2s, but the whole 30s generation ceiling still
+// fired -- scoring never got the chance to report back at all, meaning some
+// Overpass call was genuinely blocked for the *entire* remaining budget,
+// consistent with this 30s client-level timeout being the real ceiling in
+// effect. First fix tightened this to 8s to make *some* real ceiling apply
+// -- but that overcorrected: Corey's next report was "couldn't load data
+// for: Roundabouts" (the filter had no data to work with at all) with the
+// *only* filter set being Roundabouts->Avoid, no pairing involved. This
+// project's own earlier session already measured this exact kind of
+// scoring query taking 9-12+ seconds to genuinely succeed at this screen's
+// real search radius -- 8s was cutting off a request that would have come
+// back fine, just a little slower, not one that was actually hung. Raised
+// to 12s to fix that.
 //
-// First fix tightened this to 8s to make *some* real ceiling apply -- but
-// that overcorrected: Corey's next report was "couldn't load data for:
-// Roundabouts" (the filter had no data to work with at all) with the *only*
-// filter set being Roundabouts->Avoid, no pairing involved. This project's
-// own earlier session already measured this exact kind of scoring query
-// taking 9-12+ seconds to genuinely succeed at this screen's real search
-// radius -- 8s was cutting off a request that would have come back fine,
-// just a little slower, not one that was actually hung. Raised to 12s
-// (matching GenerateRouteScreen.kt's own OVERPASS_SCORING_FETCH_TIMEOUT_MS,
-// now that this client's timeout is confirmed to be the one that actually
-// matters) -- with routing finishing in ~2s and a paired-concurrency worst
-// case of two such rounds, that's ~24s for scoring, still comfortably under
-// the 30s overall ceiling with real margin, while giving a genuinely slow
-// (not hung) query enough room to actually succeed.
-private val fastClient = client.newBuilder()
-    .callTimeout(12, TimeUnit.SECONDS)
-    .readTimeout(12, TimeUnit.SECONDS)
-    .connectTimeout(8, TimeUnit.SECONDS)
+// Once a second mirror was added (see OVERPASS_URLS/postToOverpass, another
+// real Corey report: "couldn't load data for: Roundabouts, Merging lanes,
+// Highways" on a physical device), that single 12s client became the wrong
+// shape: trying two mirrors in sequence with a 12s timeout *each* could
+// consume up to 24s for one category alone, but GenerateRouteScreen.kt's
+// own OVERPASS_SCORING_FETCH_TIMEOUT_MS only budgets 12s total for that
+// whole category (both mirrors included) -- a slow-but-not-hung primary
+// would then consume the entire budget before the fallback mirror ever got
+// a chance to answer, defeating the point of having one. Split into a
+// shorter per-mirror timeout instead so both mirrors fit inside that same
+// 12s outer budget with margin.
+private val mirrorClient = client.newBuilder()
+    .callTimeout(6, TimeUnit.SECONDS)
+    .readTimeout(6, TimeUnit.SECONDS)
+    .connectTimeout(4, TimeUnit.SECONDS)
     .build()
+
+/** POSTs [query] to each of [OVERPASS_URLS] in turn, returning the first
+ * mirror's successful response body -- see that list's own doc comment for
+ * why these two specifically. Throws the last mirror's own failure if every
+ * mirror fails, matching how a single-mirror failure already surfaced here
+ * before this fallback existed (an [IOException] for a bad HTTP status, or
+ * whatever the underlying network exception was). */
+private fun postToOverpass(query: String): String {
+    var lastError: Exception? = null
+    for (url in OVERPASS_URLS) {
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .post(FormBody.Builder().add("data", query).build())
+                .overpassHeaders()
+                .build()
+            mirrorClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    lastError = IOException("Overpass request failed: HTTP ${response.code} ($url)")
+                    return@use
+                }
+                return response.body?.string() ?: ""
+            }
+        } catch (e: Exception) {
+            lastError = e
+        }
+    }
+    throw lastError ?: IOException("Overpass request failed: no mirrors configured")
+}
 
 /**
  * Matches each point to the nearest real OpenStreetMap road ("way") within
@@ -200,19 +254,12 @@ private suspend fun fetchWaysByHighwayTag(
             out geom;
         """.trimIndent()
 
-        val request = Request.Builder()
-            .url(OVERPASS_URL)
-            .post(FormBody.Builder().add("data", query).build())
-            .overpassHeaders()
-            .build()
-
-        fastClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Overpass $label request failed: HTTP ${response.code}")
-            }
-            val body = response.body?.string() ?: return@use emptyList()
-            parseWays(body)
+        val body = try {
+            postToOverpass(query)
+        } catch (e: Exception) {
+            throw IOException("Overpass $label request failed (tried ${OVERPASS_URLS.size} mirrors)", e)
         }
+        parseWays(body)
     }
 }
 
@@ -239,19 +286,12 @@ suspend fun fetchRoundabouts(center: LatLng, radiusDegrees: Double = QUIET_ROADS
             out geom;
         """.trimIndent()
 
-        val request = Request.Builder()
-            .url(OVERPASS_URL)
-            .post(FormBody.Builder().add("data", query).build())
-            .overpassHeaders()
-            .build()
-
-        fastClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Overpass roundabouts request failed: HTTP ${response.code}")
-            }
-            val body = response.body?.string() ?: return@use emptyList()
-            parseWaysAndNodes(body)
+        val body = try {
+            postToOverpass(query)
+        } catch (e: Exception) {
+            throw IOException("Overpass roundabouts request failed (tried ${OVERPASS_URLS.size} mirrors)", e)
         }
+        parseWaysAndNodes(body)
     }
 }
 
