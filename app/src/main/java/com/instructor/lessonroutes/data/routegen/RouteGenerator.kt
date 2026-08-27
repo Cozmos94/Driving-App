@@ -368,14 +368,16 @@ suspend fun generateCandidateRoutes(
                 else -> "succeeded"
             },
         )
-        CANDIDATE_BEARINGS_DEGREES
-            .map { bearing ->
-                async {
-                    refineCandidateWithinRadius(effectiveStart, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
+        retryIfEmpty {
+            CANDIDATE_BEARINGS_DEGREES
+                .map { bearing ->
+                    async {
+                        refineCandidateWithinRadius(effectiveStart, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
+                    }
                 }
-            }
-            .awaitAll()
-            .filterNotNull()
+                .awaitAll()
+                .filterNotNull()
+        }
     } else {
         val base = midpoint(effectiveStart, destination)
         val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
@@ -385,18 +387,57 @@ suspend fun generateCandidateRoutes(
                 "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
                 "avoidHighways=$avoidHighways",
         )
-        CANDIDATE_BEARINGS_DEGREES
-            .map { bearing ->
-                async {
-                    refineCandidate(effectiveStart, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
+        retryIfEmpty {
+            CANDIDATE_BEARINGS_DEGREES
+                .map { bearing ->
+                    async {
+                        refineCandidate(effectiveStart, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
+                    }
                 }
-            }
-            .awaitAll()
-            .filterNotNull()
+                .awaitAll()
+                .filterNotNull()
+        }
     }
 
     Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size} candidate route(s) from ${CANDIDATE_BEARINGS_DEGREES.size} bearings")
     candidates
+}
+
+// Real, observed failure mode, distinct from a genuine geographic dead-end:
+// Corey reported "the routing service didn't return a route in time" on a
+// physical device, then confirmed it was "fixed after regenerating" -- a
+// plain manual retry, with absolutely nothing else changed, succeeded. That
+// points to a transient hiccup (a brief Geoapify slowdown, a momentary rate
+// limit, one dropped connection) rather than a real "no route exists here"
+// case, which wouldn't be fixed by simply asking again. Rather than make
+// the instructor do that by hand every time, retry the whole bearing search
+// automatically once if it comes back completely empty.
+private const val MAX_GENERATION_ATTEMPTS = 2
+
+/** Runs [block] (the whole per-bearing candidate search for one generation
+ * mode) up to [MAX_GENERATION_ATTEMPTS] times, stopping as soon as one
+ * attempt returns anything. This can only ever help, never hurt: a
+ * genuinely-failing case (no route exists, or every attempt times out)
+ * still ends up empty after the same amount of real work it would have
+ * done anyway, just spread across up to two attempts instead of one -- it
+ * doesn't add its own extra timeout or retry budget beyond what each
+ * attempt already has, so a slow first attempt that already consumed the
+ * caller's own ROUTING_GENERATION_TIMEOUT_MS budget (GenerateRouteScreen.kt)
+ * simply won't get a second attempt in before that outer deadline fires,
+ * same as before this existed. */
+private suspend fun retryIfEmpty(block: suspend () -> List<GeneratedRoute>): List<GeneratedRoute> {
+    var result = block()
+    var attempt = 1
+    while (result.isEmpty() && attempt < MAX_GENERATION_ATTEMPTS) {
+        Log.w(
+            LOG_TAG,
+            "generateCandidateRoutes: attempt $attempt returned zero candidates -- retrying once " +
+                "(confirmed live that a transient failure like this can succeed on a plain retry)",
+        )
+        attempt++
+        result = block()
+    }
+    return result
 }
 
 // Tried in increasing order -- confirmed live that a real failing case had
