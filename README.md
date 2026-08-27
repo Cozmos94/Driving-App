@@ -173,7 +173,15 @@ still describes the OSRM-era design/history; that's superseded by
 [GeoapifyRoutingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyRoutingApi.kt)/
 [GeoapifyGeocodingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyGeocodingApi.kt)
 now, most notably: Highways→Avoid is a *real* routing constraint via
-`avoid=highways`, confirmed live, not just soft proximity scoring). Sign up free
+`avoid=highways`, confirmed live, not just soft proximity scoring).
+[GeoapifyRoutingApi.kt](app/src/main/java/com/instructor/lessonroutes/data/remote/GeoapifyRoutingApi.kt)'s
+`fetchRoutedPaths()` now falls back to OSRM's free public routing server if a
+call looks like a genuine Geoapify outage (network error/timeout/5xx) rather
+than a plain "no route for this waypoint" rejection (a 4xx, which Geoapify
+gets right and OSRM would very likely fail identically for) -- real,
+live-verified redundancy for a Geoapify outage specifically, not a general
+substitute for it (the OSRM fallback can't honor `avoid=highways`/`tolls` as
+a hard constraint, only RouteGenerator's own soft scoring). Sign up free
 at [geoapify.com](https://www.geoapify.com) (no card required; free tier is
 100k+ requests/month, far beyond this app's real usage), generate an API key,
 then add it to `local.properties` (git-ignored, never committed):
@@ -326,11 +334,17 @@ now scored the same way as everything else:
   the *entire* overall budget by itself and cancel every bearing's work,
   including ones that had already succeeded (confirmed as a real cause of
   "times out with no route at all" when these filters were used).
-- **High traffic roads** reuses the same TfNSW Traffic Volume Counts API data
-  already used for the live map's high-traffic-volume overlay
-  (`fetchHighVolumeRoads` — needs a TfNSW API key) — just the station points,
-  not their Overpass-matched road geometry, since the geometry is only needed
-  for on-map rendering, not 40m-proximity scoring.
+- **High traffic roads** reads `HighVolumeRoadEntity` rows from Room
+  (seeded once from the bundled `assets/high_volume_roads.json` snapshot) --
+  just the station points, not their Overpass-matched road geometry, since
+  the geometry is only needed for on-map rendering, not 40m-proximity
+  scoring. **No longer a live TfNSW call and no longer needs a TfNSW API key**
+  -- was `fetchHighVolumeRoads` (a live call) on every use, switched to a
+  bundled snapshot because the underlying TfNSW data is itself a *yearly
+  summary* (changes at most once a year), a real live-dependency risk for
+  data that barely changes. `TrafficVolumeApi.fetchHighVolumeRoads()` is kept
+  around purely as the tool for periodically regenerating that snapshot --
+  see `HighVolumeRoadEntity`'s own doc comment for the refresh steps.
 - **Roundabouts** (`OverpassApi.fetchRoundabouts` — `junction=roundabout` ways +
   `highway=mini_roundabout` nodes) and **major roads** (`fetchMajorRoads`, for
   Highways scoring, both directions) are solid free OSM data via Overpass.
@@ -338,10 +352,11 @@ now scored the same way as everything else:
   `trunk_link` ways) are an approximation, not real merge-lane data: OSM has no
   dedicated merge-lane tag, doesn't distinguish an on-ramp from an off-ramp in one
   field, and doesn't tag ordinary lane-merges on non-highway roads at all.
-- Hazards/construction zones/high traffic roads reuse the existing
-  `fetchOpenIncidents`/`fetchOpenRoadworks`/`fetchHighVolumeRoads` (all need a
-  TfNSW API key — those filters have no effect without one); school
-  zones/speed cameras reuse the existing seeded Room tables.
+- Hazards/construction zones reuse the existing `fetchOpenIncidents`/
+  `fetchOpenRoadworks` (need a TfNSW API key — those two filters have no
+  effect without one); school zones/speed cameras/high traffic roads all
+  reuse the existing seeded Room tables (no key needed for any of those
+  three).
 
 A generated route can be saved (writes a normal `Route` — same schema as a
 tapped/recorded one, `timestamp = null` on every point so it also gets

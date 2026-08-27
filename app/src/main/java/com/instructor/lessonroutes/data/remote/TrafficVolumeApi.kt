@@ -48,6 +48,17 @@ private val client = OkHttpClient.Builder()
  *
  * Dedupes to one row (the most recent year) per counting station -- the raw query
  * returns the same station multiple times across different years' summaries.
+ *
+ * **Not called at app runtime any more** -- the live map and trip generator both
+ * read `HighVolumeRoadEntity` rows from Room instead (seeded once from the
+ * bundled `assets/high_volume_roads.json` snapshot, see that entity's own doc
+ * comment for why this changed). This function is kept purely as the tool for
+ * periodically regenerating that snapshot: re-run it with a real
+ * `TFNSW_API_KEY`, write the (deduped) result out to
+ * `app/src/main/assets/high_volume_roads.json` matching that file's existing
+ * `{id, roadName, latitude, longitude, year, trafficCount}` shape, bump the
+ * Room schema's data version if you want old installs to pick up the refresh
+ * (StaticDataSeeder only seeds once, when the table is empty), and rebuild.
  */
 suspend fun fetchHighVolumeRoads(apiKey: String): List<HighVolumeRoad> {
     if (apiKey.isBlank()) return emptyList()

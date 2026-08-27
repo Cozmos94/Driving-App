@@ -30,13 +30,13 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.instructor.lessonroutes.BuildConfig
+import com.instructor.lessonroutes.data.HighVolumeRoadDao
 import com.instructor.lessonroutes.data.SchoolZone
 import com.instructor.lessonroutes.data.SchoolZoneDao
 import com.instructor.lessonroutes.data.SpeedCamera
 import com.instructor.lessonroutes.data.SpeedCameraDao
 import com.instructor.lessonroutes.data.remote.Hazard
 import com.instructor.lessonroutes.data.remote.HighVolumeRoad
-import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchQuietRoads
@@ -61,6 +61,7 @@ private const val LOG_TAG = "LiveMapScreen"
 fun LiveMapScreen(
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
+    highVolumeRoadDao: HighVolumeRoadDao,
     onPlanRouteClick: () -> Unit,
     onGenerateTripClick: () -> Unit,
 ) {
@@ -119,16 +120,19 @@ fun LiveMapScreen(
         }
     }
 
+    // Was a live TfNSW call on every load -- now reads the bundled/seeded
+    // high_volume_roads snapshot from Room instead (see HighVolumeRoadEntity's
+    // own doc comment for why), so this no longer needs TFNSW_API_KEY at all
+    // and can't fail from a network/API outage. The Overpass road-matching
+    // step below is unrelated to that change and still genuinely live/best-
+    // effort -- it's what turns each station point into painted road
+    // geometry, not something that makes sense to bundle (a matched shape
+    // could vary if OSM's own road data changes).
     LaunchedEffect(Unit) {
-        if (BuildConfig.TFNSW_API_KEY.isBlank()) return@LaunchedEffect
         try {
-            val stations = fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY)
-            // Snap each station to its real road shape via OSM/Overpass so the
-            // overlay paints the actual road, not just a marker at the point. Best
-            // effort: if Overpass fails (it's a shared free community service and
-            // can be slow/unavailable), fall back to plain points rather than
-            // losing the traffic-volume data entirely -- RouteMapView renders
-            // those as the old strip-icon marker instead of a painted line.
+            val stations = highVolumeRoadDao.getAll().map {
+                HighVolumeRoad(it.stationKey, it.roadName, it.latitude, it.longitude, it.year, it.trafficCount)
+            }
             val geometryByIndex = try {
                 matchRoadGeometry(stations.map { LatLng(it.latitude, it.longitude) })
             } catch (e: Exception) {
@@ -139,7 +143,7 @@ fun LiveMapScreen(
                 station.copy(geometry = geometryByIndex[index])
             }
         } catch (e: Exception) {
-            Log.e(LOG_TAG, "Failed to fetch high-volume roads", e)
+            Log.e(LOG_TAG, "Failed to load high-volume roads", e)
             networkError = "Couldn't load traffic volume data right now"
         }
     }

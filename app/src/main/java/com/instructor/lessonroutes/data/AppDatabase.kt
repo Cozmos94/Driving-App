@@ -15,8 +15,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SpeedCamera::class,
         StudentProfile::class,
         RouteStudentProfileCrossRef::class,
+        HighVolumeRoadEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,6 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun schoolZoneDao(): SchoolZoneDao
     abstract fun speedCameraDao(): SpeedCameraDao
     abstract fun studentProfileDao(): StudentProfileDao
+    abstract fun highVolumeRoadDao(): HighVolumeRoadDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -85,6 +87,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 -> v6: adds `high_volume_roads`, seeded from a bundled snapshot
+         * instead of a live TfNSW call on every use (see
+         * HighVolumeRoadEntity's own doc comment for why) -- purely
+         * additive, same low-risk shape as the earlier migrations here. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `high_volume_roads` (
+                        `stationKey` INTEGER PRIMARY KEY NOT NULL,
+                        `roadName` TEXT NOT NULL,
+                        `latitude` REAL NOT NULL,
+                        `longitude` REAL NOT NULL,
+                        `year` INTEGER NOT NULL,
+                        `trafficCount` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -92,7 +115,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "lessonroutes.db",
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { instance = it }
             }

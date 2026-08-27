@@ -1,6 +1,7 @@
 package com.instructor.lessonroutes.data.remote
 
 import android.net.Uri
+import android.util.Log
 import com.instructor.lessonroutes.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,6 +12,7 @@ import org.maplibre.android.geometry.LatLng
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+private const val LOG_TAG = "GeoapifyRoutingApi"
 private const val ROUTING_URL = "https://api.geoapify.com/v1/routing"
 
 // Same reasoning as the OSRM client this replaced: callTimeout bounds the
@@ -25,6 +27,19 @@ private val client = OkHttpClient.Builder()
     .readTimeout(6, TimeUnit.SECONDS)
     .build()
 
+// Genuine, live-verified fallback for a Geoapify *outage* specifically --
+// see fetchRoutedPaths' own doc comment for why this is scoped narrowly
+// (not used for every routing failure, only ones that look like Geoapify's
+// own infrastructure having trouble). Confirmed live: a real 3-waypoint
+// chain near Wollongong routed successfully via OSRM's public demo server
+// in ~2-3s with a dense (900+ point), usable geometry.
+private const val OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
+private val osrmClient = OkHttpClient.Builder()
+    .callTimeout(8, TimeUnit.SECONDS)
+    .connectTimeout(6, TimeUnit.SECONDS)
+    .readTimeout(8, TimeUnit.SECONDS)
+    .build()
+
 /** One routed path between a set of waypoints, in order: the actual road-following
  * geometry plus Geoapify's own estimated duration/distance for it -- the duration
  * is what the timed-route generator (RouteGenerator.kt) uses as feedback to
@@ -36,6 +51,17 @@ data class RoutedPath(
     val durationSeconds: Double,
     val distanceMeters: Double,
 )
+
+/** Thrown specifically for a genuine routing rejection *from Geoapify itself*
+ * -- a 4xx response, almost always meaning "this waypoint/combination
+ * genuinely has no route" (Geoapify's own real example: "No suitable edges
+ * near location") -- as opposed to every other kind of failure (a network
+ * error, a timeout, a 5xx, a malformed/empty response), which look like
+ * Geoapify's own infrastructure having trouble rather than a real answer
+ * about the waypoints themselves. [fetchRoutedPaths] only falls back to OSRM
+ * for the latter category -- see its own doc comment for why a 4xx
+ * specifically should never trigger that fallback. */
+private class GeoapifyRoutingRejected(message: String) : IOException(message)
 
 /**
  * Routes through [waypoints] in order via Geoapify's Routing API (needs
@@ -76,6 +102,23 @@ data class RoutedPath(
  * it. Roundabouts->Avoid is back to plain soft proximity scoring
  * (RouteGenerator.kt's scoreRoute) everywhere, same as every other category
  * except Highways.
+ *
+ * **Real, live-verified fallback added for redundancy (Corey: "we need more
+ * redundancies")**: on any failure that looks like Geoapify's own
+ * infrastructure having trouble -- a network error, a timeout, a 5xx, an
+ * empty/malformed response -- this now retries the same request against
+ * OSRM's free public routing server instead of failing the whole
+ * generation outright. Deliberately does NOT fall back for a plain 4xx
+ * rejection (`GeoapifyRoutingRejected`): that's Geoapify correctly saying
+ * "no route exists for this waypoint", and OSRM would almost certainly
+ * reject the same waypoint for the same real geographic reason -- trying it
+ * would just add latency to a failure RouteGenerator.kt's own shrink+rotate
+ * retry logic already expects and handles as part of normal operation, not
+ * an outage. The fallback route can't honor [avoidHighways]/[avoidTolls] as
+ * a hard constraint (OSRM's public server rejects the equivalent `exclude`
+ * parameter outright, confirmed live and already documented above) -- it
+ * degrades to the same soft-scoring-only behaviour Highways had before
+ * Geoapify was adopted, only while this fallback is actually in use.
  */
 suspend fun fetchRoutedPaths(
     waypoints: List<LatLng>,
@@ -84,6 +127,21 @@ suspend fun fetchRoutedPaths(
 ): List<RoutedPath> {
     require(waypoints.size >= 2) { "Need at least 2 waypoints to route between" }
 
+    return try {
+        fetchGeoapifyRoutedPaths(waypoints, avoidHighways, avoidTolls)
+    } catch (e: GeoapifyRoutingRejected) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Geoapify routing looks like an outage (not a plain rejection) -- falling back to OSRM", e)
+        fetchOsrmRoutedPaths(waypoints, avoidHighways, avoidTolls)
+    }
+}
+
+private suspend fun fetchGeoapifyRoutedPaths(
+    waypoints: List<LatLng>,
+    avoidHighways: Boolean,
+    avoidTolls: Boolean,
+): List<RoutedPath> {
     return withContext(Dispatchers.IO) {
         val waypointsParam = waypoints.joinToString("|") { "${it.latitude},${it.longitude}" }
         val avoidValues = listOfNotNull("highways".takeIf { avoidHighways }, "tolls".takeIf { avoidTolls })
@@ -102,7 +160,14 @@ suspend fun fetchRoutedPaths(
             // without this.
             if (!response.isSuccessful) {
                 val errorBody = response.body?.string()
-                throw IOException("Geoapify routing request failed: HTTP ${response.code} -- $errorBody")
+                val message = "Geoapify routing request failed: HTTP ${response.code} -- $errorBody"
+                // 4xx = Geoapify's own real answer about these waypoints (see
+                // GeoapifyRoutingRejected's own doc comment) -- 5xx or
+                // anything else falls through to the plain IOException below,
+                // which fetchRoutedPaths treats as outage-like and falls back
+                // to OSRM for.
+                if (response.code in 400..499) throw GeoapifyRoutingRejected(message)
+                throw IOException(message)
             }
             response.body?.string() ?: throw IOException("Geoapify routing returned an empty body")
         }
@@ -131,6 +196,60 @@ suspend fun fetchRoutedPaths(
             RoutedPath(
                 points = points,
                 durationSeconds = route.getDouble("time"),
+                distanceMeters = route.getDouble("distance"),
+            )
+        }
+    }
+}
+
+/** OSRM's public demo server, used only as [fetchRoutedPaths]' own outage
+ * fallback -- see its doc comment. Response shape confirmed live: GeoJSON
+ * geometry (`routes[].geometry.coordinates`, `[lon, lat]` pairs, the reverse
+ * of LatLng's own order) plus plain `duration`/`distance` fields, no
+ * `legs[]` indexing needed for this app's purposes (same simplification
+ * Geoapify's own parsing above already makes). */
+private suspend fun fetchOsrmRoutedPaths(
+    waypoints: List<LatLng>,
+    avoidHighways: Boolean,
+    avoidTolls: Boolean,
+): List<RoutedPath> {
+    if (avoidHighways || avoidTolls) {
+        Log.w(
+            LOG_TAG,
+            "OSRM fallback can't honor avoid=highways/tolls as a hard constraint (its public server " +
+                "rejects the equivalent exclude parameter outright, confirmed live) -- this fallback route " +
+                "may include a highway/toll road that would normally have been excluded; RouteGenerator's " +
+                "own soft proximity scoring is the only thing still steering away from it while this " +
+                "fallback is in use.",
+        )
+    }
+    return withContext(Dispatchers.IO) {
+        val coordinates = waypoints.joinToString(";") { "${it.longitude},${it.latitude}" }
+        val url = "$OSRM_URL/${Uri.encode(coordinates, ";,.-")}?overview=full&geometries=geojson"
+        val request = Request.Builder().url(url).build()
+
+        val body = osrmClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("OSRM fallback routing request failed: HTTP ${response.code}")
+            }
+            response.body?.string() ?: throw IOException("OSRM fallback routing returned an empty body")
+        }
+
+        val json = JSONObject(body)
+        if (json.optString("code") != "Ok") {
+            throw IOException("OSRM fallback routing returned no route: ${json.optString("message", body)}")
+        }
+        val routes = json.getJSONArray("routes")
+        List(routes.length()) { i ->
+            val route = routes.getJSONObject(i)
+            val coords = route.getJSONObject("geometry").getJSONArray("coordinates")
+            val points = (0 until coords.length()).map { j ->
+                val pair = coords.getJSONArray(j)
+                LatLng(pair.getDouble(1), pair.getDouble(0))
+            }
+            RoutedPath(
+                points = points,
+                durationSeconds = route.getDouble("duration"),
                 distanceMeters = route.getDouble("distance"),
             )
         }

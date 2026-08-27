@@ -65,6 +65,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.instructor.lessonroutes.BuildConfig
+import com.instructor.lessonroutes.data.HighVolumeRoadDao
 import com.instructor.lessonroutes.data.Route
 import com.instructor.lessonroutes.data.RouteDao
 import com.instructor.lessonroutes.data.RoutePoint
@@ -73,7 +74,6 @@ import com.instructor.lessonroutes.data.SpeedCameraDao
 import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.data.remote.GeocodeResult
-import com.instructor.lessonroutes.data.remote.fetchHighVolumeRoads
 import com.instructor.lessonroutes.data.remote.fetchMajorRoads
 import com.instructor.lessonroutes.data.remote.fetchMergeLaneProxies
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
@@ -151,6 +151,7 @@ fun GenerateRouteScreen(
     profileDao: StudentProfileDao,
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
+    highVolumeRoadDao: HighVolumeRoadDao,
     preselectedProfileId: Long?,
     onBack: () -> Unit,
     onSaved: () -> Unit,
@@ -402,7 +403,7 @@ fun GenerateRouteScreen(
                     // response (a heavily loaded shared community server) isn't
                     // just added on top of however long the routing API's candidates take.
                     val scoringDataDeferred = async {
-                        buildScoringData(filters, center, radiusDegrees, start, end, selectedRadiusKm, schoolZoneDao, speedCameraDao)
+                        buildScoringData(filters, center, radiusDegrees, start, end, selectedRadiusKm, schoolZoneDao, speedCameraDao, highVolumeRoadDao)
                     }
                     val candidatesDeferred = async {
                         withTimeoutOrNull(ROUTING_GENERATION_TIMEOUT_MS) {
@@ -847,8 +848,11 @@ fun GenerateRouteScreen(
                 FilterLegendLine("Avoid", "try not to include it in the generated route at all.")
                 FilterLegendLine("Prefer", "try to include more of it (e.g. more school zones, or more roundabouts).")
                 if (BuildConfig.TFNSW_API_KEY.isBlank()) {
+                    // "High traffic" deliberately not named here any more --
+                    // it's a bundled/seeded snapshot now (HighVolumeRoadEntity),
+                    // not a live TfNSW call, so it works with no key at all.
                     Text(
-                        "Hazards/construction/high traffic filters need a Transport for NSW API key " +
+                        "Hazards/construction filters need a Transport for NSW API key " +
                             "(see Settings) — they'll have no effect without one.",
                     )
                 }
@@ -1359,6 +1363,7 @@ private suspend fun buildScoringData(
     maxRadiusKm: Double?,
     schoolZoneDao: SchoolZoneDao,
     speedCameraDao: SpeedCameraDao,
+    highVolumeRoadDao: HighVolumeRoadDao,
 ): ScoringFetchResult = coroutineScope {
     // Explicit Deferred<Pair<List<LatLng>, String?>>? type on every val below --
     // Kotlin's type inference can't reliably unify `if (cond) async { ... } else
@@ -1461,8 +1466,11 @@ private suspend fun buildScoringData(
         }
         Triple(roundaboutsResult, mergeLanesResult, majorRoadsResult)
     }
+    // Was a live TfNSW call (see HighVolumeRoadEntity's own doc comment for
+    // why that switched to a bundled/seeded Room snapshot) -- reads the same
+    // way School zones/Speed cameras above already do.
     val highTraffic: Deferred<Pair<List<LatLng>, String?>>? = if (filters.highTraffic != FilterPreference.NONE) {
-        fetchBounded("High traffic roads") { fetchHighVolumeRoads(BuildConfig.TFNSW_API_KEY).map { LatLng(it.latitude, it.longitude) } }
+        fetchBounded("High traffic roads") { highVolumeRoadDao.getAll().map { LatLng(it.latitude, it.longitude) } }
     } else {
         null
     }

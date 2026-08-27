@@ -42,6 +42,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
     val dao = remember { database.routeDao() }
     val schoolZoneDao = remember { database.schoolZoneDao() }
     val speedCameraDao = remember { database.speedCameraDao() }
+    val highVolumeRoadDao = remember { database.highVolumeRoadDao() }
     val profileDao = remember { database.studentProfileDao() }
 
     // Which student profile (if any) the route list is scoped to -- set by the
@@ -74,6 +75,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
             LiveMapScreen(
                 schoolZoneDao = schoolZoneDao,
                 speedCameraDao = speedCameraDao,
+                highVolumeRoadDao = highVolumeRoadDao,
                 onPlanRouteClick = { navController.navigate(STUDENT_PROFILES) },
                 onGenerateTripClick = { navController.navigate(ROUTE_GENERATE) },
             )
@@ -142,6 +144,7 @@ fun AppNavHost(database: AppDatabase, modifier: Modifier = Modifier) {
                 profileDao = profileDao,
                 schoolZoneDao = schoolZoneDao,
                 speedCameraDao = speedCameraDao,
+                highVolumeRoadDao = highVolumeRoadDao,
                 // Pre-selects whichever student profile the route list (if
                 // any) was scoped to when "+" was tapped -- same pattern
                 // CreateRouteScreen already used. Also reachable from the live
