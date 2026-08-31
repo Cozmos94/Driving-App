@@ -649,16 +649,16 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     // native-crash comments) shared-MapLibre-state path.
     LaunchedEffect(Unit) {
         try {
-            // TEMPORARY DIAGNOSTIC SWAP, DRIVING -> BROWSING: loadStyle itself
-            // already confirmed to succeed (see the try/catch's own comment
-            // above), so the open question now is whether the renderer
-            // genuinely can't paint ANY TomTom Orbis Maps style's layers
-            // (roads/buildings/land), or whether it's specific to DRIVING.
-            // Revert to StandardStyles.TomTomOrbisMaps.DRIVING (the correct
-            // style for an actual driving/nav screen) once this comparison
-            // test has an answer either way -- BROWSING is not the right
-            // long-term choice here regardless of outcome.
-            mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.BROWSING)
+            // Diagnostic DRIVING -> BROWSING swap (now reverted) confirmed
+            // this isn't a DRIVING-specific issue: BROWSING rendered exactly
+            // as blank, even though loadStyle succeeded for both. The
+            // renderer isn't painting ANY TomTom Orbis Maps style's layers --
+            // see this file's own native-crash comments (same MapRenderer
+            // subsystem) for the leading theory (this app's own separate
+            // MapLibre instances, used on every other screen, likely
+            // corrupting/stalling TomTom's embedded MapLibre renderer via
+            // shared native process-wide state).
+            mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.DRIVING)
             Log.d(LOG_TAG, "loadStyle: succeeded")
         } catch (e: CancellationException) {
             throw e // normal coroutine cancellation (e.g. screen closed mid-load), not a real failure
