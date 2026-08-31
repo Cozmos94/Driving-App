@@ -4,7 +4,79 @@ Orientation for a fresh Claude Code session picking this project up. Read
 `spec.md` (original design) and `README.md` (build status, data sources, known
 gotchas) for full detail — this file is the short version plus pointers.
 
-## Most recent: TomTom SDK reverted to 2.4.2 — 2.5.3 broke map rendering entirely
+## ⚠️ REAL DEADLINE: TomTom ends support for SDK 2.4.x on 2 Nov 2026
+
+Corey got a direct email from TomTom (31-Aug-2026): NavSDK 2.5 is now live,
+"premium map display" becomes the default renderer, and support for 2.4 and
+earlier ends 2 Nov 2026. This project is currently pinned to `tomtomSdk =
+"2.4.2"` (see the section right below this one) specifically *because* 2.5.3
+broke map rendering — so this deadline forces a real decision, not an
+optional cleanup.
+
+**What's been checked against TomTom's own docs (all fetched live, not
+guessed)**:
+- 2.5.3 is still the current latest release as of 31-Aug-2026 (checked their
+  Artifactory directly) — no newer patch exists yet that might already fix
+  our issue.
+- "Premium map display as default" is a one-line dependency swap
+  (`map-display-compose-standard` → `map-display-compose-premium`) — not
+  itself the cause of our bug, since we hit the blank-map bug while still on
+  `-standard`.
+- TomTom's own 2.5.3 release notes mention fixing "a map view that was never
+  cleanly shut down could leave the map permanently blank" and "early map
+  readiness timing in applications showing multiple map views" — suspiciously
+  close to our exact symptom, meaning this is a known *category* of bug
+  they're actively iterating on in this version line, but evidently their fix
+  doesn't (yet) cover whatever variant we're hitting.
+- The "step-by-step migration guide" Corey found is the **v1→v2** migration
+  (`1.26.x` → `2.x`) — a transition this project already completed long ago.
+  It says nothing about 2.4→2.5, the standard/premium display swap, blank
+  maps, or MapLibre. Don't re-read it expecting new information here.
+- No public TomTom doc addresses apps that *also* depend directly on
+  `org.maplibre.gl:android-sdk` (this project's own situation, see below).
+
+**Investigation done, root cause still NOT conclusively identified**: the two
+competing theories are (a) a build-time native-library packaging conflict —
+this project's own direct `org.maplibre.gl:android-sdk` dependency and
+TomTom's bundled copy might produce a same-named `libmaplibre.so` that
+Gradle's packaging merges/picks between regardless of runtime screen order —
+vs. (b) TomTom's 2.5.x renderer is simply broken in this environment on its
+own, unrelated to this project's MapLibre dependency at all. The screen-order
+isolation test (see below) doesn't distinguish these, since our own
+dependency is still present in the build either way. The test that WOULD
+distinguish them — a throwaway branch stripping the `org.maplibre.gl:
+android-sdk` dependency entirely (stubbing the screens that need it just
+enough to compile) and checking whether TomTom's map then renders in true
+isolation — was scoped and proposed but **explicitly not carried out**
+(Corey: "let's just avoid the update for now and continue").
+
+**If/when this gets picked back up, a full removal of this project's own
+MapLibre dependency (rebuilding every map screen on TomTom's own map instead)
+was scoped and is a real option, but a large one** — `RouteMapView.kt` is 918
+lines used across 6 files (`LiveMapScreen`, `GenerateRouteScreen`,
+`CreateRouteScreen`, `FollowScreen`, `RouteDetailScreen`, and
+`TomTomNavigationScreen`'s own `FallbackLiveMap`), and implements hazard/
+school-zone/speed-camera/traffic-volume/quiet-road overlays via low-level
+MapLibre vector-tile APIs (`GeoJsonSource` + `SymbolLayer`/`LineLayer`/
+`CircleLayer`/`FillLayer`, with runtime-drawn bitmap icons) plus a draggable
+radius-circle overlay and tap-hit-testing against all of it. TomTom's Compose
+map API only exposes higher-level composables (`Marker`, `Markers`,
+`Polyline`, `CurrentLocationMarker`, `Traffic`) — no confirmed equivalent to
+raw GeoJSON/custom-layer sources at the Compose layer (TomTom's *non*-Compose
+`StyleController`/`Layer` classes might support it — genuinely unconfirmed,
+would need real investigation before committing to this path). Also worth
+noting: `RouteMapView` is currently the fallback shown *inside*
+`TomTomNavigationScreen.kt` itself when TomTom's own navigation fails to
+start — removing it entirely removes that safety net too, an important
+wrinkle for whoever picks this up.
+
+**Current decision (Corey, 31-Aug-2026): defer.** Stay on `tomtomSdk =
+"2.4.2"`, do not re-bump and do not start the MapLibre-removal work, until
+this is explicitly revisited — ideally well before the 2 Nov 2026 deadline,
+since neither path (waiting for a TomTom patch, or the full removal rewrite)
+is fast to execute from a standing start that close to the date.
+
+## Most recent (superseded by the deadline section above): TomTom SDK reverted to 2.4.2 — 2.5.3 broke map rendering entirely
 
 This supersedes the "TomTom Navigation SDK integration" section's own
 version-bump narrative below (still worth reading for the crash-diagnosis
