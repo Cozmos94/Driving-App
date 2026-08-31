@@ -649,7 +649,16 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     // native-crash comments) shared-MapLibre-state path.
     LaunchedEffect(Unit) {
         try {
-            mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.DRIVING)
+            // TEMPORARY DIAGNOSTIC SWAP, DRIVING -> BROWSING: loadStyle itself
+            // already confirmed to succeed (see the try/catch's own comment
+            // above), so the open question now is whether the renderer
+            // genuinely can't paint ANY TomTom Orbis Maps style's layers
+            // (roads/buildings/land), or whether it's specific to DRIVING.
+            // Revert to StandardStyles.TomTomOrbisMaps.DRIVING (the correct
+            // style for an actual driving/nav screen) once this comparison
+            // test has an answer either way -- BROWSING is not the right
+            // long-term choice here regardless of outcome.
+            mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.BROWSING)
             Log.d(LOG_TAG, "loadStyle: succeeded")
         } catch (e: CancellationException) {
             throw e // normal coroutine cancellation (e.g. screen closed mid-load), not a real failure
