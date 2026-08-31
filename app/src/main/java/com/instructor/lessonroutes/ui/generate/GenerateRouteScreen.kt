@@ -95,7 +95,7 @@ import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
 import com.instructor.lessonroutes.data.routegen.pickBestRoute
-import com.instructor.lessonroutes.data.routegen.rerouteAvoidingHitRoundabouts
+import com.instructor.lessonroutes.data.routegen.rerouteAvoidingHits
 import com.instructor.lessonroutes.data.routegen.routeExceedsRadius
 import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
@@ -380,6 +380,7 @@ fun GenerateRouteScreen(
         // no scoring data to work with at all.
         var emptyScoringCategories: List<String> = emptyList()
         var candidateCount = 0
+        var unavoidableCategories: List<String> = emptyList()
         scope.launch {
             try {
                 // Hard ceiling so a slow/stuck network call (Geoapify routing,
@@ -466,36 +467,36 @@ fun GenerateRouteScreen(
                         "pickBestRoute finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
                             "picked=${picked != null}",
                     )
-                    // One opportunistic extra step, only for the already-picked
-                    // winner: if Roundabouts->Avoid is set, try re-routing around
-                    // just the specific roundabouts *this* route hits, instead of
-                    // leaving it to the soft proximity-score tie-break above,
-                    // which (with only 3 candidate shapes total and duration-
-                    // closeness weighted 10x heavier than any filter hit) rarely
-                    // actually changes which candidate wins. Safe-by-construction,
-                    // not a guess -- see
-                    // rerouteAvoidingHitRoundabouts' own doc comment for why this
-                    // narrower approach doesn't risk the 0-minute/no-route
-                    // regression the broader "avoid every roundabout up front"
-                    // version caused when it was tried before.
-                    picked?.let {
-                        // Dispatchers.Default -- same reasoning as pickBestRoute
-                        // above: this does its own nested proximity-comparison
-                        // loop (findNearbyHits) before ever making a network
-                        // call, and this whole block otherwise runs on whatever
-                        // dispatcher scope.launch itself is on (Main, via
-                        // rememberCoroutineScope) -- not blocking the UI thread
-                        // here isn't optional, it's the exact same real ANR risk
-                        // pickBestRoute's own comment already documents.
-                        withContext(Dispatchers.Default) {
-                            rerouteAvoidingHitRoundabouts(
-                                it,
+                    // One extra step, only for the already-picked winner: for
+                    // every category set to Avoid, actually steer away from the
+                    // specific points *this* route hits, rather than leaving it
+                    // to the soft proximity-score tie-break above (with only 3
+                    // candidate shapes total and duration-closeness weighted 10x
+                    // heavier than any filter hit, that tie-break rarely
+                    // actually changes which candidate wins). Avoid is treated
+                    // as a real priority here -- see rerouteAvoidingHits' own
+                    // doc comment for Corey's explicit correction on this point
+                    // ("that is the whole point of this app") and why an
+                    // earlier, duration-tolerant version of this step wasn't
+                    // enough. Dispatchers.Default for the same reason
+                    // pickBestRoute above needs it: this does its own nested
+                    // proximity-comparison loop before ever making a network
+                    // call, on whatever dispatcher scope.launch itself runs on
+                    // (Main) -- the same real ANR risk pickBestRoute's own
+                    // comment already documents.
+                    if (picked != null) {
+                        val outcome = withContext(Dispatchers.Default) {
+                            rerouteAvoidingHits(
+                                picked,
                                 filters,
                                 scoringResult.data,
-                                targetSeconds = minutes * 60.0,
                                 avoidHighways = filters.highways == FilterPreference.AVOID,
                             )
                         }
+                        unavoidableCategories = outcome.unavoidableCategories
+                        outcome.route
+                    } else {
+                        null
                     }
                 }
                 Log.d(
@@ -568,6 +569,19 @@ fun GenerateRouteScreen(
                             add(
                                 "Couldn't load data for: ${emptyScoringCategories.joinToString(", ")} — " +
                                     "those filters had no effect on this route. Try regenerating.",
+                            )
+                        }
+                        // Honest, not a "best effort, don't worry about it" gloss
+                        // over -- rerouteAvoidingHits already tried every real
+                        // option it had (see its own doc comment) before giving
+                        // up on any of these; a non-empty list here means no
+                        // route to the destination could steer clear of it, not
+                        // that the app didn't try hard enough.
+                        if (unavoidableCategories.isNotEmpty()) {
+                            add(
+                                "Couldn't fully avoid: ${unavoidableCategories.joinToString(", ")} — no " +
+                                    "alternative route to your destination was possible. Try regenerating, " +
+                                    "or a closer/different destination.",
                             )
                         }
                         // pickBestRoute only ever falls back to an over-radius

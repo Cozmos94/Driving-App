@@ -103,7 +103,7 @@ private class GeoapifyRoutingRejected(message: String) : IOException(message)
  * area unroutable rather than just detouring around it.
  *
  * [avoidLocations] (new, narrower use) is safe against that same failure
- * mode by construction: RouteGenerator.kt's `rerouteAvoidingHitRoundabouts`
+ * mode by construction: RouteGenerator.kt's `rerouteAvoidingHits`
  * only ever calls this with points from a route that's *already* known to
  * route successfully, and only ever adopts the result if it also succeeds
  * with a still-reasonable duration -- any failure or a materially worse
