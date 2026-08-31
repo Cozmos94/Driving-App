@@ -272,11 +272,16 @@ private fun RouteRow(
     onLongClick: () -> Unit,
 ) {
     ListItem(
-        headlineContent = { Text(route.name) },
+        headlineContent = { Text(route.name, color = AppBlack) },
         supportingContent = {
             val tagPrefix = route.tag?.let { "$it • " } ?: ""
             val profileSuffix = if (profiles.isNotEmpty()) " • ${profiles.joinToString(", ") { it.name }}" else ""
-            Text("$tagPrefix${formatDate(route.dateCreated)}$profileSuffix")
+            // Explicit black -- same reason as "Obstacles covered" above:
+            // ListItem's own default supportingContent color is a muted
+            // grey (Material3's own onSurfaceVariant role), hard to read
+            // against this screen's white background (Corey: "update the
+            // grey text to black on the saved routes").
+            Text("$tagPrefix${formatDate(route.dateCreated)}$profileSuffix", color = AppBlack)
         },
         modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
     )

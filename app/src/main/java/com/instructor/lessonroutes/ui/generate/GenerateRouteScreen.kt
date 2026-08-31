@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -712,8 +713,23 @@ fun GenerateRouteScreen(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        OutlinedButton(onClick = { onGenerateClick() }, modifier = Modifier.weight(1f), enabled = !isGenerating) {
-                            Text("Regenerate")
+                        // Weights (1.3 / 1 / 0.8, not equal thirds) plus
+                        // tightened content padding -- Corey: "the 'e' on the
+                        // 'Regenerate' button is wrapped as a 2nd line...
+                        // shrink the width of the Navigate and Save buttons
+                        // just enough to allow this". Equal-thirds plus the
+                        // default ButtonDefaults.ContentPadding (24dp
+                        // horizontal per side) left "Regenerate" -- the
+                        // longest of the three labels -- without enough room
+                        // for its own text on one line.
+                        val compactButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                        OutlinedButton(
+                            onClick = { onGenerateClick() },
+                            modifier = Modifier.weight(1.3f),
+                            enabled = !isGenerating,
+                            contentPadding = compactButtonPadding,
+                        ) {
+                            Text("Regenerate", maxLines = 1)
                         }
                         OutlinedButton(
                             // Was "Open in nav app" (handed off to Google Maps
@@ -734,11 +750,22 @@ fun GenerateRouteScreen(
                             // recomputing a different one the way Maps did.
                             onClick = { isNavigating = true },
                             modifier = Modifier.weight(1f),
+                            contentPadding = compactButtonPadding,
                         ) {
-                            Text("Navigate")
+                            Text("Navigate", maxLines = 1)
                         }
-                        Button(onClick = { showSaveDialog = true }, modifier = Modifier.weight(1f)) {
-                            Text("Save")
+                        // Was a filled Button -- Corey: remove the fill, match
+                        // Regenerate/Navigate's exact look. Switched to the
+                        // same plain OutlinedButton with no explicit colors,
+                        // so it's not just visually similar but literally the
+                        // same default outlined style/font/color as the other
+                        // two, not a hand-matched approximation.
+                        OutlinedButton(
+                            onClick = { showSaveDialog = true },
+                            modifier = Modifier.weight(0.8f),
+                            contentPadding = compactButtonPadding,
+                        ) {
+                            Text("Save", maxLines = 1)
                         }
                     }
                 }

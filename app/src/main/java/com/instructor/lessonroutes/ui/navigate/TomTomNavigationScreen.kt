@@ -795,21 +795,34 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                 // Intentionally no-op -- no voice/TTS in this app (Corey's call).
             }
 
+            // Corey report: the whole instruction card ("turn left in 150m")
+            // disappeared entirely partway through navigating. Both callbacks
+            // used to unconditionally set instructionText/instructionIconVector
+            // to null whenever `instructions` came back empty -- since the top
+            // card is only shown `if (instructionText != null)`, any momentary
+            // gap in TomTom's own instructions list (a real possibility between
+            // maneuvers, or a brief GPS/guidance hiccup -- a genuine "trip
+            // complete" state would still carry a real ArrivalGuidanceInstruction,
+            // not an empty list) blanked the entire card instead of just leaving
+            // it stale for a moment. Now only updates on a real instruction;
+            // an empty list simply leaves whatever was last shown in place,
+            // which is a strict improvement either way -- briefly-stale
+            // guidance text beats no guidance text at all.
             override fun onDistanceToNextInstructionChanged(
                 distance: Distance,
                 instructions: List<GuidanceInstruction>,
                 currentPhase: InstructionPhase,
             ) {
+                val next = instructions.firstOrNull() ?: return
                 distanceToManeuver = distance
-                val next = instructions.firstOrNull()
-                instructionText = next?.let(::describeInstruction)
-                instructionIconVector = next?.let(::instructionIcon)
+                instructionText = describeInstruction(next)
+                instructionIconVector = instructionIcon(next)
             }
 
             override fun onInstructionsChanged(instructions: List<GuidanceInstruction>) {
-                val next = instructions.firstOrNull()
-                instructionText = next?.let(::describeInstruction)
-                instructionIconVector = next?.let(::instructionIcon)
+                val next = instructions.firstOrNull() ?: return
+                instructionText = describeInstruction(next)
+                instructionIconVector = instructionIcon(next)
             }
         }
         TomTomSdk.navigation.addProgressUpdatedListener(progressListener)
@@ -1000,10 +1013,48 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                             )
                         }
                     }
+                    // Legend for the two-tone route line drawn on the map --
+                    // Corey: "I have no idea what the road colours while
+                    // navigating mean... it needs to be more intuitive."
+                    // Only explains the two lines this screen actually draws
+                    // itself (remainingLineColor/traveledLineColor above) --
+                    // other road colors visible on the map (e.g. a highway or
+                    // divided road rendered differently) are the base map
+                    // style's own road-classification styling, not this
+                    // screen's own route-progress rendering, so a legend
+                    // entry for them would be inventing a meaning that isn't
+                    // really there.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RouteLineLegendSwatch(remainingLineColor)
+                        Text(
+                            "Ahead",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        RouteLineLegendSwatch(traveledLineColor)
+                        Text(
+                            "Already driven",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+/** A short line-shaped swatch (not a dot/circle) for the route-line legend
+ * above -- matches the shape of what it's representing (a line on the map)
+ * rather than an arbitrary shape. */
+@Composable
+private fun RouteLineLegendSwatch(color: Color) {
+    Box(Modifier.size(width = 20.dp, height = 4.dp).background(color, RoundedCornerShape(2.dp)))
 }
 
 /** Fallback shown when TomTom fails for any reason (SDK init, reconstruction,

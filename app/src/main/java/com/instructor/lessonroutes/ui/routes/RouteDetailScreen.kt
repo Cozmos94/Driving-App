@@ -41,6 +41,7 @@ import com.instructor.lessonroutes.ui.map.InfoBanner
 import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.map.rememberDisplayRoutePoints
 import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
+import com.instructor.lessonroutes.ui.theme.AppBlack
 import com.instructor.lessonroutes.ui.theme.AvoidRed
 import com.instructor.lessonroutes.ui.theme.PreferGreen
 import org.maplibre.android.geometry.LatLng
@@ -126,16 +127,23 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao) {
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
                 }
+                // Explicit black throughout this screen -- same reason as
+                // RouteListScreen.kt's "Obstacles covered" fix: this Column
+                // isn't wrapped in any preserved-blue theme, so unstyled Text
+                // falls through to whatever the ambient content color
+                // resolves to here, which read as grey/hard to read (Corey:
+                // "update the grey text to black").
                 if (!current.route.description.isNullOrBlank()) {
-                    Text(text = current.route.description, modifier = Modifier.padding(16.dp))
+                    Text(text = current.route.description, modifier = Modifier.padding(16.dp), color = AppBlack)
                 }
                 if (!current.route.notes.isNullOrBlank()) {
-                    Text(text = current.route.notes, modifier = Modifier.padding(16.dp))
+                    Text(text = current.route.notes, modifier = Modifier.padding(16.dp), color = AppBlack)
                 }
                 routeWithProfiles?.profiles?.takeIf { it.isNotEmpty() }?.let { profiles ->
                     Text(
                         text = "For: ${profiles.joinToString(", ") { it.name }}",
                         modifier = Modifier.padding(horizontal = 16.dp),
+                        color = AppBlack,
                     )
                 }
                 // Only set for routes saved from the trip generator -- empty,
@@ -161,6 +169,7 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao) {
                                 "Live hazards"
                             },
                         modifier = Modifier.padding(start = 8.dp),
+                        color = AppBlack,
                     )
                 }
                 Row(
@@ -195,7 +204,11 @@ fun RouteDetailScreen(routeId: Long, dao: RouteDao) {
 private fun FilterBadgeSection(label: String, items: List<String>, textColor: Color) {
     if (items.isEmpty()) return
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge)
+        // Explicit black -- this section header (not the colored pills below
+        // it, which keep AvoidRed/PreferGreen unchanged) had no explicit
+        // color and fell through to the same hard-to-read ambient default
+        // as everything else on this screen.
+        Text(label, style = MaterialTheme.typography.labelLarge, color = AppBlack)
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(top = 4.dp),
