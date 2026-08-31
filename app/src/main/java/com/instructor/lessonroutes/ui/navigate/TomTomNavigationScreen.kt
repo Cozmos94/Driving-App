@@ -67,6 +67,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.instructor.lessonroutes.ui.map.RouteMapView
+import com.instructor.lessonroutes.ui.theme.AppBlack
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
 import com.instructor.lessonroutes.util.startLocationUpdates
@@ -955,7 +956,18 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                         verticalAlignment = Alignment.Bottom,
                     ) {
                         remainingTime?.let {
-                            Text(formatDuration(it), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            // Explicit black -- had no color at all, unlike its
+                            // distance/ETA siblings below (which deliberately
+                            // use onSurfaceVariant for secondary detail) --
+                            // whatever it was inheriting rendered as washed-out
+                            // grey, hard to read (Corey: "change the font
+                            // colour of the time remaining... to black").
+                            Text(
+                                formatDuration(it),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = AppBlack,
+                            )
                         }
                         remainingDistance?.let {
                             Text(

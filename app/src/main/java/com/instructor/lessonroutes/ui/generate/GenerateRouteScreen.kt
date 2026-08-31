@@ -578,16 +578,32 @@ fun GenerateRouteScreen(
                         // assumption badly underestimates real travel time -- the
                         // generator has no way left to trim it down further.
                         if (radiusLimitedDuration) {
+                            // Wording fix, confirmed as a real problem via a
+                            // Corey screenshot: this used to assert a specific
+                            // cause ("not enough road network in that area")
+                            // that was never actually checked -- it just means
+                            // the generator's own convergence loop (only
+                            // MAX_RADIUS_ITERATIONS=3 rounds) landed here, which
+                            // can also happen well before the radius/petal count
+                            // is anywhere near maxed out, e.g. if the flat
+                            // AVG_SPEED_KMH assumption badly misjudged how far a
+                            // given petal count would actually take -- Corey's
+                            // screenshot showed a route using only a small corner
+                            // of the available radius/road network, not
+                            // something that had genuinely run out of roads. Now
+                            // describes what's actually known (missed the target
+                            // within the rounds it got) instead of guessing at why.
                             add(
                                 if (result.durationSeconds > minutes * 60.0) {
-                                    "This route came in over your target time even with the shortest option " +
-                                        "inside your ${radiusKm?.toInt()}km radius — the road network there may " +
-                                        "need a longer detour than expected to stay within it. Try a smaller " +
-                                        "radius, or a longer target time."
+                                    "This route came in over your target time within your " +
+                                        "${radiusKm?.toInt()}km radius — the generator couldn't trim it down " +
+                                        "closer in the time it had. Try regenerating, a smaller radius, or a " +
+                                        "longer target time."
                                 } else {
-                                    "This route came in short of your target time even using the full " +
-                                        "${radiusKm?.toInt()}km radius — there may not be enough road network in " +
-                                        "that area to fill it. Try a larger radius."
+                                    "This route came in short of your target time within your " +
+                                        "${radiusKm?.toInt()}km radius — the generator couldn't stretch it out " +
+                                        "closer in the time it had (not necessarily a lack of road network). " +
+                                        "Try regenerating, or a larger radius."
                                 },
                             )
                         }
