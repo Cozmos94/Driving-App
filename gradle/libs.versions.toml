@@ -22,7 +22,24 @@ coreSplashscreen = "1.2.0"
 # (post my.tomtom.com migration) project-setup page. Check
 # docs.tomtom.com/navigation/android/getting-started/project-setup for a
 # newer version before bumping blindly.
-tomtomSdk = "2.4.2"
+#
+# Bumped 2.4.2 -> 2.5.3 after a real, reproducible native crash: two tombstones
+# pulled from the emulator both crashed deep inside mbgl::android::MapRenderer
+# (MapLibre's native rendering engine, which TomTom's map is built on) at
+# almost exactly the same process uptime (607s and 605s, ~10 minutes) --
+# a JNI reference to the renderer going invalid in one, a straight memory-
+# access crash in the same subsystem in the other. Neither is in this app's
+# own code. Confirmed live against TomTom's own Artifactory (repositories.
+# tomtom.com) that 2.5.3 is a real, current release (26-Aug-2026) across
+# every TomTom artifact this project actually depends on -- init,
+# map-display-compose-standard, and navigation all publish it -- which also
+# confirms this project's own earlier "navigation is stuck on a separate
+# 0.x/1.x scheme, don't pin it to 2.4.2" warning (see tomtom-sdk-navigation's
+# own comment below) is now stale: TomTom has since unified navigation onto
+# the same 2.x scheme as everything else, so a single shared version bump is
+# safe again. Not yet confirmed this actually fixes the crash -- needs a
+# real on-device retest of 10+ minutes of continuous navigation.
+tomtomSdk = "2.5.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
