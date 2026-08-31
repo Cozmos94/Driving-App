@@ -250,15 +250,25 @@ private fun formatDuration(duration: Duration): String {
 private fun formatArrivalTime(remaining: Duration): String =
     LocalTime.now().plusSeconds(remaining.inWholeSeconds).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
 
-/** Turns a value's raw name (e.g. "TURN_LEFT", or "Left" if it's a sealed
- * type rather than a plain enum) into readable words ("turn left") without
+/** Turns a value's raw name into readable words ("turn left") without
  * needing to know its exact type shape or constant names ahead of time --
  * receiver is `Any`, not `Enum<*>`, since TurnDirection/ForkDirection turned
  * out not to be plain Kotlin enums (confirmed by a real compile error:
  * "Enum<*>.readableName()" was unresolved against them) -- safer than
  * hardcoding a guessed set of enum values, or a guessed type shape, that
- * could be wrong either way. */
-private fun Any.readableName(): String = toString().lowercase().replace('_', ' ')
+ * could be wrong either way.
+ *
+ * Real, confirmed bug fixed here: this originally only lowercased + replaced
+ * underscores, on a wrong assumption the raw name would be SCREAMING_SNAKE
+ * ("TURN_LEFT"). Corey's actual on-device report -- "Turn turnleft onto Bank
+ * Street" -- gave away the real shape: TomTom's TurnDirection values are
+ * PascalCase with no separator at all ("TurnLeft"), so the old code just
+ * lowercased the whole thing into one squished word ("turnleft") instead of
+ * splitting it. Now splits before each interior capital letter first
+ * ("TurnSharpLeft" -> "Turn Sharp Left"), then lowercases -- the underscore
+ * replace is kept too in case some other subtype's name ever does use one. */
+private fun Any.readableName(): String =
+    toString().replace(Regex("(?<!^)([A-Z])"), " $1").replace('_', ' ').lowercase()
 
 /** Real, human-readable turn-by-turn text -- previously this screen only
  * showed the upcoming road name ("onto Bank Street"), never an actual
@@ -272,8 +282,14 @@ private fun describeInstruction(instruction: GuidanceInstruction): String {
     val roadName = instruction.nextSignificantRoad?.name
     val ontoRoad = roadName?.let { " onto $it" } ?: ""
     return when (instruction) {
-        is TurnGuidanceInstruction -> "Turn ${instruction.turnDirection.readableName()}$ontoRoad"
-        is MandatoryTurnGuidanceInstruction -> "Turn ${instruction.turnDirection.readableName()}$ontoRoad"
+        // No hardcoded "Turn " prefix here (unlike the other branches below) --
+        // TurnDirection's own raw name already says "Turn..." ("TurnLeft",
+        // "TurnSharpLeft", confirmed live), so readableName() alone already
+        // reads naturally once capitalized. Prepending "Turn " again on top of
+        // it was the actual cause of the "Turn turnleft" duplicate bug.
+        is TurnGuidanceInstruction -> "${instruction.turnDirection.readableName().replaceFirstChar { it.titlecase() }}$ontoRoad"
+        is MandatoryTurnGuidanceInstruction ->
+            "${instruction.turnDirection.readableName().replaceFirstChar { it.titlecase() }}$ontoRoad"
         is RoundaboutGuidanceInstruction ->
             "At the roundabout" + (instruction.exitNumber?.let { ", take exit $it" } ?: "") + ontoRoad
         is ExitRoundaboutGuidanceInstruction -> "Exit the roundabout$ontoRoad"
