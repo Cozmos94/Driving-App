@@ -10,6 +10,11 @@ import org.json.JSONArray
 import org.maplibre.android.geometry.LatLng
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class GeocodeResult(val label: String, val location: LatLng)
 
@@ -67,9 +72,35 @@ suspend fun searchAddress(query: String, biasLocation: LatLng? = null): List<Geo
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Geoapify geocode search failed: HTTP ${response.code}")
             val body = response.body?.string() ?: return@use emptyList()
-            parseResults(body)
+            val results = parseResults(body)
+            // Geoapify's own bias=proximity (above) is a soft relevance nudge,
+            // blended with text-match quality -- confirmed live it can still
+            // rank a strongly-matching far-away result (e.g. a Sydney street)
+            // ahead of a more loosely-matching nearby one (e.g. the same street
+            // name in Dapto), which is a real Corey report, not theoretical.
+            // Re-sorting by actual straight-line distance here guarantees the
+            // nearest match always comes first regardless of how Geoapify
+            // itself weighted relevance.
+            if (biasLocation != null) {
+                results.sortedBy { distanceMeters(biasLocation, it.location) }
+            } else {
+                results
+            }
         }
     }
+}
+
+// Straight-line (Haversine) distance in meters. Good enough for ranking a
+// handful of nearby-ish geocode results -- not meant for anything requiring
+// true geodesic precision.
+private fun distanceMeters(a: LatLng, b: LatLng): Double {
+    val earthRadiusMeters = 6_371_000.0
+    val lat1 = Math.toRadians(a.latitude)
+    val lat2 = Math.toRadians(b.latitude)
+    val deltaLat = Math.toRadians(b.latitude - a.latitude)
+    val deltaLon = Math.toRadians(b.longitude - a.longitude)
+    val h = sin(deltaLat / 2).pow(2) + cos(lat1) * cos(lat2) * sin(deltaLon / 2).pow(2)
+    return 2 * earthRadiusMeters * asin(sqrt(h))
 }
 
 // NSW_RECT_FILTER above only bounds a lat/lon rectangle -- it's a real box,
