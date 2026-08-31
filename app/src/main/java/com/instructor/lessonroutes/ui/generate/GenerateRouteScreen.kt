@@ -95,6 +95,7 @@ import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
 import com.instructor.lessonroutes.data.routegen.pickBestRoute
+import com.instructor.lessonroutes.data.routegen.rerouteAvoidingHitRoundabouts
 import com.instructor.lessonroutes.data.routegen.routeExceedsRadius
 import com.instructor.lessonroutes.data.routegen.summarize
 import com.instructor.lessonroutes.ui.map.RouteMapView
@@ -465,7 +466,37 @@ fun GenerateRouteScreen(
                         "pickBestRoute finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
                             "picked=${picked != null}",
                     )
-                    picked
+                    // One opportunistic extra step, only for the already-picked
+                    // winner: if Roundabouts->Avoid is set, try re-routing around
+                    // just the specific roundabouts *this* route hits, instead of
+                    // leaving it to the soft proximity-score tie-break above,
+                    // which (with only 3 candidate shapes total and duration-
+                    // closeness weighted 10x heavier than any filter hit) rarely
+                    // actually changes which candidate wins. Safe-by-construction,
+                    // not a guess -- see
+                    // rerouteAvoidingHitRoundabouts' own doc comment for why this
+                    // narrower approach doesn't risk the 0-minute/no-route
+                    // regression the broader "avoid every roundabout up front"
+                    // version caused when it was tried before.
+                    picked?.let {
+                        // Dispatchers.Default -- same reasoning as pickBestRoute
+                        // above: this does its own nested proximity-comparison
+                        // loop (findNearbyHits) before ever making a network
+                        // call, and this whole block otherwise runs on whatever
+                        // dispatcher scope.launch itself is on (Main, via
+                        // rememberCoroutineScope) -- not blocking the UI thread
+                        // here isn't optional, it's the exact same real ANR risk
+                        // pickBestRoute's own comment already documents.
+                        withContext(Dispatchers.Default) {
+                            rerouteAvoidingHitRoundabouts(
+                                it,
+                                filters,
+                                scoringResult.data,
+                                targetSeconds = minutes * 60.0,
+                                avoidHighways = filters.highways == FilterPreference.AVOID,
+                            )
+                        }
+                    }
                 }
                 Log.d(
                     LOG_TAG,

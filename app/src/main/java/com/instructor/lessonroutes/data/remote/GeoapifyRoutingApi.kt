@@ -91,17 +91,32 @@ private class GeoapifyRoutingRejected(message: String) : IOException(message)
  * than guessed at.
  *
  * A real `avoid=location:lat,lon` hard-exclusion constraint exists too
- * (confirmed live), and was briefly used here to hard-avoid roundabouts near
- * a trip's start/destination -- reverted after two real regressions (a
- * generated route reported as 0 minutes, then no route at all) most likely
- * traced to it: excluding a real point works fine when there's plenty of
- * alternate road network around it, but if that point is the only real way
- * out of a tight local area (Wollongong's coastline+escarpment geography is
- * an already-documented hard case for this exact generator), hard-excluding
- * it can make the whole area unroutable rather than just detouring around
- * it. Roundabouts->Avoid is back to plain soft proximity scoring
- * (RouteGenerator.kt's scoreRoute) everywhere, same as every other category
- * except Highways.
+ * (confirmed live). It was briefly used broadly here -- hard-avoiding every
+ * roundabout in the whole search area up front, during the exploratory
+ * petal-placement phase, before any chain was even known to route at all --
+ * and reverted after two real regressions (a generated route reported as 0
+ * minutes, then no route at all): excluding a real point works fine when
+ * there's plenty of alternate road network around it, but if that point is
+ * the only real way through a tight local area (Wollongong's coastline+
+ * escarpment geography is an already-documented hard case for this exact
+ * generator), hard-excluding it during exploratory search can make the whole
+ * area unroutable rather than just detouring around it.
+ *
+ * [avoidLocations] (new, narrower use) is safe against that same failure
+ * mode by construction: RouteGenerator.kt's `rerouteAvoidingHitRoundabouts`
+ * only ever calls this with points from a route that's *already* known to
+ * route successfully, and only ever adopts the result if it also succeeds
+ * with a still-reasonable duration -- any failure or a materially worse
+ * result falls straight back to the original, already-good route, never
+ * replacing a working result with a broken one. Confirmed live before
+ * building this: avoiding a handful of real points along an
+ * already-successful route produces a small, sane detour; avoiding a point
+ * that's immaterial to the route (right at an endpoint) is a harmless no-op;
+ * avoiding *many* points along the same corridor can swing the result a lot
+ * (one stress test: 15 points along one route's own path produced a
+ * genuinely different, shorter route, not just a tweak) -- which is exactly
+ * why this is only ever fed the small, specific set of points a route
+ * actually hits, not a whole category's full dataset.
  *
  * **Real, live-verified fallback added for redundancy (Corey: "we need more
  * redundancies")**: on any failure that looks like Geoapify's own
@@ -124,16 +139,17 @@ suspend fun fetchRoutedPaths(
     waypoints: List<LatLng>,
     avoidHighways: Boolean = false,
     avoidTolls: Boolean = false,
+    avoidLocations: List<LatLng> = emptyList(),
 ): List<RoutedPath> {
     require(waypoints.size >= 2) { "Need at least 2 waypoints to route between" }
 
     return try {
-        fetchGeoapifyRoutedPaths(waypoints, avoidHighways, avoidTolls)
+        fetchGeoapifyRoutedPaths(waypoints, avoidHighways, avoidTolls, avoidLocations)
     } catch (e: GeoapifyRoutingRejected) {
         throw e
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Geoapify routing looks like an outage (not a plain rejection) -- falling back to OSRM", e)
-        fetchOsrmRoutedPaths(waypoints, avoidHighways, avoidTolls)
+        fetchOsrmRoutedPaths(waypoints, avoidHighways, avoidTolls, avoidLocations)
     }
 }
 
@@ -141,10 +157,12 @@ private suspend fun fetchGeoapifyRoutedPaths(
     waypoints: List<LatLng>,
     avoidHighways: Boolean,
     avoidTolls: Boolean,
+    avoidLocations: List<LatLng>,
 ): List<RoutedPath> {
     return withContext(Dispatchers.IO) {
         val waypointsParam = waypoints.joinToString("|") { "${it.latitude},${it.longitude}" }
-        val avoidValues = listOfNotNull("highways".takeIf { avoidHighways }, "tolls".takeIf { avoidTolls })
+        val avoidValues = listOfNotNull("highways".takeIf { avoidHighways }, "tolls".takeIf { avoidTolls }) +
+            avoidLocations.map { "location:${it.latitude},${it.longitude}" }
         val avoidParam = if (avoidValues.isNotEmpty()) "&avoid=${avoidValues.joinToString("|")}" else ""
         val url = "$ROUTING_URL?waypoints=${Uri.encode(waypointsParam)}&mode=drive&units=metric&format=json" +
             "$avoidParam&apiKey=${BuildConfig.GEOAPIFY_API_KEY}"
@@ -212,6 +230,7 @@ private suspend fun fetchOsrmRoutedPaths(
     waypoints: List<LatLng>,
     avoidHighways: Boolean,
     avoidTolls: Boolean,
+    avoidLocations: List<LatLng>,
 ): List<RoutedPath> {
     if (avoidHighways || avoidTolls) {
         Log.w(
@@ -221,6 +240,13 @@ private suspend fun fetchOsrmRoutedPaths(
                 "may include a highway/toll road that would normally have been excluded; RouteGenerator's " +
                 "own soft proximity scoring is the only thing still steering away from it while this " +
                 "fallback is in use.",
+        )
+    }
+    if (avoidLocations.isNotEmpty()) {
+        Log.w(
+            LOG_TAG,
+            "OSRM fallback has no equivalent to Geoapify's avoid=location -- this fallback route may still " +
+                "pass through ${avoidLocations.size} point(s) a caller specifically asked to avoid.",
         )
     }
     return withContext(Dispatchers.IO) {

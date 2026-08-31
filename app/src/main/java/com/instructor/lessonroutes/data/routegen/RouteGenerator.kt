@@ -117,6 +117,15 @@ data class GeneratedRoute(
     val points: List<LatLng>,
     val durationSeconds: Double,
     val distanceMeters: Double,
+    // The exact ordered waypoints (start + petal(s)/detour point + destination)
+    // that produced this route via fetchRoutedPaths -- empty for a
+    // GeneratedRoute built somewhere that never had a real chain (e.g.
+    // TomTomNavigationScreen.kt's placeholder for a saved route, which has no
+    // stored duration/distance either). Needed by
+    // [rerouteAvoidingHitRoundabouts] to re-request the *same* route with
+    // specific points hard-avoided -- without this, there'd be no way to
+    // redo the routing call that produced a given candidate after the fact.
+    val waypointChain: List<LatLng> = emptyList(),
 )
 
 // Rough urban-driving assumption for the initial distance guess -- refined by
@@ -576,6 +585,86 @@ fun pickBestRoute(
 fun routeExceedsRadius(route: GeneratedRoute, anchor: LatLng, maxRadiusKm: Double): Boolean =
     route.points.any { approxDistanceMeters(anchor, it) / 1000.0 > maxRadiusKm }
 
+/**
+ * Opportunistic, safe-by-construction follow-up to [pickBestRoute]: if
+ * [filters.roundabouts] is AVOID, re-requests [route]'s own [GeneratedRoute.waypointChain]
+ * with the *specific* roundabout points it actually passes near (via [findNearbyHits])
+ * hard-avoided (Geoapify's real `avoid=location:lat,lon`, confirmed live), and adopts the
+ * result only if it succeeds with a still-reasonable duration. On any failure, or a
+ * duration that's degraded too much, [route] is returned completely unchanged.
+ *
+ * Deliberately narrow, not a return to the broad "avoid every roundabout in the whole
+ * search area up front" approach GeoapifyRoutingApi.kt's own doc comment describes trying
+ * and reverting (a generated route reported as 0 minutes, then no route at all, when an
+ * avoided point turned out to be the only way through a tight area). This is safe against
+ * that same failure mode by construction: [route] is already a known-good result before
+ * this ever runs (it's what [pickBestRoute] already picked), the avoid-list is built from
+ * only the handful of points *this specific route* hits rather than a whole category's
+ * dataset (confirmed live that avoiding many points along one corridor can swing the
+ * result a lot, which is exactly why this stays targeted), and any failure or a
+ * meaningfully worse duration-match than [route] already had falls straight back to
+ * [route] unchanged -- this can only ever replace a result with a strictly-checked better
+ * one, never a worse one.
+ *
+ * No-op (returns [route] unchanged, no network call) if [filters.roundabouts] isn't AVOID,
+ * [route.waypointChain] has fewer than 2 points (shouldn't happen for anything
+ * [generateCandidateRoutes] actually returns, but a defensive no-op costs nothing), or
+ * nothing in [scoringData.roundabouts] is actually near [route].
+ */
+suspend fun rerouteAvoidingHitRoundabouts(
+    route: GeneratedRoute,
+    filters: RouteGenerationFilters,
+    scoringData: ScoringData,
+    targetSeconds: Double,
+    avoidHighways: Boolean,
+): GeneratedRoute {
+    if (filters.roundabouts != FilterPreference.AVOID) return route
+    if (route.waypointChain.size < 2) return route
+    val hitRoundabouts = findNearbyHits(scoringData.roundabouts, route.points)
+    if (hitRoundabouts.isEmpty()) return route
+
+    return try {
+        val rerouted = fetchRoutedPaths(
+            route.waypointChain,
+            avoidHighways = avoidHighways,
+            avoidLocations = hitRoundabouts,
+        ).firstOrNull() ?: return route
+
+        val originalErrorSeconds = abs(route.durationSeconds - targetSeconds)
+        val rerouteErrorSeconds = abs(rerouted.durationSeconds - targetSeconds)
+        // Allows the reroute to cost a *little* extra duration-error versus the
+        // original (DURATION_TOLERANCE_SECONDS' worth) -- detouring around a real
+        // roundabout usually costs some time, and that's an acceptable, expected
+        // trade for actually avoiding it, not a reason to reject the reroute
+        // outright. Still guards against MIN_PLAUSIBLE_DURATION_SECONDS -- same
+        // "implausibly short duration" rejection every other routing result in
+        // this file gets, see its own comment above.
+        val acceptable = rerouteErrorSeconds <= originalErrorSeconds + DURATION_TOLERANCE_SECONDS &&
+            rerouted.durationSeconds >= MIN_PLAUSIBLE_DURATION_SECONDS
+        if (acceptable) {
+            Log.d(
+                LOG_TAG,
+                "rerouteAvoidingHitRoundabouts: avoided ${hitRoundabouts.size} roundabout(s), " +
+                    "duration ${"%.1f".format(route.durationSeconds / 60.0)}min -> " +
+                    "${"%.1f".format(rerouted.durationSeconds / 60.0)}min",
+            )
+            GeneratedRoute(rerouted.points, rerouted.durationSeconds, rerouted.distanceMeters, route.waypointChain)
+        } else {
+            Log.w(
+                LOG_TAG,
+                "rerouteAvoidingHitRoundabouts: reroute avoiding ${hitRoundabouts.size} roundabout(s) " +
+                    "degraded duration too much (${"%.1f".format(rerouted.durationSeconds / 60.0)}min vs " +
+                    "original ${"%.1f".format(route.durationSeconds / 60.0)}min, target " +
+                    "${"%.1f".format(targetSeconds / 60.0)}min) -- keeping the original route",
+            )
+            route
+        }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "rerouteAvoidingHitRoundabouts: reroute call failed -- keeping the original route", e)
+        route
+    }
+}
+
 /** Returns the converged (or best-effort) route for this bearing, or null if
  * every attempt at this bearing failed outright. Only used when there's no
  * radius cap -- see [refineCandidateWithinRadius] for that case, which needs a
@@ -637,7 +726,7 @@ private suspend fun refineCandidate(
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
         val errorSeconds = abs(routed.durationSeconds - targetSeconds)
         if (errorSeconds < bestErrorSeconds) {
-            best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
+            best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters, listOf(start, detourPoint, destination))
             bestErrorSeconds = errorSeconds
         }
         // Visibility into each round's actual result -- previously only a
@@ -775,8 +864,9 @@ private suspend fun refineCandidateWithinRadius(
         // doesn't cost an entire duration-convergence round.
         var routed: RoutedPath? = null
         var attempt = 0
+        var chain: List<LatLng> = emptyList()
         while (routed == null && attempt < MAX_UNROUTABLE_RETRIES) {
-            val chain = buildList {
+            chain = buildList {
                 add(start)
                 addAll(spokePoints(start, currentBearingDegrees, spokeCount, spokeRadiusKm, spreadDegrees, reachableArea))
                 add(destination)
@@ -841,7 +931,7 @@ private suspend fun refineCandidateWithinRadius(
         val ratio = targetSeconds / routed.durationSeconds.coerceAtLeast(1.0)
         val errorSeconds = abs(routed.durationSeconds - targetSeconds)
         if (errorSeconds < bestErrorSeconds) {
-            best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters)
+            best = GeneratedRoute(routed.points, routed.durationSeconds, routed.distanceMeters, chain)
             bestErrorSeconds = errorSeconds
         }
         Log.d(
@@ -993,8 +1083,16 @@ private fun scoreRoute(route: GeneratedRoute, filters: RouteGenerationFilters, d
     return filterScore - durationErrorMinutes * DURATION_ERROR_WEIGHT_PER_MINUTE
 }
 
-private fun countNearby(pointsOfInterest: List<LatLng>, route: List<LatLng>): Int =
-    pointsOfInterest.count { poi -> route.any { r -> approxDistanceMeters(poi, r) < PROXIMITY_METERS } }
+private fun countNearby(pointsOfInterest: List<LatLng>, route: List<LatLng>): Int = findNearbyHits(pointsOfInterest, route).size
+
+/** Which of [pointsOfInterest] fall within [PROXIMITY_METERS] of any point along
+ * [routePoints] -- same proximity test [scoreRoute] uses to score a route against a
+ * filter category (via [countNearby]), exposed here so a caller can identify exactly
+ * which real-world points a *specific* route hits, not just how many. Used by
+ * [rerouteAvoidingHitRoundabouts] to build a small, targeted avoid-list from only the
+ * points a route actually passes near, rather than a whole category's full dataset. */
+fun findNearbyHits(pointsOfInterest: List<LatLng>, routePoints: List<LatLng>): List<LatLng> =
+    pointsOfInterest.filter { poi -> routePoints.any { r -> approxDistanceMeters(poi, r) < PROXIMITY_METERS } }
 
 /** Equirectangular approximation -- fine at this scale (tens of meters), same
  * approach as OverpassApi.kt's distanceToPolylineMeters. Checks distance to the
