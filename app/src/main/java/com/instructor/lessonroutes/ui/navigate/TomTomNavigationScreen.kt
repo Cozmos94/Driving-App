@@ -844,9 +844,19 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     val remainingPoints = remember(routeSplitIndex, route) {
         route.points.subList(routeSplitIndex.coerceAtMost(route.points.size - 1), route.points.size)
     }
-    val remainingLineColor = MaterialTheme.colorScheme.primary
+    // Explicit, theme-independent blue -- real, confirmed bug: this screen
+    // renders *before* GenerateRouteScreen.kt's PlanTripTheme wrapper begins
+    // (see the `return` right above where that wrapper starts), so it falls
+    // back to the main app's own theme, where MaterialTheme.colorScheme.primary
+    // is literally AppBlack (this app's whole black/white palette). Lerping
+    // black 45% toward black is still black, which is exactly why Corey
+    // reported the legend showing "Ahead"/"Already driven" as the same
+    // colour. A real, deliberately-picked blue here instead means this
+    // line's own meaning no longer depends on whatever the ambient theme's
+    // primary role happens to resolve to on this particular screen.
+    val remainingLineColor = Color(0xFF1A73E8)
     // A darker shade of the same hue, not a different color entirely --
-    // matches Corey's request ("darker blue", not grey/another color).
+    // matches Corey's original request ("darker blue", not grey/another color).
     val traveledLineColor = lerp(remainingLineColor, Color.Black, 0.45f)
 
     Box(Modifier.fillMaxSize()) {

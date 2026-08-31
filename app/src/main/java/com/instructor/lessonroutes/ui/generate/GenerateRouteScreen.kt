@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -29,6 +31,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -314,7 +318,13 @@ fun GenerateRouteScreen(
     }
 
     // -- Filters --
-    var filters by remember { mutableStateOf(RouteGenerationFilters()) }
+    // Hazards defaults to Avoid -- Corey: "make Hazards auto-avoid by
+    // default, but the user can still un-avoid or prefer if they wish".
+    // Every other category is left at NONE, unchanged -- this is just a
+    // different starting value for the existing FilterRow toggle, not a new
+    // restriction; still freely changeable to NONE or Prefer the same way
+    // any other category always has been.
+    var filters by remember { mutableStateOf(RouteGenerationFilters(incidents = FilterPreference.AVOID)) }
 
     // -- Generation state --
     var isGenerating by remember { mutableStateOf(false) }
@@ -709,8 +719,15 @@ fun GenerateRouteScreen(
                         Text("Saved.")
                     }
                     dataWarning?.let { Text(it, modifier = Modifier.padding(top = 4.dp)) }
+                    // Row itself narrowed to ~72% of the available width (was
+                    // fillMaxWidth()) and centered -- Corey: "the width of the
+                    // Regenerate button is way too big now... reduce the
+                    // width of all 3 buttons by 20-30%... I don't mind there
+                    // being some space between" them. Keeps the same 1.3/1/0.8
+                    // weight ratio *within* that narrower row, so Regenerate
+                    // still gets proportionally more room than Navigate/Save.
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        modifier = Modifier.fillMaxWidth(0.72f).align(Alignment.CenterHorizontally).padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         // Weights (1.3 / 1 / 0.8, not equal thirds) plus
@@ -883,7 +900,20 @@ fun GenerateRouteScreen(
                             "(see Settings) — they'll have no effect without one.",
                     )
                 }
-                FilterRow("Hazards", filters.incidents) { filters = filters.copy(incidents = it) }
+                FilterRow(
+                    "Hazards",
+                    filters.incidents,
+                    // Honest about what this actually covers -- it's live
+                    // TfNSW incident/roadwork data (HazardsApi.kt), NOT
+                    // historical crash "black spot" data, which this app has
+                    // never had a free source for (see README's own notes on
+                    // that gap).
+                    info = "Live, currently-reported hazards from Transport for NSW -- traffic incidents " +
+                        "(crashes, breakdowns, congestion) and roadworks that are open right now. This " +
+                        "doesn't include historical crash \"black spot\" locations -- no free source for " +
+                        "that data has been found yet. Like every filter here, it's best-effort: the " +
+                        "generator steers toward or away from these where it can, not a guarantee.",
+                ) { filters = filters.copy(incidents = it) }
                 FilterRow("Construction zones", filters.constructionZones) { filters = filters.copy(constructionZones = it) }
                 FilterRow("School zones", filters.schoolZones) { filters = filters.copy(schoolZones = it) }
                 FilterRow("Speed cameras", filters.speedCameras) { filters = filters.copy(speedCameras = it) }
@@ -1045,7 +1075,26 @@ private fun FilterLegendLine(term: String, explanation: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FilterRow(label: String, preference: FilterPreference, onChange: (FilterPreference) -> Unit) {
+private fun FilterRow(
+    label: String,
+    preference: FilterPreference,
+    /** Optional explanation shown in a popup behind a small (i) icon next
+     * to the label -- Corey: "add an information icon next to hazards that
+     * they can tap for a little popup that explains what hazards filters".
+     * Null (every category except Hazards) renders no icon at all, same
+     * row layout as before this existed. */
+    info: String? = null,
+    onChange: (FilterPreference) -> Unit,
+) {
+    var showInfo by remember { mutableStateOf(false) }
+    if (showInfo && info != null) {
+        AlertDialog(
+            onDismissRequest = { showInfo = false },
+            title = { Text(label) },
+            text = { Text(info) },
+            confirmButton = { TextButton(onClick = { showInfo = false }) { Text("OK") } },
+        )
+    }
     // Just Avoid/Prefer -- preference is a single FilterPreference value, so it
     // can never actually hold both AVOID and PREFER at once; tapping the
     // already-selected chip clears it back to NONE (no separate "None" chip
@@ -1058,6 +1107,12 @@ private fun FilterRow(label: String, preference: FilterPreference, onChange: (Fi
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, modifier = Modifier.weight(1f))
+        if (info != null) {
+            IconButton(onClick = { showInfo = true }, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Default.Info, contentDescription = "What does $label mean?")
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+        }
         FilterChip(
             selected = preference == FilterPreference.AVOID,
             onClick = { onChange(if (preference == FilterPreference.AVOID) FilterPreference.NONE else FilterPreference.AVOID) },
