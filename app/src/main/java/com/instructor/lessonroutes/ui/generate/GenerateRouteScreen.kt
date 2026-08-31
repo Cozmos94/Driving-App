@@ -1112,6 +1112,7 @@ private fun FilterRow(
         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(label)
             if (info != null) {
+                Spacer(Modifier.width(4.dp))
                 IconButton(onClick = { showInfo = true }, modifier = Modifier.size(20.dp)) {
                     Icon(Icons.Default.Info, contentDescription = "What does $label mean?")
                 }

@@ -59,13 +59,27 @@ private val client = OkHttpClient.Builder()
  * genuinely ambiguous prefix without more context). The same query with
  * [biasLocation] set to a real NSW point came back with all 5 results as NSW,
  * the correct Wollongong address first -- confirmed live, not assumed.
+ *
+ * A second, separate real bug found the same way (Corey: searching "1 evans"
+ * while located at 1 Evans St, Wollongong didn't show it at all, only showing
+ * it once "st" was typed): confirmed live that Geoapify's own `limit` param
+ * isn't just a dumb truncation of one fixed ranking -- `limit=5` for "1 evans"
+ * (even with the correct [biasLocation] set) returned five *other* states'
+ * results with Wollongong nowhere in them, while `limit=10` for the exact
+ * same query put Wollongong first. [FETCH_LIMIT] over-fetches for this
+ * reason -- giving Geoapify's own ranking more room to work with -- and
+ * [RESULT_LIMIT] below trims back down to a short list afterward, so the
+ * dropdown itself doesn't get longer.
  */
+private const val FETCH_LIMIT = 10
+private const val RESULT_LIMIT = 5
+
 suspend fun searchAddress(query: String, biasLocation: LatLng? = null): List<GeocodeResult> {
     if (query.isBlank()) return emptyList()
 
     return withContext(Dispatchers.IO) {
         val biasParam = biasLocation?.let { "&bias=proximity:${it.longitude},${it.latitude}" } ?: ""
-        val url = "$GEOCODE_URL?text=${Uri.encode(query)}&filter=$NSW_RECT_FILTER$biasParam&limit=5&format=json" +
+        val url = "$GEOCODE_URL?text=${Uri.encode(query)}&filter=$NSW_RECT_FILTER$biasParam&limit=$FETCH_LIMIT&format=json" +
             "&apiKey=${BuildConfig.GEOAPIFY_API_KEY}"
         val request = Request.Builder().url(url).build()
 
@@ -81,11 +95,12 @@ suspend fun searchAddress(query: String, biasLocation: LatLng? = null): List<Geo
             // Re-sorting by actual straight-line distance here guarantees the
             // nearest match always comes first regardless of how Geoapify
             // itself weighted relevance.
-            if (biasLocation != null) {
+            val ordered = if (biasLocation != null) {
                 results.sortedBy { distanceMeters(biasLocation, it.location) }
             } else {
                 results
             }
+            ordered.take(RESULT_LIMIT)
         }
     }
 }
