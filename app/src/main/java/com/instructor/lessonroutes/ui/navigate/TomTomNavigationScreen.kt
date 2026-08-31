@@ -120,6 +120,7 @@ import com.tomtom.sdk.routing.options.RouteLegOptions
 import com.tomtom.sdk.routing.options.RoutePlanningOptions
 import com.tomtom.sdk.routing.options.calculation.ReconstructionMode
 import com.tomtom.sdk.routing.route.Route
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -630,8 +631,31 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     // blank-but-otherwise-working map the first time around, in the *other*
     // sense: NavigationFragment's map never existed at all; this loadStyle
     // call is what makes an actual TomTomMap show real tiles).
+    //
+    // Wrapped in try/catch, previously bare -- a real, confirmed gap: Corey
+    // reported the map showing no buildings/land at all (just a flat
+    // background + this app's own drawn route line/markers), with nothing in
+    // Logcat to explain why. MapStyleState.loadStyle() (the Compose wrapper)
+    // is a plain suspend fun with no return value and no callback param
+    // (confirmed via TomTom's own Dokka reference) -- unlike the raw,
+    // non-Compose StyleController.loadStyle(style, callback) it presumably
+    // wraps internally, which DOES expose a real LoadingStyleFailure (a
+    // message, plus an httpCode on its HttpFailure subclass) on failure. If
+    // the Compose wrapper wraps a real coroutine bridge and surfaces that
+    // failure by throwing (rather than silently doing nothing), this is what
+    // will finally reveal it next time -- previously nothing here could show
+    // whether the base style/tiles genuinely failed to load, vs. some other
+    // rendering issue further down the (still-suspected, see this file's own
+    // native-crash comments) shared-MapLibre-state path.
     LaunchedEffect(Unit) {
-        mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.DRIVING)
+        try {
+            mapViewState.styleState.loadStyle(StandardStyles.TomTomOrbisMaps.DRIVING)
+            Log.d(LOG_TAG, "loadStyle: succeeded")
+        } catch (e: CancellationException) {
+            throw e // normal coroutine cancellation (e.g. screen closed mid-load), not a real failure
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "loadStyle: failed", e)
+        }
     }
 
     LaunchedEffect(isNavigating) {
