@@ -4,6 +4,56 @@ Orientation for a fresh Claude Code session picking this project up. Read
 `spec.md` (original design) and `README.md` (build status, data sources, known
 gotchas) for full detail — this file is the short version plus pointers.
 
+## Most recent: TomTom SDK reverted to 2.4.2 — 2.5.3 broke map rendering entirely
+
+This supersedes the "TomTom Navigation SDK integration" section's own
+version-bump narrative below (still worth reading for the crash-diagnosis
+history — just not its conclusion).
+
+**Confirmed via live on-device testing**: bumping `tomtomSdk` 2.4.2 → 2.5.3 (to
+try to fix a native crash, see below) did NOT fix the crash — a fresh
+tombstone at 2.5.3 crashed in the exact same `mbgl::android::MapRenderer::
+update()` frame as before the bump — and additionally broke map rendering
+completely: the nav screen showed a flat background with zero roads/
+buildings/land. Confirmed this wasn't a style-specific issue (swapped
+`StandardStyles.TomTomOrbisMaps.DRIVING` for `.BROWSING` live, still blank)
+and not a load failure (`MapStyleState.loadStyle()` — wrapped in try/catch
+specifically for this, see `TomTomNavigationScreen.kt` — reported success
+both times). Also confirmed still blank when navigating straight from a
+fresh app launch with no other map screen opened first (an isolation test to
+rule out cross-contamination from this app's *other* MapLibre-based screens
+having been open first). Reverted `tomtomSdk` back to `2.4.2` in
+`gradle/libs.versions.toml` — confirmed live this restores full rendering.
+
+**Leading theory** (not proven, but well-supported, and not fully ruled out
+by the isolation test above since TomTom's own bundled native library is
+loaded regardless of whether *this app's* other MapLibre screens were opened
+first): this project uniquely depends directly on `org.maplibre.gl:
+android-sdk` (used by every non-nav map screen, `RouteMapView.kt`) *in
+addition to* TomTom's own bundled/embedded native MapLibre copy (confirmed
+earlier that TomTom's map rendering is built on MapLibre — a tombstone showed
+`libmaplibre.so` inside `base.apk`, called from TomTom's own `mbgl::android::
+MapRenderer`). If 2.5.3 bundles a different native MapLibre build than 2.4.2
+did, two different native builds of the same engine coexisting in one process
+(regardless of load order) would plausibly explain both the rendering
+breakage and the crash — and would explain why TomTom's own example app
+(also on 2.5.3, confirmed live against their public GitHub repo) doesn't hit
+either problem, since it doesn't separately depend on MapLibre itself.
+
+**Current tradeoff, accepted for now (Corey's explicit call)**: 2.4.2 still
+has the original native crash (`mbgl::android::MapRenderer`, SIGABRT/SIGSEGV,
+recurring at ~10 minutes of continuous navigation in real device testing) —
+fix the map-rendering regression first (done, via the revert) and leave the
+rarer crash as a known, accepted issue rather than keep chasing it blind.
+Real crash evidence (tombstones, Logcat traces) is already gathered if this
+needs picking back up — see "TomTom Navigation SDK integration" below for
+the full crash-diagnosis history.
+
+**Do not bump `tomtomSdk` again without on-device retesting BOTH the crash
+and full map rendering (roads/buildings/land, not just "does it compile /
+does routing still work")** — 2.5.3 looked completely fine by every other
+check; only actually looking at the rendered map caught this.
+
 ## Latest session recap (read this first)
 
 **This section supersedes everything below it up to "What this is"**,
