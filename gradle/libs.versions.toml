@@ -37,9 +37,33 @@ coreSplashscreen = "1.2.0"
 # 0.x/1.x scheme, don't pin it to 2.4.2" warning (see tomtom-sdk-navigation's
 # own comment below) is now stale: TomTom has since unified navigation onto
 # the same 2.x scheme as everything else, so a single shared version bump is
-# safe again. Not yet confirmed this actually fixes the crash -- needs a
-# real on-device retest of 10+ minutes of continuous navigation.
-tomtomSdk = "2.5.3"
+# safe again.
+#
+# REVERTED 2.5.3 -> 2.4.2: the bump didn't fix the crash (a fresh tombstone at
+# 2.5.3 crashed in the exact same mbgl::android::MapRenderer::update() frame,
+# confirmed live via Logcat) and introduced a NEW regression on top of it --
+# the nav screen's base map stopped painting roads/buildings/land entirely
+# (confirmed not style-specific: swapped StandardStyles.TomTomOrbisMaps.DRIVING
+# for .BROWSING as a live diagnostic, still blank; loadStyle() itself reported
+# success both times, so this is the renderer failing to paint, not a style/
+# auth/network failure). Real, confirmed-by-Corey timing: this app's own map
+# screens visibly rendered roads fine (per an earlier screenshot/report) before
+# this bump, and stopped after it -- and this project uniquely also depends
+# directly on org.maplibre.gl:android-sdk (see maplibre below) for every OTHER
+# map screen, on top of TomTom's own bundled native MapLibre copy embedded in
+# its own AAR. If 2.5.3 bundles a different native MapLibre build than 2.4.2
+# did, having two different native builds of the same engine loaded into one
+# process is a very plausible cause of both the rendering breakage and the
+# crash -- and would explain why TomTom's own example app (2.5.3, no separate
+# MapLibre dependency of its own) doesn't hit either problem. Reverting to
+# 2.4.2 is the direct test of that theory -- confirmed working before (aside
+# from the original crash), previously extensively tested, all crash/tombstone
+# evidence this project has already gathered was captured on this exact
+# version. Not yet re-confirmed on-device that reverting actually restores
+# rendering -- if it does, this trades back to living with the original
+# ~10-minute native crash risk rather than a broken map on every session,
+# which needs a real decision, not just reverting and moving on.
+tomtomSdk = "2.4.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
