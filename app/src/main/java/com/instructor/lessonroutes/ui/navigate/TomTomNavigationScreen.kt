@@ -52,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -129,8 +128,6 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
-import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 
@@ -211,68 +208,7 @@ private const val SHAPE_WAYPOINT_COUNT = 20
 // past "20% below center" once Corey checks it, this is the number to retune.
 private const val FOLLOW_MARKER_MIN_BOTTOM_INSET_FRACTION = 0.30f
 
-// See the progress listener's own comment (LiveNavigationMap) for the real
-// ANR this fixes -- only apply a new traveledMeters value (which drives a
-// full re-slice/redraw of the two-tone route line) once it's moved at least
-// this far since the last applied value.
-private const val TRAVELED_METERS_UPDATE_THRESHOLD = 15.0
-
 private fun LatLng.toGeoPoint() = GeoPoint(latitude, longitude)
-
-/** Equirectangular approximation -- fine at route-segment scale (tens of
- * meters to a few km), same approach RouteGenerator.kt/OverpassApi.kt already
- * use elsewhere in this project rather than a full geodesic calculation. */
-private fun approxDistanceMeters(a: LatLng, b: LatLng): Double {
-    val metersPerDegreeLat = 111_320.0
-    val metersPerDegreeLon = 111_320.0 * cos(Math.toRadians(a.latitude))
-    val dx = (b.longitude - a.longitude) * metersPerDegreeLon
-    val dy = (b.latitude - a.latitude) * metersPerDegreeLat
-    return hypot(dx, dy)
-}
-
-/** Running total distance (metres) from [points]'s first point to each of
- * its own points in turn -- e.g. `[0.0, 12.4, 30.1, ...]`. Used to find where
- * along the route's own dense polyline the "already driven" vs "still ahead"
- * split falls (see splitIndexFor), since RouteProgress.distanceAlongRoute is
- * a plain cumulative distance, not an index into this list. */
-private fun cumulativeDistancesMeters(points: List<LatLng>): List<Double> {
-    if (points.isEmpty()) return emptyList()
-    val result = ArrayList<Double>(points.size)
-    result.add(0.0)
-    for (i in 1 until points.size) {
-        result.add(result[i - 1] + approxDistanceMeters(points[i - 1], points[i]))
-    }
-    return result
-}
-
-/** Index of the first point in [cumulative] whose running distance has
- * reached [traveledMeters] -- the split point between the "already driven"
- * and "still ahead" segments of the route line (Corey's request: shade them
- * differently). Falls back to the last index once [traveledMeters] exceeds
- * the whole route's length (e.g. right at arrival).
- *
- * Binary search, not a linear scan -- [cumulative] is monotonically
- * non-decreasing by construction (running totals of non-negative segment
- * lengths), so this is a real O(log n) lower-bound search, not just a
- * micro-optimization. Matters for a long generated route: this is called on
- * every progress update while navigating (see LiveNavigationMap's own
- * DisposableEffect), and a route with thousands of points (a real generated
- * radius-confined trip can have many, e.g. a long backtracking petal loop)
- * made this genuinely expensive per call once combined with how often
- * progress updates can fire -- a real, confirmed contributor to an ANR
- * ("Input dispatching timed out", the app's own process pegged near 100%
- * CPU for the preceding 29s) reported on this exact screen. See
- * TRAVELED_METERS_UPDATE_THRESHOLD below for the other half of that fix. */
-private fun splitIndexFor(cumulative: List<Double>, traveledMeters: Double): Int {
-    if (cumulative.isEmpty()) return 0
-    var low = 0
-    var high = cumulative.lastIndex
-    while (low < high) {
-        val mid = (low + high) / 2
-        if (cumulative[mid] >= traveledMeters) high = mid else low = mid + 1
-    }
-    return if (cumulative[low] >= traveledMeters) low else cumulative.lastIndex
-}
 
 /** Reduces [this] to at most [maxPoints] by even-stride sampling, always
  * keeping the first and last point (start/destination) intact. A no-op when
@@ -752,43 +688,30 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
     var instructionIconVector by remember { mutableStateOf<ImageVector?>(null) }
     var distanceToManeuver by remember { mutableStateOf<Distance?>(null) }
 
-    // Two-tone route line (Corey's request: current-shade blue ahead, darker
-    // blue for the already-driven part behind) -- built ourselves via the
-    // Polyline composable (a plain, general-purpose line-drawing primitive,
-    // separate from the route-planning-specific visualization types) since
-    // RouteStyle -- the style config for NavigationVisualization's own
-    // built-in route line -- only exposes a single activeLineColor for the
-    // *whole* route, confirmed via its real, complete constructor (no
-    // separate traveled/driven color property exists there at all).
-    // distanceAlongRoute (RouteProgress) is the cumulative distance driven so
-    // far; cumulativeDistancesMeters/splitIndexFor turn that into a split
-    // point along route.points' own dense polyline.
-    val routeCumulativeDistances = remember(route) { cumulativeDistancesMeters(route.points) }
-    var traveledMeters by remember { mutableStateOf(0.0) }
-
+    // Was a two-tone route line (current-shade blue ahead, darker blue for
+    // the already-driven part behind), removed entirely per Corey's
+    // explicit request after two real problems: (1) a route-line color that
+    // depended on MaterialTheme.colorScheme.primary happened to resolve to
+    // literally the same color (AppBlack) for both ends on this particular
+    // screen -- see the single remaining lineColor below for the actual
+    // fix to *that* -- and (2) more fundamentally, a genuinely-driven
+    // segment showed up immediately on navigation start, before any real
+    // movement: TomTom's own reported distanceAlongRoute can be a small
+    // non-zero value right away (the reconstructed route's own start point
+    // doesn't necessarily land exactly on the live GPS fix, so some of it
+    // can already read as "covered" purely from that snap, not real
+    // driving). Corey: "there should be no line for 'already driven'... I
+    // don't think there should ever be a line for 'already driven' or a
+    // legend for it... if we're just sticking with the 1 blue colour"
+    // -- simplest fix, and also removes the per-progress-tick re-slicing
+    // that was a real contributor to an ANR on this screen (see the
+    // now-deleted cumulativeDistancesMeters/splitIndexFor -- the single
+    // line below is computed once via remember(route), never recomputed on
+    // a progress update at all).
     DisposableEffect(Unit) {
         val progressListener = ProgressUpdatedListener { progress ->
             remainingTime = progress.remainingTime
             remainingDistance = progress.remainingDistance
-            // Throttled separately from remainingTime/remainingDistance
-            // above (cheap plain-text updates, fine on every tick) --
-            // traveledMeters drives the two-tone route-line recompute
-            // (routeSplitIndex/traveledPoints/remainingPoints below), which
-            // re-slices route.points and rebuilds fresh Polyline data for
-            // the native map engine to redraw. Confirmed live as a real
-            // contributor to an ANR on this screen ("Input dispatching
-            // timed out", the app's own process pegged near 100% CPU,
-            // heavily kernel-time -- consistent with the native renderer's
-            // own draw calls) -- progress updates can fire multiple times a
-            // second, and redoing that work on every single one for a route
-            // with thousands of points adds up fast. A driver can't
-            // perceive the route line updating more often than every ~15m
-            // of travel anyway, so skipping updates smaller than that costs
-            // nothing visually while cutting the redraw rate dramatically.
-            val newTraveledMeters = progress.distanceAlongRoute.inMeters()
-            if (kotlin.math.abs(newTraveledMeters - traveledMeters) >= TRAVELED_METERS_UPDATE_THRESHOLD) {
-                traveledMeters = newTraveledMeters
-            }
         }
         val guidanceListener = object : GuidanceUpdatedListener {
             override fun onAnnouncementGenerated(announcement: GuidanceAnnouncement, shouldPlay: Boolean) {
@@ -833,31 +756,15 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
         }
     }
 
-    val routeSplitIndex = remember(traveledMeters, routeCumulativeDistances) {
-        splitIndexFor(routeCumulativeDistances, traveledMeters)
-    }
-    // Sharing the boundary point between both lists so the two segments
-    // connect without a visible gap where they meet.
-    val traveledPoints = remember(routeSplitIndex, route) {
-        route.points.subList(0, (routeSplitIndex + 1).coerceAtMost(route.points.size))
-    }
-    val remainingPoints = remember(routeSplitIndex, route) {
-        route.points.subList(routeSplitIndex.coerceAtMost(route.points.size - 1), route.points.size)
-    }
-    // Explicit, theme-independent blue -- real, confirmed bug: this screen
-    // renders *before* GenerateRouteScreen.kt's PlanTripTheme wrapper begins
-    // (see the `return` right above where that wrapper starts), so it falls
-    // back to the main app's own theme, where MaterialTheme.colorScheme.primary
-    // is literally AppBlack (this app's whole black/white palette). Lerping
-    // black 45% toward black is still black, which is exactly why Corey
-    // reported the legend showing "Ahead"/"Already driven" as the same
-    // colour. A real, deliberately-picked blue here instead means this
-    // line's own meaning no longer depends on whatever the ambient theme's
-    // primary role happens to resolve to on this particular screen.
-    val remainingLineColor = Color(0xFF1A73E8)
-    // A darker shade of the same hue, not a different color entirely --
-    // matches Corey's original request ("darker blue", not grey/another color).
-    val traveledLineColor = lerp(remainingLineColor, Color.Black, 0.45f)
+    // Explicit, theme-independent blue -- real, confirmed bug from the old
+    // two-tone version: this screen renders *before* GenerateRouteScreen.kt's
+    // PlanTripTheme wrapper begins (see the `return` right above where that
+    // wrapper starts), so it falls back to the main app's own theme, where
+    // MaterialTheme.colorScheme.primary is literally AppBlack. A real,
+    // deliberately-picked blue here instead means this line's own color
+    // doesn't depend on whatever the ambient theme's primary role happens
+    // to resolve to on this particular screen.
+    val routeLineColor = Color(0xFF1A73E8)
 
     Box(Modifier.fillMaxSize()) {
         TomTomMap(
@@ -879,22 +786,15 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
             )
             NavigationVisualization(infrastructure = navigationVisualizationInfrastructure) {}
             // Drawn on top of NavigationVisualization's own (single-color)
-            // route line -- composed after it, so these should render above
-            // it. Each is only drawn once it has at least 2 points (a
-            // 0-or-1-point segment, e.g. before any progress has been made,
-            // isn't a valid line).
-            if (remainingPoints.size >= 2) {
-                Polyline(
-                    data = PolylineData(geoPoints = remainingPoints.map { it.toGeoPoint() }),
-                    properties = PolylineProperties { lineColor = remainingLineColor.toArgb() },
-                )
-            }
-            if (traveledPoints.size >= 2) {
-                Polyline(
-                    data = PolylineData(geoPoints = traveledPoints.map { it.toGeoPoint() }),
-                    properties = PolylineProperties { lineColor = traveledLineColor.toArgb() },
-                )
-            }
+            // route line -- composed after it, so this renders above it.
+            // One single line for the whole route, computed once (route
+            // doesn't change during a navigation session) -- see this
+            // section's own comment above for why the earlier two-tone
+            // version was removed.
+            Polyline(
+                data = PolylineData(geoPoints = route.points.map { it.toGeoPoint() }),
+                properties = PolylineProperties { lineColor = routeLineColor.toArgb() },
+            )
         }
 
         // Floating rounded card with margin, NOT edge-to-edge -- matches
@@ -1023,48 +923,14 @@ private fun LiveNavigationMap(route: GeneratedRoute, tomtomRoute: Route, isNavig
                             )
                         }
                     }
-                    // Legend for the two-tone route line drawn on the map --
-                    // Corey: "I have no idea what the road colours while
-                    // navigating mean... it needs to be more intuitive."
-                    // Only explains the two lines this screen actually draws
-                    // itself (remainingLineColor/traveledLineColor above) --
-                    // other road colors visible on the map (e.g. a highway or
-                    // divided road rendered differently) are the base map
-                    // style's own road-classification styling, not this
-                    // screen's own route-progress rendering, so a legend
-                    // entry for them would be inventing a meaning that isn't
-                    // really there.
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RouteLineLegendSwatch(remainingLineColor)
-                        Text(
-                            "Ahead",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        RouteLineLegendSwatch(traveledLineColor)
-                        Text(
-                            "Already driven",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    // No legend here any more -- Corey: "I don't think there
+                    // should be a legend at all if we're just sticking with
+                    // the 1 blue colour." A single, unambiguous route color
+                    // doesn't need explaining.
                 }
             }
         }
     }
-}
-
-/** A short line-shaped swatch (not a dot/circle) for the route-line legend
- * above -- matches the shape of what it's representing (a line on the map)
- * rather than an arbitrary shape. */
-@Composable
-private fun RouteLineLegendSwatch(color: Color) {
-    Box(Modifier.size(width = 20.dp, height = 4.dp).background(color, RoundedCornerShape(2.dp)))
 }
 
 /** Fallback shown when TomTom fails for any reason (SDK init, reconstruction,

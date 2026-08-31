@@ -903,16 +903,14 @@ fun GenerateRouteScreen(
                 FilterRow(
                     "Hazards",
                     filters.incidents,
-                    // Honest about what this actually covers -- it's live
-                    // TfNSW incident/roadwork data (HazardsApi.kt), NOT
-                    // historical crash "black spot" data, which this app has
-                    // never had a free source for (see README's own notes on
-                    // that gap).
+                    // Trimmed to Corey's exact request -- ends on "(crashes,
+                    // breakdowns, congestion)", no mention of roadworks/
+                    // black-spot data/best-effort wording any more, even
+                    // though the underlying filter still also scores against
+                    // roadwork data (HazardsApi.kt's fetchOpenRoadworks) --
+                    // this popup just doesn't say so explicitly any more.
                     info = "Live, currently-reported hazards from Transport for NSW -- traffic incidents " +
-                        "(crashes, breakdowns, congestion) and roadworks that are open right now. This " +
-                        "doesn't include historical crash \"black spot\" locations -- no free source for " +
-                        "that data has been found yet. Like every filter here, it's best-effort: the " +
-                        "generator steers toward or away from these where it can, not a guarantee.",
+                        "(crashes, breakdowns, congestion).",
                 ) { filters = filters.copy(incidents = it) }
                 FilterRow("Construction zones", filters.constructionZones) { filters = filters.copy(constructionZones = it) }
                 FilterRow("School zones", filters.schoolZones) { filters = filters.copy(schoolZones = it) }
@@ -1106,12 +1104,18 @@ private fun FilterRow(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, modifier = Modifier.weight(1f))
-        if (info != null) {
-            IconButton(onClick = { showInfo = true }, modifier = Modifier.size(24.dp)) {
-                Icon(Icons.Default.Info, contentDescription = "What does $label mean?")
+        // Label + info icon grouped together in their own weighted Row --
+        // Corey: "make the info icon next to 'Hazards' not the Avoid
+        // button". Previously the icon sat right before the Avoid chip
+        // (only a 4dp gap), reading as if it were part of/next to Avoid
+        // rather than the label it's actually explaining.
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(label)
+            if (info != null) {
+                IconButton(onClick = { showInfo = true }, modifier = Modifier.size(20.dp)) {
+                    Icon(Icons.Default.Info, contentDescription = "What does $label mean?")
+                }
             }
-            Spacer(modifier = Modifier.width(4.dp))
         }
         FilterChip(
             selected = preference == FilterPreference.AVOID,
