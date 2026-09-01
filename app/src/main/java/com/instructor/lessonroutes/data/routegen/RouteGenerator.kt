@@ -894,10 +894,34 @@ fun pickBestAvoidanceAwareRoute(
     } else {
         outcomes
     }
-    val minHits = pool.minOf { it.remainingHitCount }
-    val leastViolating = pool.filter { it.remainingHitCount == minHits }
+    // Real, confirmed regression without this: "fewest violations wins outright" had no
+    // floor on how bad the winning candidate's own duration was allowed to be -- a tiny,
+    // degenerate-duration candidate (e.g. 15min against a 60min target) could beat a
+    // well-matched one purely by having one fewer roundabout hit, however catastrophically
+    // wrong its own duration was. Corey: asked for a 1h loop, 5km radius, got a 15min route
+    // back (that *still* couldn't avoid the roundabout either). Avoidance staying the
+    // dominant tier is intentional and unchanged (see this function's own history above --
+    // "prioritise the avoidance over the preference") -- this only adds a sanity floor
+    // *before* that ranking, not a return to duration-first scoring: a candidate has to be
+    // within MAX_DURATION_ERROR_RATIO of the target to be eligible for the violation-count
+    // comparison at all. Falls back to the full pool if literally nothing qualifies, rather
+    // than stranding the instructor with no route at all.
+    val durationPlausible = pool
+        .filter { abs(it.route.durationSeconds - targetSeconds) <= targetSeconds * MAX_DURATION_ERROR_RATIO }
+        .ifEmpty { pool }
+    val minHits = durationPlausible.minOf { it.remainingHitCount }
+    val leastViolating = durationPlausible.filter { it.remainingHitCount == minHits }
     return leastViolating.maxByOrNull { preferAndDurationScore(it.route, filters, scoringData, targetSeconds) }
 }
+
+// How far a candidate's own duration may miss [targetSeconds] and still be eligible for the
+// violation-count comparison in [pickBestAvoidanceAwareRoute] -- 50%, deliberately looser than
+// DURATION_TOLERANCE_SECONDS' own "converged" bar (10 real minutes, too tight an absolute floor
+// for a trip that could be anywhere from 20 minutes to several hours), just tight enough to
+// rule out a genuinely degenerate result (a 15min route for a 60min target is 75% off, well
+// outside this) while still leaving real room for an avoidance-driven detour to cost more time
+// than originally planned, which is an accepted, expected trade-off, not a bug.
+private const val MAX_DURATION_ERROR_RATIO = 0.5
 
 /** Prefer-category proximity score minus duration-error, same weighting style as
  * [scoreRoute] but deliberately excluding every Avoid category -- avoidance is already
