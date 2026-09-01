@@ -172,6 +172,29 @@ private const val AVG_SPEED_KMH = 40.0
 // candidates; with [0, 120, 240] it has one. Restored to 3 for reliability;
 // there was no real speed to trade away in the first place.
 private val CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 120.0, 240.0)
+
+// Public alias so GenerateRouteScreen.kt can pass this explicitly alongside
+// EXPANDED_CANDIDATE_BEARINGS_DEGREES below when choosing which to request,
+// rather than needing generateCandidateRoutes' own default parameter value
+// to be inspectable from outside this file.
+val DEFAULT_CANDIDATE_BEARINGS_DEGREES = CANDIDATE_BEARINGS_DEGREES
+
+// Used instead of CANDIDATE_BEARINGS_DEGREES by GenerateRouteScreen.kt when
+// any category is set to Avoid -- Corey: "This app needs to completely avoid
+// filtered obstacles, no matter what." A true, unconditional guarantee would
+// need this app to run its own offline routing engine over a full downloaded
+// road-network graph with hard node exclusions -- a genuinely enormous
+// undertaking (processing/hosting regional OSM extracts, building/
+// maintaining a routing graph) wildly disproportionate to this app, and it
+// still couldn't invent a road that doesn't exist if a destination
+// genuinely has exactly one physical way in. What this *can* do, on top of
+// generateCandidateRoutes' third-party black-box routing API: try enough
+// genuinely different candidate shapes that finding one that naturally
+// avoids an obstacle (rather than fighting the one 3-bearing search happened
+// to try) becomes realistic -- 6 evenly-spaced bearings instead of 3, run
+// concurrently (see generateCandidateRoutes' own `async`/`awaitAll`), so the
+// wall-clock cost is dominated by the slowest single bearing, not their sum.
+val EXPANDED_CANDIDATE_BEARINGS_DEGREES = listOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
 private const val MAX_RADIUS_ITERATIONS = 3
 // How many shrink+rotate retries an unroutable petal ring gets *within* one
 // outer duration-convergence iteration before that iteration gives up -- see
@@ -305,6 +328,13 @@ suspend fun generateCandidateRoutes(
     targetDurationMinutes: Int,
     avoidHighways: Boolean = false,
     maxRadiusKm: Double? = null,
+    // Overridable so GenerateRouteScreen.kt can request EXPANDED_CANDIDATE_
+    // BEARINGS_DEGREES instead when any category is set to Avoid -- more
+    // candidate shapes means a real chance of finding one that naturally
+    // avoids an obstacle, not just whichever of 3 fixed directions happened
+    // to be tried. Defaults to the fast/normal set so the common "no Avoid
+    // filters set" case pays no extra cost for this.
+    bearings: List<Double> = CANDIDATE_BEARINGS_DEGREES,
 ): List<GeneratedRoute> = coroutineScope {
     val targetSeconds = targetDurationMinutes * 60.0
 
@@ -336,7 +366,7 @@ suspend fun generateCandidateRoutes(
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: radius-confined mode, target=${targetDurationMinutes}min, " +
-                "maxRadiusKm=$maxRadiusKm, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, avoidHighways=$avoidHighways, " +
+                "maxRadiusKm=$maxRadiusKm, bearings=${bearings.size}, avoidHighways=$avoidHighways, " +
                 "start=${effectiveStart.latitude},${effectiveStart.longitude} (originally ${start.latitude},${start.longitude}), " +
                 "destination=${destination.latitude},${destination.longitude}",
         )
@@ -378,7 +408,7 @@ suspend fun generateCandidateRoutes(
             },
         )
         retryIfEmpty {
-            CANDIDATE_BEARINGS_DEGREES
+            bearings
                 .map { bearing ->
                     async {
                         refineCandidateWithinRadius(effectiveStart, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
@@ -393,11 +423,11 @@ suspend fun generateCandidateRoutes(
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
-                "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${CANDIDATE_BEARINGS_DEGREES.size}, " +
+                "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${bearings.size}, " +
                 "avoidHighways=$avoidHighways",
         )
         retryIfEmpty {
-            CANDIDATE_BEARINGS_DEGREES
+            bearings
                 .map { bearing ->
                     async {
                         refineCandidate(effectiveStart, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
@@ -408,7 +438,7 @@ suspend fun generateCandidateRoutes(
         }
     }
 
-    Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size} candidate route(s) from ${CANDIDATE_BEARINGS_DEGREES.size} bearings")
+    Log.d(LOG_TAG, "generateCandidateRoutes: ${candidates.size} candidate route(s) from ${bearings.size} bearings")
     candidates
 }
 
@@ -533,7 +563,17 @@ private suspend fun snapStartToRoutableGround(start: LatLng, destination: LatLng
     start
 }
 
-/** Picks whichever of [candidates] best matches [filters] (proximity-scored
+/** No longer called from GenerateRouteScreen.kt's main flow -- superseded by
+ * [pickBestAvoidanceAwareRoute] (a strict superset: with no category set to
+ * Avoid, every candidate ties at zero violations and it falls through to the
+ * same Prefer/duration weighting this function used, so behavior is
+ * unchanged in that case). Kept in place, not deleted, for its own
+ * historical doc comment below (the real duration-scoring bug it fixed) and
+ * because it's still a coherent, independently-useful/-testable function on
+ * its own -- same reasoning this project already applies to CreateRouteScreen.kt/
+ * FollowScreen.kt staying in place unwired.
+ *
+ * Picks whichever of [candidates] best matches [filters] (proximity-scored
  * against [scoringData]) *and* how close its own actual duration is to
  * [targetSeconds] -- null if [candidates] is empty. Duration-closeness was
  * previously not part of this decision at all: each bearing's own refinement
@@ -600,15 +640,18 @@ private const val MAX_AVOIDANCE_REROUTE_ITERATIONS = 4
 // was observed at this exact number.
 private const val MAX_AVOID_LOCATIONS = 40
 
-/** Outcome of [rerouteAvoidingHits]: the (possibly improved) route, plus the
+/** Outcome of [rerouteAvoidingHits]: the (possibly improved) route, the
  * display-name label (see [ALL_FILTER_LABELS]) of every active Avoid
  * category that still has at least one hit on it after every reroute attempt
- * -- empty means every active Avoid category was fully steered around.
- * Callers should surface a non-empty list honestly (e.g. "couldn't fully
- * avoid: X — no alternative route was possible") rather than silently
- * presenting a route that still violates a filter the instructor explicitly
- * set to Avoid. */
-data class AvoidanceOutcome(val route: GeneratedRoute, val unavoidableCategories: List<String>)
+ * (empty means every active Avoid category was fully steered around), and
+ * [remainingHitCount] -- the total number of individual points still hit
+ * across every category, not just how many categories -- used by
+ * [pickBestAvoidanceAwareRoute] to rank several outcomes by violation
+ * severity, not just violation presence. Callers should surface a non-empty
+ * [unavoidableCategories] honestly (e.g. "couldn't fully avoid: X — no
+ * alternative route was possible") rather than silently presenting a route
+ * that still violates a filter the instructor explicitly set to Avoid. */
+data class AvoidanceOutcome(val route: GeneratedRoute, val unavoidableCategories: List<String>, val remainingHitCount: Int)
 
 /**
  * Iteratively re-requests [route]'s own [GeneratedRoute.waypointChain], hard-avoiding
@@ -633,18 +676,29 @@ data class AvoidanceOutcome(val route: GeneratedRoute, val unavoidableCategories
  * however much longer it makes the trip.
  *
  * This also implements "Avoid overrides Prefer" as an emergent property rather than needing
- * separate logic for it: whatever influenced [pickBestRoute]'s original pick (including any
- * Prefer-category proximity), this function unconditionally strips out every active Avoid
- * category's hits from whatever chain that pick used -- if the only way to stay near a
- * Prefer-flagged point was through an Avoid-flagged one, rerouting away from the Avoid point
- * naturally routes away from that Prefer point too, without this needing to know *why* the
- * original route went where it did. One real, honest limitation this can't overcome: with
- * only [CANDIDATE_BEARINGS_DEGREES]'s few candidate shapes generated in the first place,
- * this can't proactively choose *between* several Prefer-eligible options based on which one
- * avoids an Avoid category best (e.g. picking School Zone A over School Zone B because A
- * doesn't need a roundabout) -- it can only steer the one already-picked route away from
- * violations after the fact. Solving that properly would need a fundamentally different,
- * much larger architecture (real per-point reachability modeling), not a reroute step.
+ * separate logic for it: whatever influenced a candidate's original pick, this function
+ * unconditionally strips out every active Avoid category's hits from whatever chain it
+ * used -- if the only way to stay near a Prefer-flagged point was through an Avoid-flagged
+ * one, rerouting away from the Avoid point naturally routes away from that Prefer point too,
+ * without this needing to know *why* the original route went where it did.
+ *
+ * Called on *every* candidate [generateCandidateRoutes] returns (see
+ * [EXPANDED_CANDIDATE_BEARINGS_DEGREES], used instead of the normal, faster bearing set
+ * whenever any category is Avoid), not just whichever one soft-scoring happened to favor --
+ * [pickBestAvoidanceAwareRoute] then picks among the *results*, prioritizing fewest remaining
+ * violations first. This is the direct fix for the "can't choose between several Prefer-
+ * eligible options based on which one avoids an obstacle best" limitation this doc comment
+ * used to describe as unsolved (Corey: "This app needs to completely avoid filtered
+ * obstacles, no matter what"): trying several genuinely different candidate shapes up front,
+ * then hard-avoiding on each independently before comparing them, means a shape that happens
+ * to reach a Prefer-eligible point *without* needing an Avoid-flagged one has a real chance
+ * to be found and picked, rather than this function only ever steering the one already-
+ * favored (possibly worse-suited) shape. Not an unconditional guarantee -- that would need
+ * this app to run its own offline routing engine over a full downloaded road-network graph
+ * with hard exclusions, an enormous undertaking wildly disproportionate to this app, and it
+ * still couldn't invent a road that doesn't exist if a destination genuinely has exactly one
+ * physical way in -- but a real, substantially more thorough search than before, not just a
+ * documented limitation left unaddressed.
  *
  * Still deliberately narrower than the broad "avoid every point in a whole category up
  * front, before any chain is even known to route at all" approach GeoapifyRoutingApi.kt's
@@ -673,7 +727,7 @@ suspend fun rerouteAvoidingHits(
         if (filters.schoolZones == FilterPreference.AVOID) add("School zones" to scoringData.schoolZones)
         if (filters.speedCameras == FilterPreference.AVOID) add("Speed cameras" to scoringData.speedCameras)
     }
-    if (avoidCategories.isEmpty() || route.waypointChain.size < 2) return AvoidanceOutcome(route, emptyList())
+    if (avoidCategories.isEmpty() || route.waypointChain.size < 2) return AvoidanceOutcome(route, emptyList(), 0)
 
     fun hitsByCategory(points: List<LatLng>): Map<String, List<LatLng>> =
         avoidCategories.associate { (label, categoryPoints) -> label to findNearbyHits(categoryPoints, points) }
@@ -684,13 +738,13 @@ suspend fun rerouteAvoidingHits(
     repeat(MAX_AVOIDANCE_REROUTE_ITERATIONS) {
         val hits = hitsByCategory(current.points)
         val hitPoints = hits.values.flatten()
-        if (hitPoints.isEmpty()) return AvoidanceOutcome(current, emptyList())
+        if (hitPoints.isEmpty()) return AvoidanceOutcome(current, emptyList(), 0)
 
         cumulativeAvoidLocations.addAll(hitPoints)
         val distinctAvoidLocations = cumulativeAvoidLocations.distinct()
         if (distinctAvoidLocations.size > MAX_AVOID_LOCATIONS) {
             Log.w(LOG_TAG, "rerouteAvoidingHits: hit the $MAX_AVOID_LOCATIONS avoid-location cap -- stopping, best effort")
-            return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList())
+            return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
         }
 
         val rerouted = try {
@@ -701,7 +755,7 @@ suspend fun rerouteAvoidingHits(
             null
         }
         if (rerouted == null || rerouted.durationSeconds < MIN_PLAUSIBLE_DURATION_SECONDS) {
-            return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList())
+            return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
         }
 
         val newRoute = GeneratedRoute(rerouted.points, rerouted.durationSeconds, rerouted.distanceMeters, current.waypointChain)
@@ -717,14 +771,69 @@ suspend fun rerouteAvoidingHits(
                 "rerouteAvoidingHits: reroute made no progress (${hitPoints.size} -> $newHitCount hits) -- " +
                     "stopping, best effort",
             )
-            return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList())
+            return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
         }
         Log.d(LOG_TAG, "rerouteAvoidingHits: reduced hits ${hitPoints.size} -> $newHitCount, continuing")
         current = newRoute
     }
 
     val remaining = hitsByCategory(current.points)
-    return AvoidanceOutcome(current, remaining.filterValues { it.isNotEmpty() }.keys.toList())
+    val remainingCount = remaining.values.sumOf { it.size }
+    return AvoidanceOutcome(current, remaining.filterValues { it.isNotEmpty() }.keys.toList(), remainingCount)
+}
+
+/**
+ * Picks the best [AvoidanceOutcome] among [outcomes] -- each already run through
+ * [rerouteAvoidingHits] -- using a strict, tiered priority instead of one blended score:
+ * (1) fewest remaining Avoid-category hits (ideally zero), (2) among ties, best Prefer-
+ * category proximity, (3) among remaining ties, closest duration match to [targetSeconds].
+ * This is the direct fix for "Avoid needs to actually beat Prefer, which needs to beat
+ * duration-matching, not get blended into one number" -- see [rerouteAvoidingHits]' own doc
+ * comment for the fuller context (Corey: "we need to prioritise the avoidance over the
+ * preference"). Radius filtering (same semantics as [pickBestRoute]) is applied first, over
+ * every outcome's own (possibly rerouted) [AvoidanceOutcome.route].
+ *
+ * Null if [outcomes] is empty.
+ */
+fun pickBestAvoidanceAwareRoute(
+    outcomes: List<AvoidanceOutcome>,
+    filters: RouteGenerationFilters,
+    scoringData: ScoringData,
+    targetSeconds: Double,
+    start: LatLng? = null,
+    maxRadiusKm: Double? = null,
+): AvoidanceOutcome? {
+    if (outcomes.isEmpty()) return null
+    val pool = if (start != null && maxRadiusKm != null) {
+        outcomes.filterNot { routeExceedsRadius(it.route, start, maxRadiusKm) }.ifEmpty { outcomes }
+    } else {
+        outcomes
+    }
+    val minHits = pool.minOf { it.remainingHitCount }
+    val leastViolating = pool.filter { it.remainingHitCount == minHits }
+    return leastViolating.maxByOrNull { preferAndDurationScore(it.route, filters, scoringData, targetSeconds) }
+}
+
+/** Prefer-category proximity score minus duration-error, same weighting style as
+ * [scoreRoute] but deliberately excluding every Avoid category -- avoidance is already
+ * handled as its own, strictly higher-priority tier by [pickBestAvoidanceAwareRoute];
+ * mixing it back in here would undo that priority ordering. */
+private fun preferAndDurationScore(route: GeneratedRoute, filters: RouteGenerationFilters, data: ScoringData, targetSeconds: Double): Double {
+    var preferScore = 0
+    fun apply(preference: FilterPreference, pointsOfInterest: List<LatLng>) {
+        if (preference != FilterPreference.PREFER || pointsOfInterest.isEmpty()) return
+        preferScore += countNearby(pointsOfInterest, route.points)
+    }
+    apply(filters.incidents, data.incidents)
+    apply(filters.constructionZones, data.constructionZones)
+    apply(filters.schoolZones, data.schoolZones)
+    apply(filters.speedCameras, data.speedCameras)
+    apply(filters.roundabouts, data.roundabouts)
+    apply(filters.mergingLanes, data.mergeLaneProxies)
+    apply(filters.highways, data.majorRoads)
+    apply(filters.highTraffic, data.highTraffic)
+    val durationErrorMinutes = abs(route.durationSeconds - targetSeconds) / 60.0
+    return preferScore - durationErrorMinutes * DURATION_ERROR_WEIGHT_PER_MINUTE
 }
 
 /** Returns the converged (or best-effort) route for this bearing, or null if

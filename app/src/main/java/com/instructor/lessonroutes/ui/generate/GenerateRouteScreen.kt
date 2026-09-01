@@ -85,6 +85,8 @@ import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchRoundabouts
 import com.instructor.lessonroutes.data.remote.searchAddress
+import com.instructor.lessonroutes.data.routegen.DEFAULT_CANDIDATE_BEARINGS_DEGREES
+import com.instructor.lessonroutes.data.routegen.EXPANDED_CANDIDATE_BEARINGS_DEGREES
 import com.instructor.lessonroutes.data.routegen.FilterPreference
 import com.instructor.lessonroutes.data.routegen.FilterSummary
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
@@ -94,7 +96,7 @@ import com.instructor.lessonroutes.data.routegen.distanceKm
 import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
 import com.instructor.lessonroutes.data.routegen.midpoint
-import com.instructor.lessonroutes.data.routegen.pickBestRoute
+import com.instructor.lessonroutes.data.routegen.pickBestAvoidanceAwareRoute
 import com.instructor.lessonroutes.data.routegen.rerouteAvoidingHits
 import com.instructor.lessonroutes.data.routegen.routeExceedsRadius
 import com.instructor.lessonroutes.data.routegen.summarize
@@ -116,6 +118,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -408,6 +411,16 @@ fun GenerateRouteScreen(
                 // exactly where the time goes on the *next* attempt instead of
                 // guessing a fourth time. Check Logcat tag GenerateRouteScreen.
                 val overallStartMs = System.currentTimeMillis()
+                // Any category actually set to Avoid switches generation into a
+                // deliberately more thorough (and slower) mode -- see
+                // EXPANDED_CANDIDATE_BEARINGS_DEGREES' own doc comment. Left at
+                // the fast/normal set otherwise, so the common "no Avoid
+                // filters set" case pays no extra cost for machinery it
+                // doesn't need.
+                val hasAnyAvoidFilter = listOf(
+                    filters.incidents, filters.constructionZones, filters.schoolZones, filters.speedCameras,
+                    filters.roundabouts, filters.mergingLanes, filters.highTraffic,
+                ).any { it == FilterPreference.AVOID }
                 val result = withTimeoutOrNull(OVERALL_GENERATION_TIMEOUT_MS) {
                     val center = midpoint(start, end)
                     val radiusDegrees = estimateSearchRadiusDegrees(minutes)
@@ -426,6 +439,7 @@ fun GenerateRouteScreen(
                                 minutes,
                                 avoidHighways = filters.highways == FilterPreference.AVOID,
                                 maxRadiusKm = selectedRadiusKm,
+                                bearings = if (hasAnyAvoidFilter) EXPANDED_CANDIDATE_BEARINGS_DEGREES else DEFAULT_CANDIDATE_BEARINGS_DEGREES,
                             )
                         } ?: emptyList()
                     }
@@ -443,61 +457,55 @@ fun GenerateRouteScreen(
                         "scoring finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
                             "emptyCategories=${scoringResult.emptyCategories}",
                     )
-                    // pickBestRoute does a nested proximity-comparison loop over
-                    // every scoring point x every route point -- for Highways/
-                    // Roundabouts/Merging lanes, whose Overpass data is every
-                    // vertex of every matching road (can be thousands for a wide
-                    // search area), that's real CPU work, not I/O. scope.launch
-                    // here runs on the Main dispatcher (rememberCoroutineScope's
-                    // default), so without this it was blocking the UI thread
-                    // outright -- the reported "hangs and becomes unresponsive",
-                    // not just a slow network wait.
-                    val picked = withContext(Dispatchers.Default) {
-                        pickBestRoute(
-                            candidates,
-                            filters,
-                            scoringResult.data,
-                            targetSeconds = minutes * 60.0,
-                            start = start,
-                            maxRadiusKm = selectedRadiusKm,
-                        )
-                    }
-                    Log.d(
-                        LOG_TAG,
-                        "pickBestRoute finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
-                            "picked=${picked != null}",
-                    )
-                    // One extra step, only for the already-picked winner: for
-                    // every category set to Avoid, actually steer away from the
-                    // specific points *this* route hits, rather than leaving it
-                    // to the soft proximity-score tie-break above (with only 3
-                    // candidate shapes total and duration-closeness weighted 10x
-                    // heavier than any filter hit, that tie-break rarely
-                    // actually changes which candidate wins). Avoid is treated
-                    // as a real priority here -- see rerouteAvoidingHits' own
-                    // doc comment for Corey's explicit correction on this point
-                    // ("that is the whole point of this app") and why an
-                    // earlier, duration-tolerant version of this step wasn't
-                    // enough. Dispatchers.Default for the same reason
-                    // pickBestRoute above needs it: this does its own nested
+                    // Real priority fix, not a scoring tweak: Avoid needs to
+                    // actually beat both Prefer and duration-matching, not get
+                    // blended into one number alongside them (Corey: "That is
+                    // the whole point of this app" / "we need to prioritise the
+                    // avoidance over the preference"). rerouteAvoidingHits runs
+                    // on *every* candidate (not just whichever one a soft score
+                    // happened to favor first), each hard-avoiding the specific
+                    // Avoid-category points it hits (Geoapify's real
+                    // avoid=location:lat,lon), and pickBestAvoidanceAwareRoute
+                    // then picks among the results by a strict tier order:
+                    // fewest remaining violations first, Prefer-proximity and
+                    // duration only break ties among equally-violation-free
+                    // candidates. Concurrent across candidates (async/awaitAll)
+                    // so EXPANDED_CANDIDATE_BEARINGS_DEGREES' extra candidates
+                    // don't cost extra wall-clock time beyond the slowest one.
+                    // Dispatchers.Default for the same reason the old
+                    // pickBestRoute needed it: each call does its own nested
                     // proximity-comparison loop before ever making a network
                     // call, on whatever dispatcher scope.launch itself runs on
-                    // (Main) -- the same real ANR risk pickBestRoute's own
-                    // comment already documents.
-                    if (picked != null) {
-                        val outcome = withContext(Dispatchers.Default) {
-                            rerouteAvoidingHits(
-                                picked,
-                                filters,
-                                scoringResult.data,
-                                avoidHighways = filters.highways == FilterPreference.AVOID,
-                            )
-                        }
-                        unavoidableCategories = outcome.unavoidableCategories
-                        outcome.route
-                    } else {
-                        null
+                    // (Main) -- not doing this was the real cause of a past ANR.
+                    val outcomes = withContext(Dispatchers.Default) {
+                        candidates
+                            .map { candidate ->
+                                async {
+                                    rerouteAvoidingHits(
+                                        candidate,
+                                        filters,
+                                        scoringResult.data,
+                                        avoidHighways = filters.highways == FilterPreference.AVOID,
+                                    )
+                                }
+                            }
+                            .awaitAll()
                     }
+                    val outcome = pickBestAvoidanceAwareRoute(
+                        outcomes,
+                        filters,
+                        scoringResult.data,
+                        targetSeconds = minutes * 60.0,
+                        start = start,
+                        maxRadiusKm = selectedRadiusKm,
+                    )
+                    Log.d(
+                        LOG_TAG,
+                        "pickBestAvoidanceAwareRoute finished at t=${System.currentTimeMillis() - overallStartMs}ms, " +
+                            "picked=${outcome != null}, unavoidable=${outcome?.unavoidableCategories}",
+                    )
+                    unavoidableCategories = outcome?.unavoidableCategories.orEmpty()
+                    outcome?.route
                 }
                 Log.d(
                     LOG_TAG,
@@ -1337,8 +1345,23 @@ private data class ScoringFetchResult(val data: ScoringData, val emptyCategories
 // The whole-generation ceiling, and routing's own independent share of it --
 // see onGenerateClick's own comment on the withTimeoutOrNull that uses this,
 // and OVERPASS_SCORING_FETCH_TIMEOUT_MS below for the scoring side's share.
-// Corey: "I don't want the user waiting any longer than 30 seconds."
-private const val OVERALL_GENERATION_TIMEOUT_MS = 30_000L
+//
+// Bumped 30s -> 55s: a direct, acknowledged tension with an earlier, explicit
+// preference (Corey: "I don't want the user waiting any longer than 30
+// seconds") versus a later, more emphatic one that supersedes it for the
+// case this actually affects (Corey: "This app needs to completely avoid
+// filtered obstacles, no matter what... that is the whole point of this
+// app"). rerouteAvoidingHits now runs once per candidate (concurrently, but
+// still a real extra sequential chain per candidate -- up to
+// MAX_AVOIDANCE_REROUTE_ITERATIONS calls each) *after* routing and scoring
+// both already finished, on top of whatever those two phases already cost --
+// a real, additional worst case, not just a reshuffling of the existing
+// budget. Only the Avoid-filter path actually needs this extra room
+// (rerouteAvoidingHits is a fast no-op with nothing active to avoid); the
+// plain "no Avoid filters set" case still finishes in roughly the same time
+// as before. Still comfortably under the existing "this can take up to a
+// minute" UI copy, which was already more generous than the old 30s value.
+private const val OVERALL_GENERATION_TIMEOUT_MS = 55_000L
 
 // Bounds candidate generation independently of the overall ceiling above --
 // RouteGenerator.kt's own internal retry loops (radius-confined mode
