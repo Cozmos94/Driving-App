@@ -366,7 +366,15 @@ suspend fun generateCandidateRoutes(
     // doc comment for the fix.
     val effectiveStart = snapStartToRoutableGround(start, destination, avoidHighways)
 
-    val candidates = if (maxRadiusKm != null) {
+    // Hoisted out of the `if` branch below (was a local `val` there) so the
+    // expanded-bearings-failed fallback further down -- which needs to reuse
+    // the exact same isoline data for its own retry, not re-fetch it -- can
+    // still see it. Stays null when maxRadiusKm is null (the fallback only
+    // ever runs in radius-confined mode anyway, since refineCandidate's own
+    // unconstrained mode never uses this).
+    var reachableArea: ReachableArea? = null
+
+    var candidates = if (maxRadiusKm != null) {
         // start/destination logged explicitly here -- confirmed needed live:
         // the actual failing routing request is the full [start, petal(s),
         // destination] chain, not just the petal in isolation. A petal that
@@ -409,7 +417,7 @@ suspend fun generateCandidateRoutes(
         // -- a known-working (if less precise) baseline beats acting on data
         // that's already proven internally inconsistent.
         val fetchedArea = fetchReachableArea(effectiveStart, maxRadiusKm)
-        val reachableArea = fetchedArea?.takeIf { it.contains(effectiveStart) }
+        reachableArea = fetchedArea?.takeIf { it.contains(effectiveStart) }
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: isoline reachable-area fetch " + when {
@@ -447,6 +455,60 @@ suspend fun generateCandidateRoutes(
                 }
                 .awaitAll()
                 .filterNotNull()
+        }
+    }
+
+    // Real, confirmed regression from EXPANDED_CANDIDATE_BEARINGS_DEGREES
+    // itself: live-tested at a real 10km-radius Wollongong case (coastal +
+    // escarpment, already this generator's own established hard geography),
+    // 4 of the 6 evenly-spread bearings genuinely had no reachable road at
+    // all in that direction, while the *old* 3-bearing set happened to land
+    // on 2 of the exact 2 that did work here -- more bearings doesn't just
+    // fail to help in this kind of geography, it actively hurts, by putting
+    // more of the search into directions with no road network at all,
+    // competing for the same MAX_UNROUTABLE_RETRIES budget each. Confirmed
+    // live via Corey's own report: identical setup failed outright in ~5s
+    // (too fast to be ROUTING_GENERATION_TIMEOUT_MS firing -- consistent
+    // with every bearing failing fast on a real "No suitable edges"
+    // rejection, not a slow timeout) until moving the trip start further
+    // inland, away from the dead zone, fixed it.
+    //
+    // Fixed the same way this file already handles every other "the fancier
+    // path didn't pan out" case (the OSRM outage fallback, the isoline
+    // self-consistency fallback): fall back to the plain default bearing set
+    // if the expanded one found nothing, rather than failing outright. Only
+    // fires when `bearings` was actually something other than the default
+    // (skips the redundant retry in the common, non-Avoid-filter case).
+    if (candidates.isEmpty() && bearings !== CANDIDATE_BEARINGS_DEGREES) {
+        Log.w(
+            LOG_TAG,
+            "generateCandidateRoutes: expanded bearing set (${bearings.size}) found zero candidates -- " +
+                "falling back to the default ${CANDIDATE_BEARINGS_DEGREES.size}-bearing set",
+        )
+        candidates = if (maxRadiusKm != null) {
+            retryIfEmpty {
+                CANDIDATE_BEARINGS_DEGREES
+                    .map { bearing ->
+                        async {
+                            refineCandidateWithinRadius(effectiveStart, destination, bearing, maxRadiusKm, targetSeconds, avoidHighways, reachableArea)
+                        }
+                    }
+                    .awaitAll()
+                    .filterNotNull()
+            }
+        } else {
+            val base = midpoint(effectiveStart, destination)
+            val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
+            retryIfEmpty {
+                CANDIDATE_BEARINGS_DEGREES
+                    .map { bearing ->
+                        async {
+                            refineCandidate(effectiveStart, destination, base, bearing, initialRadiusKm, targetSeconds, avoidHighways)
+                        }
+                    }
+                    .awaitAll()
+                    .filterNotNull()
+            }
         }
     }
 
