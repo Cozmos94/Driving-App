@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,6 +54,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -1195,8 +1197,22 @@ private fun FilterRow(
             }
         }
         Box {
+            // Explicit trailing caret, rotated 180° while open -- Corey: "make
+            // the obstacle buttons more obviously a drop down... they still
+            // just look like buttons." A plain OutlinedButton with just text
+            // gives no visual hint it opens a menu rather than acting
+            // immediately on tap, unlike RadiusPicker's own "Radius: Xkm"
+            // button above, which reads as a button because tapping it always
+            // opens a picker either way -- this row's old two-chip look meant
+            // instructors had no prior expectation to fall back on here.
             OutlinedButton(onClick = { expanded = true }) {
                 Text(preference.displayLabel(), color = preference.displayColor())
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    modifier = Modifier.rotate(if (expanded) 180f else 0f),
+                )
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 FilterPreference.entries.forEach { option ->
