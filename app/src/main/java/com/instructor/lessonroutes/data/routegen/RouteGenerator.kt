@@ -440,11 +440,23 @@ suspend fun generateCandidateRoutes(
     } else {
         val base = midpoint(effectiveStart, destination)
         val initialRadiusKm = initialRadiusKm(targetDurationMinutes)
+        // start/destination logged here too now, same as the radius-confined
+        // branch above -- a real, confirmed gap: without these coordinates
+        // there was no way to tell, after the fact, whether a route that
+        // looked like it "didn't start near" a searched starting address
+        // actually used that address at all (e.g. the search box was typed
+        // into but never confirmed by tapping a result) versus genuinely
+        // using it but swinging the detour far from it anyway (a short
+        // start/destination distance wanting a long target duration forces a
+        // detour point that can orbit well away from `base`, which itself
+        // can already be well away from either endpoint).
         Log.d(
             LOG_TAG,
             "generateCandidateRoutes: target=${targetDurationMinutes}min, " +
                 "initialRadius=${"%.2f".format(initialRadiusKm)}km, bearings=${bearings.size}, " +
-                "avoidHighways=$avoidHighways",
+                "avoidHighways=$avoidHighways, " +
+                "start=${effectiveStart.latitude},${effectiveStart.longitude}, " +
+                "destination=${destination.latitude},${destination.longitude}",
         )
         retryIfEmpty {
             bearings

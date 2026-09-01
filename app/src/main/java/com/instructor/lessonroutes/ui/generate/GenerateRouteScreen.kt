@@ -279,7 +279,15 @@ fun GenerateRouteScreen(
         val queryForThisSearch = searchQuery
         performAddressSearch(
             query = queryForThisSearch,
-            biasLocation = currentLocation,
+            // radiusAnchorOverride ?: currentLocation (effectiveStart's own
+            // expression -- that val isn't declared until later in this
+            // function) rather than plain currentLocation -- a real, latent
+            // gap the new starting-address search exposed: destination
+            // search should bias toward wherever the trip actually starts
+            // from, not necessarily wherever the device physically is, once
+            // those two can differ (e.g. planning a trip starting somewhere
+            // other than where the instructor currently is).
+            biasLocation = radiusAnchorOverride ?: currentLocation,
             lastAppliedResultLabel = lastAppliedResultLabel,
             isStillCurrent = { searchQuery == queryForThisSearch },
             onSearching = { isSearching = it },
