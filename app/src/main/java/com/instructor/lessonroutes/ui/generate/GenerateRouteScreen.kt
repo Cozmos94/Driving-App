@@ -1426,26 +1426,33 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
             // -- an assumption, not something ClockTheme's own MaterialTheme
             // wrapper can guarantee across Compose Material3 versions.
             // Passing every slot explicitly here removes that assumption
-            // entirely -- confirmed the real parameter list live against
-            // TimePickerDefaults.kt's own source rather than guessed.
+            // entirely. Real, confirmed correction: first attempt at this
+            // verified the parameter list against androidx's main-branch
+            // source (androidx-main), which turned out to be *newer* than
+            // this project's actual pinned Compose BOM (2024.09.03) --
+            // that newer version dropped "Unselected" from these parameter
+            // names, which the pinned version still uses, and the resulting
+            // compile error ("None of the following candidates is
+            // applicable") named the real signature directly. Fixed to match
+            // that exactly rather than guessing again.
             ClockTheme {
                 TimePicker(
                     state = state,
                     colors = TimePickerDefaults.colors(
                         clockDialColor = AppLightGray,
                         clockDialSelectedContentColor = AppWhite,
-                        clockDialContentColor = AppBlack,
+                        clockDialUnselectedContentColor = AppBlack,
                         selectorColor = AppBlack,
                         containerColor = AppWhite,
                         periodSelectorBorderColor = AppMidGray,
                         periodSelectorSelectedContainerColor = AppBlack,
-                        periodSelectorContainerColor = AppWhite,
+                        periodSelectorUnselectedContainerColor = AppWhite,
                         periodSelectorSelectedContentColor = AppWhite,
-                        periodSelectorContentColor = AppBlack,
+                        periodSelectorUnselectedContentColor = AppBlack,
                         timeSelectorSelectedContainerColor = AppWhite,
-                        timeSelectorContainerColor = AppLightGray,
+                        timeSelectorUnselectedContainerColor = AppLightGray,
                         timeSelectorSelectedContentColor = AppBlack,
-                        timeSelectorContentColor = AppBlack,
+                        timeSelectorUnselectedContentColor = AppBlack,
                     ),
                 )
             }
