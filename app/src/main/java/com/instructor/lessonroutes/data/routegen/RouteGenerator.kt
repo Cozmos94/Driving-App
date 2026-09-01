@@ -722,9 +722,26 @@ private const val MAX_AVOIDANCE_REROUTE_ITERATIONS = 4
 // corridor can swing a route's shape a lot (a real stress test: 15 points
 // along one route's own path produced a genuinely different, shorter route,
 // not just a tweak), so this exists to stop an unusually obstacle-dense area
-// from growing the avoid-list without bound, not because a specific failure
-// was observed at this exact number.
+// from growing the avoid-list without bound. Also now confirmed live as a
+// real, reachable ceiling, not just a hypothetical one: a 5km-radius, 12-
+// waypoint loop in dense inner-Wollongong hit this exact cap.
 private const val MAX_AVOID_LOCATIONS = 40
+
+// How many *new* hit points a single reroute attempt adds to the cumulative
+// avoid-list, per round -- confirmed live as the real fix for "No path could
+// be found for input": the previous version added every currently-hit point
+// in one shot, which for a dense area/many-waypoint chain could mean a single
+// request asking Geoapify to avoid dozens of roundabouts simultaneously,
+// something it can (and did) reject outright as globally unroutable,
+// discarding the whole attempt including nearby-the-start obstacles that a
+// smaller ask could likely have avoided on their own. A modest batch size
+// keeps each individual request's own feasibility risk low while still
+// making real per-round progress (not literally one at a time, which would
+// need far more than MAX_AVOIDANCE_REROUTE_ITERATIONS rounds for a dense
+// case) -- combined with the closest-to-start priority order above, the
+// obstacles that matter most get the smallest, most likely-to-succeed
+// requests first.
+private const val MAX_NEW_AVOID_LOCATIONS_PER_ITERATION = 8
 
 /** Outcome of [rerouteAvoidingHits]: the (possibly improved) route, the
  * display-name label (see [ALL_FILTER_LABELS]) of every active Avoid
@@ -819,16 +836,37 @@ suspend fun rerouteAvoidingHits(
 
     var current = route
     val cumulativeAvoidLocations = mutableListOf<LatLng>()
+    // The most salient part of a route to an instructor is the start -- every
+    // real report driving this function's design (including the one that led
+    // to this specific fix) was about the very first maneuver. Prioritizing
+    // avoid-locations by distance from here means a limited iteration/avoid-
+    // count budget gets spent on what actually matters most first.
+    val routeStart = route.points.first()
 
     repeat(MAX_AVOIDANCE_REROUTE_ITERATIONS) {
         val hits = hitsByCategory(current.points)
         val hitPoints = hits.values.flatten()
         if (hitPoints.isEmpty()) return AvoidanceOutcome(current, emptyList(), 0)
 
-        cumulativeAvoidLocations.addAll(hitPoints)
+        // Real, confirmed bug fixed here: this used to add *every* currently-
+        // hit point in one shot, every round -- live-tested via Logcat on a
+        // dense-area, many-waypoint loop, that let a single reroute attempt
+        // try to hard-avoid dozens of roundabouts across a whole multi-spoke
+        // chain at once, which Geoapify can (and did) reject outright as
+        // globally unroutable ("No path could be found for input") --
+        // discarding the *entire* attempt, including obstacles near the start
+        // that a smaller, more targeted request could very plausibly have
+        // avoided on their own. Capping and prioritizing the batch added each
+        // round means a request that turns out infeasible only costs that
+        // batch, not everything.
+        val newHitsThisRound = hitPoints
+            .sortedBy { approxDistanceMeters(routeStart, it) }
+            .take(MAX_NEW_AVOID_LOCATIONS_PER_ITERATION)
+        cumulativeAvoidLocations.addAll(newHitsThisRound)
         val distinctAvoidLocations = cumulativeAvoidLocations.distinct()
         if (distinctAvoidLocations.size > MAX_AVOID_LOCATIONS) {
             Log.w(LOG_TAG, "rerouteAvoidingHits: hit the $MAX_AVOID_LOCATIONS avoid-location cap -- stopping, best effort")
+            cumulativeAvoidLocations.removeAll(newHitsThisRound)
             return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
         }
 
@@ -836,26 +874,34 @@ suspend fun rerouteAvoidingHits(
             fetchRoutedPaths(current.waypointChain, avoidHighways = avoidHighways, avoidLocations = distinctAvoidLocations)
                 .firstOrNull()
         } catch (e: Exception) {
+            // Back off just this round's batch (kept in `current`'s own
+            // waypointChain-derived route already, nothing to lose there),
+            // not the whole cumulative history -- an earlier round's already-
+            // successful avoid-locations stay applied via `current`, they're
+            // just not re-requested again here since `current` already
+            // reflects them.
             Log.w(LOG_TAG, "rerouteAvoidingHits: reroute call failed -- keeping the best route found so far", e)
+            cumulativeAvoidLocations.removeAll(newHitsThisRound)
             null
-        }
-        if (rerouted == null || rerouted.durationSeconds < MIN_PLAUSIBLE_DURATION_SECONDS) {
+        } ?: return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
+        if (rerouted.durationSeconds < MIN_PLAUSIBLE_DURATION_SECONDS) {
+            cumulativeAvoidLocations.removeAll(newHitsThisRound)
             return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
         }
 
         val newRoute = GeneratedRoute(rerouted.points, rerouted.durationSeconds, rerouted.distanceMeters, current.waypointChain)
         val newHitCount = hitsByCategory(newRoute.points).values.sumOf { it.size }
         if (newHitCount >= hitPoints.size) {
-            // This round's reroute didn't actually reduce hits -- a bigger/
-            // different avoid-list next round is unlikely to help either if
-            // this one, built from exactly what's currently violating,
-            // didn't. Stop rather than spin through the remaining iterations
-            // for no benefit.
+            // This round's batch didn't actually reduce hits -- back off just
+            // this batch and stop; a bigger/different one next round is
+            // unlikely to help either if this one, built from the highest-
+            // priority current violations, didn't.
             Log.w(
                 LOG_TAG,
                 "rerouteAvoidingHits: reroute made no progress (${hitPoints.size} -> $newHitCount hits) -- " +
                     "stopping, best effort",
             )
+            cumulativeAvoidLocations.removeAll(newHitsThisRound)
             return AvoidanceOutcome(current, hits.filterValues { it.isNotEmpty() }.keys.toList(), hitPoints.size)
         }
         Log.d(LOG_TAG, "rerouteAvoidingHits: reduced hits ${hitPoints.size} -> $newHitCount, continuing")
