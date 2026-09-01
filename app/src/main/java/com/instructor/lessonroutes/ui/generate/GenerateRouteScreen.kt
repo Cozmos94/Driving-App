@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TimePickerDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -104,6 +105,9 @@ import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.theme.AppBlack
+import com.instructor.lessonroutes.ui.theme.AppLightGray
+import com.instructor.lessonroutes.ui.theme.AppMidGray
+import com.instructor.lessonroutes.ui.theme.AppWhite
 import com.instructor.lessonroutes.ui.theme.AvoidRed
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
@@ -887,6 +891,17 @@ fun GenerateRouteScreen(
                 // they're just another way to answer the same question this
                 // section is about.
                 Text("Starting point", fontWeight = FontWeight.Bold)
+                // Moved above the address search box -- Corey: "make the
+                // radius button above the starting address."
+                RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
+                // No separate "move" button/mode -- Corey: "I don't want them
+                // to have to press a button at all". Tapping the circle's own
+                // outline on the map moves it directly (see
+                // onRadiusCircleMove above); this hint just explains that
+                // affordance.
+                if (selectedRadiusKm != null) {
+                    Text("Tap the radius circle on the map to move it (and where the trip starts from).")
+                }
                 Text(
                     if (radiusAnchorOverride != null) {
                         "Starting from a custom location — search below to change it, or reset to your current location."
@@ -916,15 +931,6 @@ fun GenerateRouteScreen(
                         },
                     )
                     HorizontalDivider()
-                }
-                RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
-                // No separate "move" button/mode -- Corey: "I don't want them
-                // to have to press a button at all". Tapping the circle's own
-                // outline on the map moves it directly (see
-                // onRadiusCircleMove above); this hint just explains that
-                // affordance.
-                if (selectedRadiusKm != null) {
-                    Text("Tap the radius circle on the map to move it (and where the trip starts from).")
                 }
                 // No longer nested inside the selectedRadiusKm check above --
                 // a custom start can now come from the address search right
@@ -1238,8 +1244,17 @@ private suspend fun performAddressSearch(
 private fun RadiusPicker(selectedRadiusKm: Double?, onSelect: (Double?) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = Modifier.padding(top = 4.dp)) {
+        // Same rotating caret as the obstacle filter dropdowns (FilterRow) --
+        // Corey: "add the little drop down arrow that's on the obstacle
+        // buttons to the radius (optional) button too".
         OutlinedButton(onClick = { expanded = true }) {
             Text(selectedRadiusKm?.let { "Radius: ${it.toInt()} km" } ?: "Set radius (optional)")
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                modifier = Modifier.rotate(if (expanded) 180f else 0f),
+            )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("No limit") }, onClick = { onSelect(null); expanded = false })
@@ -1383,18 +1398,48 @@ private fun AppTimePickerDialog(initial: LocalTime, onDismiss: () -> Unit, onCon
     AlertDialog(
         onDismissRequest = onDismiss,
         text = {
-            // Went through two earlier attempts: device-driven dynamic/
+            // Went through three earlier attempts: device-driven dynamic/
             // Material You color (Corey still reported a purple AM/PM
             // selector), then the app's own real black/white scheme reused
             // as-is (fixed the purple, but its selected-time indicator reads
             // primary/onPrimary -- black fill, white digit -- which Corey
             // then flagged as "invert the colours... it should be black
-            // font, with white background"). ClockTheme (Theme.kt) is a
-            // dedicated, deliberately-inverted scheme just for this --
-            // white fill, black text everywhere -- rather than reusing the
-            // app's own LightColors/DarkColors again.
+            // font, with white background"), then ClockTheme (Theme.kt), a
+            // dedicated, deliberately-inverted MaterialTheme scheme just for
+            // this. Corey kept seeing "white numbers, green/greyish AM/PM"
+            // even after that, despite every underlying theme role being
+            // confirmed, directly in code, to be pure grayscale with no
+            // dynamic-color path left anywhere in this dialog's chain --
+            // meaning the remaining gap was very likely TimePicker relying
+            // entirely on *theme-role inheritance* (this call passed no
+            // `colors` of its own at all), which only works correctly if
+            // every internal slot TimePickerDefaults.colors() reads by
+            // default lines up with the exact role this app expects it to
+            // -- an assumption, not something ClockTheme's own MaterialTheme
+            // wrapper can guarantee across Compose Material3 versions.
+            // Passing every slot explicitly here removes that assumption
+            // entirely -- confirmed the real parameter list live against
+            // TimePickerDefaults.kt's own source rather than guessed.
             ClockTheme {
-                TimePicker(state = state)
+                TimePicker(
+                    state = state,
+                    colors = TimePickerDefaults.colors(
+                        clockDialColor = AppLightGray,
+                        clockDialSelectedContentColor = AppWhite,
+                        clockDialContentColor = AppBlack,
+                        selectorColor = AppBlack,
+                        containerColor = AppWhite,
+                        periodSelectorBorderColor = AppMidGray,
+                        periodSelectorSelectedContainerColor = AppBlack,
+                        periodSelectorContainerColor = AppWhite,
+                        periodSelectorSelectedContentColor = AppWhite,
+                        periodSelectorContentColor = AppBlack,
+                        timeSelectorSelectedContainerColor = AppWhite,
+                        timeSelectorContainerColor = AppLightGray,
+                        timeSelectorSelectedContentColor = AppBlack,
+                        timeSelectorContentColor = AppBlack,
+                    ),
+                )
             }
         },
         confirmButton = {
