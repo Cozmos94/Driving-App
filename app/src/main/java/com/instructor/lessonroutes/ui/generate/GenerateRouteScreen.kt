@@ -244,67 +244,56 @@ fun GenerateRouteScreen(
     // like new typing and fire another search for the exact same text).
     var lastAppliedResultLabel by remember { mutableStateOf<String?>(null) }
 
+    // -- Starting point address search (Corey: "add a starting and
+    // destination address" -- was destination-only before, start could only
+    // be the device's live location or a dragged radius-circle anchor) --
+    // deliberately its own parallel set of search state (query/results/
+    // searching/error/last-applied-label), not reused with the destination
+    // search's own, since both searches can legitimately be in flight or
+    // showing results at once. A picked result writes to the *same*
+    // radiusAnchorOverride the drag-the-circle gesture already uses (not a
+    // separate variable) -- both are just different ways to answer the one
+    // question "where does this trip actually start from", and reusing it
+    // means the existing "Reset to my location" affordance and effectiveStart
+    // computation below both already work correctly for this too, with
+    // nothing new to keep in sync.
+    var startSearchQuery by remember { mutableStateOf("") }
+    var startSearchResults by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
+    var isSearchingStart by remember { mutableStateOf(false) }
+    var startSearchError by remember { mutableStateOf<String?>(null) }
+    var lastAppliedStartResultLabel by remember { mutableStateOf<String?>(null) }
+
     val effectiveDestination = destination
 
     // Debounced live search: waits 500ms after the user stops typing before
     // actually calling the geocoding API, so results appear as-you-type without
-    // firing a request per keystroke.
+    // firing a request per keystroke. Shared by both the starting-point and
+    // destination search boxes below (see performAddressSearch's own doc
+    // comment) -- each LaunchedEffect here is just a thin wrapper supplying
+    // its own state.
     LaunchedEffect(searchQuery) {
-        // Captured once, at the start of this specific search -- see the guard
-        // below for why.
         val queryForThisSearch = searchQuery
-        if (queryForThisSearch.isBlank() || queryForThisSearch == lastAppliedResultLabel) {
-            searchResults = emptyList()
-            searchError = null
-            isSearching = false
-            return@LaunchedEffect
-        }
-        isSearching = true
-        delay(500)
-        searchError = null
-        try {
-            // Biases toward the device's own location -- see searchAddress's
-            // own doc comment for the real, confirmed bug this fixes (short/
-            // ambiguous prefixes ranking every NSW match outside Geoapify's
-            // own top 5, leaving the NSW-only filter below with nothing to
-            // show even though a correct match exists). currentLocation
-            // rather than effectiveStart (declared later in this function,
-            // not in scope yet here) -- close enough for a search bias
-            // either way, and this screen's search is about finding a
-            // *destination* near wherever the instructor actually is, not
-            // necessarily the radius anchor if that's been moved elsewhere.
-            val results = searchAddress(queryForThisSearch, biasLocation = currentLocation)
-            // Guards against a real, confirmed race: LaunchedEffect cancels the
-            // *coroutine* when searchQuery changes, but searchAddress()'s
-            // underlying OkHttp call is a synchronous, non-cancellation-aware
-            // blocking call -- it isn't actually interrupted by that
-            // cancellation, and can still complete (successfully) after a
-            // newer search has already finished and shown its result. On a
-            // fast/uniform emulator network this rarely reorders; on a real
-            // mobile connection's much more variable latency, an earlier,
-            // less-specific query (e.g. "Mcdonell St", fired during a brief
-            // typing pause) can finish *after* a fuller one already displayed
-            // the correct numbered match, silently overwriting it -- exactly
-            // the "shows up on the emulator but not my phone" symptom. Only
-            // apply this result if searchQuery hasn't moved on since.
-            if (searchQuery == queryForThisSearch) {
-                searchResults = results
-                if (results.isEmpty()) searchError = "No matches found"
-            }
-        } catch (e: CancellationException) {
-            // Real noise, not a bug: LeftCompositionCancellationException (or
-            // a plain debounce cancellation from a newer keystroke) showed up
-            // in Corey's own Logcat capture logged as "Address search failed"
-            // -- this is completely routine (this coroutine gets cancelled on
-            // every keystroke, by design) and swallowing it without rethrowing
-            // is a real anti-pattern for structured concurrency regardless.
-            throw e
-        } catch (e: Exception) {
-            Log.e(LOG_TAG, "Address search failed", e)
-            if (searchQuery == queryForThisSearch) searchError = "Couldn't search right now"
-        } finally {
-            if (searchQuery == queryForThisSearch) isSearching = false
-        }
+        performAddressSearch(
+            query = queryForThisSearch,
+            biasLocation = currentLocation,
+            lastAppliedResultLabel = lastAppliedResultLabel,
+            isStillCurrent = { searchQuery == queryForThisSearch },
+            onSearching = { isSearching = it },
+            onResults = { searchResults = it },
+            onError = { searchError = it },
+        )
+    }
+    LaunchedEffect(startSearchQuery) {
+        val queryForThisSearch = startSearchQuery
+        performAddressSearch(
+            query = queryForThisSearch,
+            biasLocation = currentLocation,
+            lastAppliedResultLabel = lastAppliedStartResultLabel,
+            isStillCurrent = { startSearchQuery == queryForThisSearch },
+            onSearching = { isSearchingStart = it },
+            onResults = { startSearchResults = it },
+            onError = { startSearchError = it },
+        )
     }
 
     // -- Start/end time (only used to compute a target duration) --
@@ -736,7 +725,16 @@ fun GenerateRouteScreen(
                 RouteMapView(
                     modifier = Modifier.fillMaxSize(),
                     routePoints = generatedRoute?.points ?: emptyList(),
-                    waypoints = listOfNotNull(destination),
+                    // radiusAnchorOverride, not effectiveStart -- only show a
+                    // waypoint marker when the start is actually a custom
+                    // point (searched address or dragged circle), not for the
+                    // plain "starting from wherever I am" case, where
+                    // liveLocation's own blue dot already marks it and a
+                    // second marker sitting right on top would be redundant.
+                    // Without this, a searched starting address had no visual
+                    // feedback at all distinct from the live-location dot,
+                    // which would be actively confusing once they differ.
+                    waypoints = listOfNotNull(radiusAnchorOverride, destination),
                     liveLocation = currentLocation,
                     fitBoundsToRoute = generatedRoute != null,
                     // This screen already tracks the device's location itself
@@ -876,22 +874,76 @@ fun GenerateRouteScreen(
             }
 
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                Text("Destination", fontWeight = FontWeight.Bold)
+                // "Starting point" -- Corey: "add a starting and destination
+                // address" (was destination-only before; start could only
+                // ever be the device's live location or a dragged radius-
+                // circle anchor). A picked search result writes to
+                // radiusAnchorOverride, the same variable the radius-circle
+                // drag gesture already uses -- see that state's own doc
+                // comment above for why reusing it (not a separate variable)
+                // is deliberate. RadiusPicker/the drag hint live here now too
+                // (moved from directly under "Destination", where they used
+                // to sit despite being entirely about the *start*), since
+                // they're just another way to answer the same question this
+                // section is about.
+                Text("Starting point", fontWeight = FontWeight.Bold)
+                Text(
+                    if (radiusAnchorOverride != null) {
+                        "Starting from a custom location — search below to change it, or reset to your current location."
+                    } else {
+                        "Starting from your current location — search below to start from a different address."
+                    },
+                )
+                OutlinedTextField(
+                    value = startSearchQuery,
+                    onValueChange = { startSearchQuery = it },
+                    label = { Text("Search a starting address") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (isSearchingStart) {
+                    Text("Searching…")
+                }
+                startSearchError?.let { Text(it) }
+                startSearchResults.forEach { result ->
+                    ListItem(
+                        headlineContent = { Text(result.label) },
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            radiusAnchorOverride = result.location
+                            startSearchResults = emptyList()
+                            lastAppliedStartResultLabel = result.label
+                            startSearchQuery = result.label
+                        },
+                    )
+                    HorizontalDivider()
+                }
                 RadiusPicker(selectedRadiusKm = selectedRadiusKm, onSelect = { selectedRadiusKm = it })
                 // No separate "move" button/mode -- Corey: "I don't want them
                 // to have to press a button at all". Tapping the circle's own
                 // outline on the map moves it directly (see
                 // onRadiusCircleMove above); this hint just explains that
-                // affordance, and "Reset" is the one control left, since
-                // there's no gesture equivalent for "put it back".
+                // affordance.
                 if (selectedRadiusKm != null) {
                     Text("Tap the radius circle on the map to move it (and where the trip starts from).")
-                    if (radiusAnchorOverride != null) {
-                        TextButton(onClick = { radiusAnchorOverride = null }) {
-                            Text("Reset to my location")
-                        }
+                }
+                // No longer nested inside the selectedRadiusKm check above --
+                // a custom start can now come from the address search right
+                // above too, which works with no radius set at all, so
+                // resetting needs to be available either way.
+                if (radiusAnchorOverride != null) {
+                    TextButton(
+                        onClick = {
+                            radiusAnchorOverride = null
+                            startSearchQuery = ""
+                            lastAppliedStartResultLabel = null
+                        },
+                    ) {
+                        Text("Reset to my location")
                     }
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Destination", fontWeight = FontWeight.Bold)
                 Text(
                     if (destination != null) {
                         "Destination set — tap the map to change it, or search below."
@@ -1002,8 +1054,14 @@ fun GenerateRouteScreen(
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
-                if (currentLocation == null) {
-                    Text("Waiting for your location — check location permission is granted.")
+                // effectiveStart, not currentLocation -- a real gap the new
+                // starting-address search exposed: picking a starting address
+                // can resolve effectiveStart before GPS ever locks on (e.g.
+                // indoors, poor signal), and this used to keep showing
+                // "waiting for your location" regardless, misleadingly
+                // implying generation was still blocked when it wasn't.
+                if (effectiveStart == null) {
+                    Text("Waiting for your location — check location permission is granted, or search a starting address above.")
                 }
                 Button(
                     onClick = { onGenerateClick() },
@@ -1110,6 +1168,64 @@ fun GenerateRouteScreen(
         )
     }
     } // end PlanTripTheme
+}
+
+/** Shared debounced-search body for both the starting-point and destination
+ * address boxes (extracted from what used to be the destination box's own
+ * inline LaunchedEffect, now duplicated as two thin wrappers -- see their own
+ * call sites). [isStillCurrent] re-checks (at write time, not capture time)
+ * that the query this search was for is still the box's current text before
+ * touching any state -- a real, confirmed guard, not defensive boilerplate:
+ * LaunchedEffect cancels the *coroutine* on every keystroke, but
+ * [searchAddress]'s underlying OkHttp call is a synchronous, non-
+ * cancellation-aware blocking call that isn't actually interrupted by that,
+ * and can still complete (successfully) after a newer search already
+ * displayed its own result -- on a real mobile connection's variable
+ * latency (unlike a fast/uniform emulator network), an earlier, less-
+ * specific query fired during a brief typing pause can finish *after* a
+ * fuller one already showed the correct match, silently overwriting it.
+ * [lastAppliedResultLabel] suppresses re-searching immediately after picking
+ * a result (which sets the box's text to that result's own label, which
+ * would otherwise look just like new typing and fire another search for the
+ * exact same text). */
+private suspend fun performAddressSearch(
+    query: String,
+    biasLocation: LatLng?,
+    lastAppliedResultLabel: String?,
+    isStillCurrent: () -> Boolean,
+    onSearching: (Boolean) -> Unit,
+    onResults: (List<GeocodeResult>) -> Unit,
+    onError: (String?) -> Unit,
+) {
+    if (query.isBlank() || query == lastAppliedResultLabel) {
+        onResults(emptyList())
+        onError(null)
+        onSearching(false)
+        return
+    }
+    onSearching(true)
+    delay(500)
+    onError(null)
+    try {
+        val results = searchAddress(query, biasLocation = biasLocation)
+        if (isStillCurrent()) {
+            onResults(results)
+            if (results.isEmpty()) onError("No matches found")
+        }
+    } catch (e: CancellationException) {
+        // Real noise, not a bug: LeftCompositionCancellationException (or a
+        // plain debounce cancellation from a newer keystroke) showed up in
+        // Corey's own Logcat capture logged as "Address search failed" --
+        // this is completely routine (this coroutine gets cancelled on every
+        // keystroke, by design) and swallowing it without rethrowing is a
+        // real anti-pattern for structured concurrency regardless.
+        throw e
+    } catch (e: Exception) {
+        Log.e(LOG_TAG, "Address search failed", e)
+        if (isStillCurrent()) onError("Couldn't search right now")
+    } finally {
+        if (isStillCurrent()) onSearching(false)
+    }
 }
 
 /** Optional ceiling on the generated route's detour distance (see
