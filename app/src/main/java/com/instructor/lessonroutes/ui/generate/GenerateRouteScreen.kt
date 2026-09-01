@@ -28,8 +28,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,7 +78,6 @@ import com.instructor.lessonroutes.data.StudentProfile
 import com.instructor.lessonroutes.data.StudentProfileDao
 import com.instructor.lessonroutes.data.remote.GeocodeResult
 import com.instructor.lessonroutes.data.remote.fetchMajorRoads
-import com.instructor.lessonroutes.data.remote.fetchMergeLaneProxies
 import com.instructor.lessonroutes.data.remote.fetchOpenIncidents
 import com.instructor.lessonroutes.data.remote.fetchOpenRoadworks
 import com.instructor.lessonroutes.data.remote.fetchRoundabouts
@@ -92,6 +89,7 @@ import com.instructor.lessonroutes.data.routegen.FilterSummary
 import com.instructor.lessonroutes.data.routegen.GeneratedRoute
 import com.instructor.lessonroutes.data.routegen.RouteGenerationFilters
 import com.instructor.lessonroutes.data.routegen.ScoringData
+import com.instructor.lessonroutes.data.routegen.displayLabel
 import com.instructor.lessonroutes.data.routegen.distanceKm
 import com.instructor.lessonroutes.data.routegen.estimateSearchRadiusDegrees
 import com.instructor.lessonroutes.data.routegen.generateCandidateRoutes
@@ -104,12 +102,12 @@ import com.instructor.lessonroutes.ui.map.RouteMapView
 import com.instructor.lessonroutes.ui.navigate.TomTomNavigationScreen
 import com.instructor.lessonroutes.ui.routes.ProfilePickerSection
 import com.instructor.lessonroutes.ui.theme.AppBlack
-import com.instructor.lessonroutes.ui.theme.AvoidLightRed
+import com.instructor.lessonroutes.ui.theme.AvoidRed
 import com.instructor.lessonroutes.ui.theme.BackgroundWhite
 import com.instructor.lessonroutes.ui.theme.BorderNavy
 import com.instructor.lessonroutes.ui.theme.ClockTheme
 import com.instructor.lessonroutes.ui.theme.PlanTripTheme
-import com.instructor.lessonroutes.ui.theme.PreferLightGreen
+import com.instructor.lessonroutes.ui.theme.PreferGreen
 import com.instructor.lessonroutes.ui.theme.SelectedBlue
 import com.instructor.lessonroutes.util.LOCATION_PERMISSIONS
 import com.instructor.lessonroutes.util.hasLocationPermission
@@ -419,7 +417,7 @@ fun GenerateRouteScreen(
                 // doesn't need.
                 val hasAnyAvoidFilter = listOf(
                     filters.incidents, filters.constructionZones, filters.schoolZones, filters.speedCameras,
-                    filters.roundabouts, filters.mergingLanes, filters.highTraffic,
+                    filters.roundabouts, filters.highTraffic,
                 ).any { it == FilterPreference.AVOID }
                 val result = withTimeoutOrNull(OVERALL_GENERATION_TIMEOUT_MS) {
                     val center = midpoint(start, end)
@@ -957,7 +955,7 @@ fun GenerateRouteScreen(
                 // itself (Medium, not Bold) -- a lighter emphasis than the
                 // section header above, but still calling out the label word
                 // from its explanation.
-                FilterLegendLine("Neither selected", "no preference either way.")
+                FilterLegendLine("No Preference", "Obstacle may or may not be present in the generated route.")
                 FilterLegendLine("Avoid", "try not to include it in the generated route at all.")
                 FilterLegendLine("Prefer", "try to include more of it (e.g. more school zones, or more roundabouts).")
                 if (BuildConfig.TFNSW_API_KEY.isBlank()) {
@@ -987,10 +985,18 @@ fun GenerateRouteScreen(
                 FilterRow("High traffic roads", filters.highTraffic) { filters = filters.copy(highTraffic = it) }
                 FilterRow("Highways", filters.highways) { filters = filters.copy(highways = it) }
                 FilterRow("Roundabouts", filters.roundabouts) { filters = filters.copy(roundabouts = it) }
-                FilterRow("Merging lanes", filters.mergingLanes) { filters = filters.copy(mergingLanes = it) }
+                // Rewritten to match what the generator actually does now --
+                // this used to say "picks the closest-matching candidate
+                // rather than steering around a specific hazard," which
+                // became actively wrong once Avoid started hard-rerouting
+                // around obstacles (Corey: "This app needs to completely
+                // avoid filtered obstacles, no matter what"). Still honest
+                // about the real limit: geography can make an obstacle
+                // genuinely unavoidable, in which case the app says so rather
+                // than pretending.
                 Text(
-                    "Best-effort, not guaranteed — picks the closest-matching candidate rather than " +
-                        "steering around a specific hazard.",
+                    "Avoid actively steers the route away from that obstacle wherever a real alternative " +
+                        "exists; you'll be told if one genuinely doesn't.",
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1162,13 +1168,14 @@ private fun FilterRow(
             confirmButton = { TextButton(onClick = { showInfo = false }) { Text("OK") } },
         )
     }
-    // Just Avoid/Prefer -- preference is a single FilterPreference value, so it
-    // can never actually hold both AVOID and PREFER at once; tapping the
-    // already-selected chip clears it back to NONE (no separate "None" chip
-    // needed). The two chips looking simultaneously selected on-device was very
-    // likely the theme's missing surface/outline colors (see Theme.kt/Color.kt)
-    // making an *unselected* chip's outline hard to tell apart from a selected
-    // one's fill, not an actual dual-selection bug.
+    // Dropdown (No Preference / Avoid / Prefer) replacing the old two-chip
+    // toggle row -- Corey: "change the obstacles filters from buttons to a
+    // dropdown for each obstacle... default set being 'No Preference'".
+    // Plain Box + DropdownMenu, same established pattern as RadiusPicker
+    // above, not ExposedDropdownMenuBox -- see that composable's own doc
+    // comment for why (a version-sensitive menuAnchor() API that's changed
+    // shape across recent Material3 releases).
+    var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1187,26 +1194,32 @@ private fun FilterRow(
                 }
             }
         }
-        FilterChip(
-            selected = preference == FilterPreference.AVOID,
-            onClick = { onChange(if (preference == FilterPreference.AVOID) FilterPreference.NONE else FilterPreference.AVOID) },
-            label = { Text("Avoid") },
-            modifier = Modifier.padding(end = 4.dp),
-            colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = AvoidLightRed,
-                selectedLabelColor = AppBlack,
-            ),
-        )
-        FilterChip(
-            selected = preference == FilterPreference.PREFER,
-            onClick = { onChange(if (preference == FilterPreference.PREFER) FilterPreference.NONE else FilterPreference.PREFER) },
-            label = { Text("Prefer") },
-            colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = PreferLightGreen,
-                selectedLabelColor = AppBlack,
-            ),
-        )
+        Box {
+            OutlinedButton(onClick = { expanded = true }) {
+                Text(preference.displayLabel(), color = preference.displayColor())
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                FilterPreference.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.displayLabel(), color = option.displayColor()) },
+                        onClick = {
+                            onChange(option)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
     }
+}
+
+/** Same red/green cue the old Avoid/Prefer chips used (via AvoidLightRed/
+ * PreferLightGreen fills) -- carried over as text color now that the
+ * dropdown itself has no per-option fill to color. */
+private fun FilterPreference.displayColor(): Color = when (this) {
+    FilterPreference.NONE -> AppBlack
+    FilterPreference.AVOID -> AvoidRed
+    FilterPreference.PREFER -> PreferGreen
 }
 
 /** Shown modally for the whole of [onGenerateClick]'s network round-trip --
@@ -1390,7 +1403,7 @@ private const val ROUTING_GENERATION_TIMEOUT_MS = 25_000L
 
 private const val SCORING_FETCH_TIMEOUT_MS = 8_000L
 
-// Roundabouts/Merging lanes/Highways go through Overpass (OverpassApi.kt), which
+// Roundabouts/Highways go through Overpass (OverpassApi.kt), which
 // is a real, confirmed step slower than the 8s bound above: tested live at this
 // screen's actual search radius for a ~80min trip (a ~65km-wide bbox), the
 // highways query alone took ~9s even against a healthy Overpass instance, and a
@@ -1433,7 +1446,7 @@ private const val OVERPASS_SCORING_FETCH_TIMEOUT_MS = 12_000L
 // window, not at some separate, looser UI-only threshold.
 private const val DURATION_WARNING_THRESHOLD_SECONDS = 10 * 60.0
 
-// Roundabouts/Merging lanes/Highways scoring doesn't meaningfully improve by
+// Roundabouts/Highways scoring doesn't meaningfully improve by
 // searching tens of km out -- candidate routes generated for even a long trip
 // stay much more localized than the naive duration-implied radius (which,
 // confirmed live, produced a ~65km-wide box for an 80min trip target and took
@@ -1546,11 +1559,12 @@ private suspend fun buildScoringData(
     // fetchBoundedSync is the plain suspend core, reused two ways below:
     // fetchBounded wraps it in its own async{} for the TfNSW/Room-backed
     // categories (fully independent APIs, fine to run genuinely concurrently),
-    // while the three Overpass-backed categories share one single async{}
-    // block and call this directly, one at a time -- see that block's own
-    // comment for why (a real, confirmed bug: Overpass's public instance
-    // enforces a per-IP concurrent-request limit, and firing Roundabouts/
-    // Merging lanes/Highways as three simultaneous requests tripped it).
+    // and the two Overpass-backed categories (Roundabouts, Highways) each get
+    // their own async{} too -- see that block's own comment for why running
+    // both of *those* concurrently is safe (a real, confirmed bug when a
+    // third Overpass-backed category still existed: Overpass's public
+    // instance enforces a per-IP concurrent-request limit around 2, and
+    // firing three at once tripped it).
     suspend fun fetchBoundedSync(name: String, timeoutMs: Long, fetch: suspend () -> List<LatLng>): Pair<List<LatLng>, String?> {
         val list = withTimeoutOrNull(timeoutMs) { runCatching { fetch() }.getOrDefault(emptyList()) }
             ?: emptyList()
@@ -1589,53 +1603,32 @@ private suspend fun buildScoringData(
     } else {
         null
     }
-    // Roundabouts/Merging lanes/Highways all hit the same free, shared
-    // Overpass instance -- confirmed live (a direct test firing 3 requests
-    // at once got a genuine HTTP 429 "Too Many Requests" on the 3rd, but 2
-    // at once both succeeded) that it enforces a real per-IP concurrent-
-    // request limit around 2. Fully serializing all three (tried once
-    // already) avoided the 429 but let the worst case become a sum of all
-    // three timeouts instead of a max, which then caused generation to hang
-    // and give up outright -- Corey flagged both problems in turn. Paired
-    // concurrency instead: round 1 fires Roundabouts + Merging lanes
-    // together (2, the confirmed-safe number), round 2 fires Highways
-    // alone once round 1 finishes -- never more than 2 Overpass requests
-    // from this screen in flight at once, and the real worst case is two
-    // rounds of OVERPASS_SCORING_FETCH_TIMEOUT_MS, not three. Still runs
-    // concurrently with every *other* category above/below (TfNSW/Room, an
-    // unrelated API with no shared limit to worry about).
-    val overpassCategoriesDeferred = async {
-        val roundaboutsDeferred = if (filters.roundabouts != FilterPreference.NONE) {
-            async {
-                fetchBoundedSync("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-                    fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
-                }
+    // Roundabouts/Highways both hit the same free, shared Overpass instance
+    // -- confirmed live that it enforces a real per-IP concurrent-request
+    // limit around 2 (a direct test firing 3 requests at once got a genuine
+    // HTTP 429 "Too Many Requests" on the 3rd, but 2 at once both
+    // succeeded). Only these two Overpass-backed categories remain now
+    // (Merging lanes removed per Corey: "it just doesn't make sense" -- see
+    // RouteGenerator.kt), so they fit the confirmed-safe limit directly:
+    // both fire concurrently, no round1/round2 sequencing needed like the
+    // three-category version this replaced.
+    val roundaboutsDeferred = if (filters.roundabouts != FilterPreference.NONE) {
+        async {
+            fetchBoundedSync("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
+                fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
             }
-        } else {
-            null
         }
-        val mergeLanesDeferred = if (filters.mergingLanes != FilterPreference.NONE) {
-            async {
-                fetchBoundedSync("Merging lanes", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-                    fetchMergeLaneProxies(center, overpassRadiusDegrees).sampleForScoring()
-                }
-            }
-        } else {
-            null
-        }
-        // Round 1's own two await() calls -- not started until *after* round
-        // 1 finishes, since majorRoadsResult below is a plain sequential
-        // fetchBoundedSync call, not another async{}.
-        val roundaboutsResult = roundaboutsDeferred?.await()
-        val mergeLanesResult = mergeLanesDeferred?.await()
-        val majorRoadsResult = if (filters.highways != FilterPreference.NONE) {
+    } else {
+        null
+    }
+    val majorRoadsDeferred = if (filters.highways != FilterPreference.NONE) {
+        async {
             fetchBoundedSync("Highways", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
                 fetchMajorRoads(center, overpassRadiusDegrees).sampleForScoring()
             }
-        } else {
-            null
         }
-        Triple(roundaboutsResult, mergeLanesResult, majorRoadsResult)
+    } else {
+        null
     }
     // Was a live TfNSW call (see HighVolumeRoadEntity's own doc comment for
     // why that switched to a bundled/seeded Room snapshot) -- reads the same
@@ -1650,7 +1643,8 @@ private suspend fun buildScoringData(
     val constructionResult = construction?.await()
     val schoolZonesResult = schoolZones?.await()
     val speedCamerasResult = speedCameras?.await()
-    val (roundaboutsResult, mergeLanesResult, majorRoadsResult) = overpassCategoriesDeferred.await()
+    val roundaboutsResult = roundaboutsDeferred?.await()
+    val majorRoadsResult = majorRoadsDeferred?.await()
     val highTrafficResult = highTraffic?.await()
 
     ScoringFetchResult(
@@ -1661,12 +1655,11 @@ private suspend fun buildScoringData(
             speedCameras = speedCamerasResult?.first ?: emptyList(),
             roundabouts = roundaboutsResult?.first ?: emptyList(),
             highTraffic = highTrafficResult?.first ?: emptyList(),
-            mergeLaneProxies = mergeLanesResult?.first ?: emptyList(),
             majorRoads = majorRoadsResult?.first ?: emptyList(),
         ),
         emptyCategories = listOfNotNull(
             incidentsResult?.second, constructionResult?.second, schoolZonesResult?.second, speedCamerasResult?.second,
-            roundaboutsResult?.second, mergeLanesResult?.second, majorRoadsResult?.second, highTrafficResult?.second,
+            roundaboutsResult?.second, majorRoadsResult?.second, highTrafficResult?.second,
         ),
     )
 }

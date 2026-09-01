@@ -76,8 +76,8 @@ private class GeoapifyRoutingRejected(message: String) : IOException(message)
  *    for every value tried, so Highways->Avoid was only ever soft proximity
  *    scoring before (RouteGenerator.kt's `scoreRoute` still does that scoring too,
  *    as a secondary check/tie-breaker, and it's still the only lever for
- *    Highways->Prefer and for Roundabouts/Merging lanes, which have no `avoid=`
- *    equivalent here either).
+ *    Highways->Prefer and for Roundabouts, which has no `avoid=` equivalent
+ *    here either).
  * 2. Address geocoding on the same account (GeoapifyGeocodingApi.kt) blends in
  *    the OpenAddresses dataset alongside OSM, giving noticeably better AU
  *    house-number coverage than Nominatim alone -- confirmed live against

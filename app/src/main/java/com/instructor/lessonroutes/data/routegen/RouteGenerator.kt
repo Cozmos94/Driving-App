@@ -25,10 +25,18 @@ private const val LOG_TAG = "RouteGenerator"
  * for the before/after numbers). Every other category, and Highways->Prefer
  * (there's no "prefer highways" equivalent constraint), is still soft
  * proximity scoring against candidate routes -- no free routing API this app
- * uses supports a real avoid/prefer-zone constraint for roundabouts or merge
- * lanes specifically. See the doc comments on
- * OverpassApi.fetchRoundabouts/fetchMergeLaneProxies/fetchMajorRoads. */
+ * uses supports a real avoid/prefer-zone constraint for roundabouts
+ * specifically. See the doc comments on
+ * OverpassApi.fetchRoundabouts/fetchMajorRoads. */
 enum class FilterPreference { NONE, AVOID, PREFER }
+
+/** Display text for the filter dropdown (GenerateRouteScreen.kt's FilterRow) --
+ * NONE reads as "No Preference" there, not the bare enum name. */
+fun FilterPreference.displayLabel(): String = when (this) {
+    FilterPreference.NONE -> "No Preference"
+    FilterPreference.AVOID -> "Avoid"
+    FilterPreference.PREFER -> "Prefer"
+}
 
 data class RouteGenerationFilters(
     val incidents: FilterPreference = FilterPreference.NONE,
@@ -37,17 +45,22 @@ data class RouteGenerationFilters(
     val speedCameras: FilterPreference = FilterPreference.NONE,
     val highways: FilterPreference = FilterPreference.NONE,
     val roundabouts: FilterPreference = FilterPreference.NONE,
-    val mergingLanes: FilterPreference = FilterPreference.NONE,
     val highTraffic: FilterPreference = FilterPreference.NONE,
 )
 
 /** Every filter category's display name, in the same fixed order used
  * everywhere a full set of categories is shown or reasoned about (the filter
  * list UI, [RouteGenerationFilters.summarize], and student-profile lifetime
- * coverage on the route list screen). */
+ * coverage on the route list screen). Merging lanes removed per Corey: "it
+ * just doesn't make sense" as an obstacle category -- its data (OverpassApi.
+ * kt's now-deleted fetchMergeLaneProxies) was always a real approximation,
+ * not real merge-lane data: OSM has no dedicated tag for one, so it proxied
+ * highway on/off-ramps (motorway_link/trunk_link) instead, which doesn't
+ * even distinguish merging in from exiting, or cover ordinary lane-merges on
+ * non-highway roads at all. */
 val ALL_FILTER_LABELS = listOf(
     "Hazards", "Construction zones", "School zones", "Speed cameras",
-    "High traffic roads", "Highways", "Roundabouts", "Merging lanes",
+    "High traffic roads", "Highways", "Roundabouts",
 )
 
 /** Which categories were set to Avoid vs Prefer, as display-name lists (see
@@ -66,7 +79,7 @@ data class FilterSummary(val avoid: List<String>, val prefer: List<String>) {
 
 fun RouteGenerationFilters.summarize(): FilterSummary {
     val labeled = ALL_FILTER_LABELS.zip(
-        listOf(incidents, constructionZones, schoolZones, speedCameras, highTraffic, highways, roundabouts, mergingLanes),
+        listOf(incidents, constructionZones, schoolZones, speedCameras, highTraffic, highways, roundabouts),
     )
     return FilterSummary(
         avoid = labeled.filter { it.second == FilterPreference.AVOID }.map { it.first },
@@ -108,7 +121,6 @@ data class ScoringData(
     val schoolZones: List<LatLng> = emptyList(),
     val speedCameras: List<LatLng> = emptyList(),
     val roundabouts: List<LatLng> = emptyList(),
-    val mergeLaneProxies: List<LatLng> = emptyList(),
     val majorRoads: List<LatLng> = emptyList(),
     val highTraffic: List<LatLng> = emptyList(),
 )
@@ -656,8 +668,8 @@ data class AvoidanceOutcome(val route: GeneratedRoute, val unavoidableCategories
 /**
  * Iteratively re-requests [route]'s own [GeneratedRoute.waypointChain], hard-avoiding
  * (Geoapify's real `avoid=location:lat,lon`, confirmed live) every point any *active
- * Avoid* category (Roundabouts, Merging lanes, High traffic roads, Hazards, Construction
- * zones, School zones, Speed cameras -- Highways is excluded, it's already a real hard
+ * Avoid* category (Roundabouts, High traffic roads, Hazards, Construction zones, School
+ * zones, Speed cameras -- Highways is excluded, it's already a real hard
  * constraint applied during generation itself via [avoidHighways]) actually hits on the
  * route, repeating until either nothing is left to avoid, an attempt makes no further
  * progress, or [MAX_AVOIDANCE_REROUTE_ITERATIONS]/[MAX_AVOID_LOCATIONS] is reached.
@@ -720,7 +732,6 @@ suspend fun rerouteAvoidingHits(
 ): AvoidanceOutcome {
     val avoidCategories = buildList {
         if (filters.roundabouts == FilterPreference.AVOID) add("Roundabouts" to scoringData.roundabouts)
-        if (filters.mergingLanes == FilterPreference.AVOID) add("Merging lanes" to scoringData.mergeLaneProxies)
         if (filters.highTraffic == FilterPreference.AVOID) add("High traffic roads" to scoringData.highTraffic)
         if (filters.incidents == FilterPreference.AVOID) add("Hazards" to scoringData.incidents)
         if (filters.constructionZones == FilterPreference.AVOID) add("Construction zones" to scoringData.constructionZones)
@@ -829,7 +840,6 @@ private fun preferAndDurationScore(route: GeneratedRoute, filters: RouteGenerati
     apply(filters.schoolZones, data.schoolZones)
     apply(filters.speedCameras, data.speedCameras)
     apply(filters.roundabouts, data.roundabouts)
-    apply(filters.mergingLanes, data.mergeLaneProxies)
     apply(filters.highways, data.majorRoads)
     apply(filters.highTraffic, data.highTraffic)
     val durationErrorMinutes = abs(route.durationSeconds - targetSeconds) / 60.0
@@ -1246,7 +1256,6 @@ private fun scoreRoute(route: GeneratedRoute, filters: RouteGenerationFilters, d
     apply(filters.schoolZones, data.schoolZones)
     apply(filters.speedCameras, data.speedCameras)
     apply(filters.roundabouts, data.roundabouts)
-    apply(filters.mergingLanes, data.mergeLaneProxies)
     apply(filters.highways, data.majorRoads)
     apply(filters.highTraffic, data.highTraffic)
 

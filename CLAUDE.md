@@ -4,6 +4,29 @@ Orientation for a fresh Claude Code session picking this project up. Read
 `spec.md` (original design) and `README.md` (build status, data sources, known
 gotchas) for full detail — this file is the short version plus pointers.
 
+## Obstacle filters: dropdown UI, Merging lanes removed
+
+`GenerateRouteScreen.kt`'s FilterRow changed from two Avoid/Prefer chips to a
+single dropdown per obstacle (No Preference / Avoid / Prefer, default No
+Preference — Hazards still defaults to Avoid). Same `RouteGenerationFilters`/
+`FilterPreference` model underneath, just a different picker UI (plain
+`Box` + `DropdownMenu`, matching `RadiusPicker`'s own established pattern
+above it in the same file — not `ExposedDropdownMenuBox`, which that
+composable's own doc comment already flags as version-fragile). `FilterRow`'s
+displayed value/dropdown options are colored via `FilterPreference.
+displayColor()` (red/green/black), carrying over the old chips' red/green cue
+now that there's no per-option fill to color.
+
+**Merging lanes deleted as a category entirely** (Corey: "it just doesn't
+make sense") — removed from `RouteGenerationFilters`, `ScoringData`,
+`ALL_FILTER_LABELS`, all scoring/avoidance functions, and
+`OverpassApi.fetchMergeLaneProxies` (the underlying data fetch, now deleted,
+not just unwired). Only Roundabouts and Highways remain as Overpass-backed
+categories — the "paired concurrency" dance `buildScoringData` used to need
+(round 1: Roundabouts+Merging lanes, round 2: Highways, to stay under
+Overpass's confirmed ~2 concurrent-request limit) simplified to both firing
+concurrently, since 2 is already the safe number.
+
 ## ⚠️ REAL DEADLINE: TomTom ends support for SDK 2.4.x on 2 Nov 2026
 
 Corey got a direct email from TomTom (31-Aug-2026): NavSDK 2.5 is now live,

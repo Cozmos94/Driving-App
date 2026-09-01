@@ -213,19 +213,6 @@ suspend fun fetchQuietRoads(center: LatLng, radiusDegrees: Double = QUIET_ROADS_
     fetchWaysByHighwayTag(center, radiusDegrees, "residential|living_street", "quiet-roads")
 
 /**
- * Highway on/off-ramp connector roads (`motorway_link`/`trunk_link`) near
- * [center] -- the closest free proxy for "merging lanes" that exists. This is a
- * real approximation, not exact merge-lane data: OSM has no dedicated tag for a
- * merge lane, doesn't distinguish an on-ramp (merging in) from an off-ramp
- * (exiting) in one field, and doesn't tag ordinary lane-merges on non-highway
- * roads at all. Used only for the route generator's soft avoid/prefer scoring
- * (RouteGenerator.kt) -- there's no real "avoid merge lanes" routing constraint
- * available for free, same as hazards/school-zones/cameras/roundabouts.
- */
-suspend fun fetchMergeLaneProxies(center: LatLng, radiusDegrees: Double = QUIET_ROADS_RADIUS_DEGREES): List<List<LatLng>> =
-    fetchWaysByHighwayTag(center, radiusDegrees, "motorway_link|trunk_link", "merge-lane-proxy")
-
-/**
  * Motorway/trunk roads near [center] -- used for the route generator's Highways
  * avoid/prefer scoring (RouteGenerator.kt) as a secondary tie-breaker. Highways
  * ->Avoid itself is now a real hard routing constraint (Geoapify's
