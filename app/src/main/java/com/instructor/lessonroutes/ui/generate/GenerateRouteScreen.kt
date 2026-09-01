@@ -1807,7 +1807,25 @@ private suspend fun buildScoringData(
     val roundaboutsDeferred = if (filters.roundabouts != FilterPreference.NONE) {
         async {
             fetchBoundedSync("Roundabouts", OVERPASS_SCORING_FETCH_TIMEOUT_MS) {
-                fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.firstOrNull() }
+                // centroid(), not .firstOrNull() -- a real, confirmed bug: a
+                // real roundabout comes back from Overpass as its full
+                // circular shape (a "way", typically 15-40m across, many
+                // points), and .firstOrNull() kept only one arbitrary point
+                // from that shape (whichever OSM happened to store first).
+                // If a route crossed the opposite side of the circle from
+                // that one point, the distance could exceed
+                // RouteGenerator.PROXIMITY_METERS (40m) even though the
+                // route genuinely does pass through the roundabout -- the
+                // roundabout would never register as "hit" at all, so
+                // rerouteAvoidingHits never even tried to avoid it. Confirmed
+                // as the real cause of a live report: a route with
+                // Roundabouts->Avoid still went straight through one, with
+                // an obviously avoidable alternative visible on the map.
+                // centroid (the average of every point in the shape) is
+                // always near the middle of the circle regardless of which
+                // side a route crosses, so it stays within the proximity
+                // threshold either way.
+                fetchRoundabouts(center, overpassRadiusDegrees).mapNotNull { it.centroid() }
             }
         }
     } else {
@@ -1875,6 +1893,20 @@ private fun List<List<LatLng>>.sampleForScoring(): List<LatLng> = flatMap { way 
         (0 until MAX_SCORING_POINTS_PER_WAY).map { i -> way[(i * stride).toInt()] }
     }
 }
+
+/** Plain lat/lon average of every point in a shape -- a flat-earth
+ * approximation, same accepted approach as RouteGenerator.kt's own distance
+ * math, fine at the tens-of-meters scale a roundabout's own circle spans.
+ * Used for roundabouts specifically (a single small, genuinely circular
+ * shape, unlike a long road) so the *whole* shape reduces to one point that
+ * stays near the middle regardless of which side of the circle a route
+ * actually crosses -- unlike an arbitrary vertex (e.g. the shape's own first
+ * point), which can easily be more than PROXIMITY_METERS away from a route
+ * that crosses the opposite side, silently missing a real hit. Null for an
+ * empty shape (shouldn't happen for anything Overpass actually returns, but
+ * a defensive no-op is cheap insurance). */
+private fun List<LatLng>.centroid(): LatLng? =
+    if (isEmpty()) null else LatLng(map { it.latitude }.average(), map { it.longitude }.average())
 
 private fun formatTime(time: LocalTime): String =
     time.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
